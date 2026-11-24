@@ -37,8 +37,12 @@
 # numeric sweep is the scheduled lane in `.github/workflows/pcnl-gates.yml`.
 #
 # `--skip-slow` is the default: entries budgeted above `SLOW_SECS` (900 s) are
-# listed but not run, so the script stays usable as a pre-commit check. Use
-# `--all` (hit-and-run 5,000 is ~45 min) to cover them.
+# not run, so the script stays usable as a pre-commit check. They are never
+# dropped silently -- the closing line names every unselected entry with the
+# flag that would select it. Use `--all` (hit-and-run 5,000 is ~45 min) to
+# cover them. The budgets are runtime estimates: a row is only ever excluded
+# by an estimate above `SLOW_SECS`, so a row that grew past the threshold (as
+# `temper-4` did, 950 s) leaves the default sweep until `--all` is used.
 #
 # Exit status: 0 all compared rungs matched; 1 any mismatch or failed run;
 # 2 setup problem (no binary, no fixture, unknown gate).
@@ -188,6 +192,7 @@ mkdir -p "$OUT"
 fail=0
 ran=0
 skipped=0
+SKIPPED=()
 
 echo "R13 gate re-run: $STAMP"
 echo "  rerun logs: $OUT"
@@ -196,6 +201,11 @@ echo
 while IFS='|' read -r name cls budget log prog args; do
   if ! selected "$name" "$cls" "$budget" "$log"; then
     skipped=$((skipped + 1))
+    if [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ]; then
+      SKIPPED+=("$name (alternate; --alts)")
+    elif [ "$RUN_ALL" -eq 0 ] && [ "$budget" -gt "$SLOW_SECS" ]; then
+      SKIPPED+=("$name (budget ${budget}s > ${SLOW_SECS}s; --all)")
+    fi
     continue
   fi
   if [ ! -x "$BIN_DIR/$prog" ]; then
@@ -262,4 +272,7 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 echo "R13 gates reproduce: $ran compared, $skipped not selected."
+if [ "${#SKIPPED[@]}" -gt 0 ]; then
+  for s in "${SKIPPED[@]}"; do echo "  not selected: $s"; done
+fi
 exit 0

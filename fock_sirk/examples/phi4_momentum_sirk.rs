@@ -24,16 +24,16 @@
 //!   certify a 1e-3 response, so the sharp tier is reported beside it.
 
 use fock_sirk::joint_sirk::{
-    hashimoto_unitary_shifts, joint_inner_product, solve_joint_sirk, JointKrylovMethod,
-    JointSirkOptions,
+    JointKrylovMethod, JointSirkOptions, hashimoto_unitary_shifts, joint_inner_product,
+    solve_joint_sirk,
 };
 use fock_sirk::sm_defect::{defect_terms, reduced_growth};
 use nalgebra::DMatrix;
 use nested_fock_algebra::exact_inner::{ActionLimits, InnerExpr, JointOuterBasis, NestedVector};
-use nested_fock_algebra::phi4_momentum::{frozen_jet_comparison, occupations_of, ScalarMomCont};
+use nested_fock_algebra::phi4_momentum::{ScalarMomCont, frozen_jet_comparison, occupations_of};
 use nested_fock_algebra::phi4_scalar::ScalarGrid;
 use num_complex::Complex64 as C;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
@@ -59,8 +59,10 @@ fn shift_invert() -> JointKrylovMethod {
 
 /// Cutoffs of the outside-window sweep. C = 16 and 20 are the extension past
 /// the window at which the seed's support is fully covered; they need a looser
-/// solve policy (see `sweep_method`) and a larger component budget.
-const SWEEP_CUTOFFS: [u32; 5] = [4, 8, 12, 16, 20];
+/// solve policy (see `sweep_method`) and a larger component budget. C = 22, 24
+/// and 26 push past 20 to show that the tail keeps shrinking while the SIRK
+/// error stays flat (rank-limited, not window-limited).
+const SWEEP_CUTOFFS: [u32; 8] = [4, 8, 12, 16, 20, 22, 24, 26];
 
 /// Solve policy per cutoff. The `1e-13` relative residual is affordable while
 /// the window is small, but at C = 20 the smallest scheduled shift
@@ -81,8 +83,10 @@ fn sweep_method(cutoff: u32) -> JointKrylovMethod {
 
 /// The window dictionary charges one component per (outer label, inner state)
 /// pair, so C = 20 (1001 labels) exceeds the default 1e6 budget during span
-/// registration.
-const SWEEP_COMPONENT_BUDGET: usize = 4_000_000;
+/// registration, C = 24 (1820 labels, 3.35e6 components) needs more than
+/// C = 20's 4e6, and C = 26 (2380 labels, 5.71e6 components) needs more than
+/// 4e6 too.
+const SWEEP_COMPONENT_BUDGET: usize = 8_000_000;
 
 fn solve(
     h: &InnerExpr,
@@ -177,6 +181,33 @@ impl WindowOperator {
         let basis = initial.keys().next().expect("nonempty seed").clone();
         let j = self.index[&basis];
         (self.matrix.clone() * C::new(0.0, -t)).exp()[(j, j)].norm_sqr()
+    }
+
+    /// `|⟨ψ|ψ(t)⟩ − ⟨ψ|w(t)⟩|` on the declared window: the amplitude error the
+    /// full-action amplitude bound has to dominate. The seed is `e_j`, so this
+    /// is one entry of the exact column against the reconstructed SIRK state.
+    fn amplitude_gap(
+        &self,
+        result: &fock_sirk::joint_sirk::JointSirkResult,
+        initial: &NestedVector,
+        t: f64,
+    ) -> f64 {
+        let basis = initial.keys().next().expect("nonempty seed").clone();
+        let j = self.index[&basis];
+        let exact = (self.matrix.clone() * C::new(0.0, -t))
+            .exp()
+            .column(j)
+            .into_owned();
+        let state = result
+            .reconstruct(&result.time_evolve(t).expect("finite time"))
+            .expect("reconstruction");
+        let mut sirk = C::new(0.0, 0.0);
+        for (label, amplitude) in &state {
+            if self.index.get(label) == Some(&j) {
+                sirk += *amplitude;
+            }
+        }
+        (exact[j] - sirk).norm()
     }
 }
 
@@ -273,10 +304,10 @@ fn rank_two_cell() -> Value {
     let result = solve(&h, &initial, &shifts, &window, shift_invert());
 
     let p_sirk = return_probability(&result, &initial, t);
-    let p_window = WindowOperator::build(&h, &ScalarMomCont::window_labels(2))
-        .reference_return(&initial, t);
-    let p_full = WindowOperator::build(&h, &ScalarMomCont::window_labels(8))
-        .reference_return(&initial, t);
+    let p_window =
+        WindowOperator::build(&h, &ScalarMomCont::window_labels(2)).reference_return(&initial, t);
+    let p_full =
+        WindowOperator::build(&h, &ScalarMomCont::window_labels(8)).reference_return(&initial, t);
     let (mean, variance, outside) = model.seed_moments();
     let tail = result.projected_action_tail_norms[0];
 
@@ -453,12 +484,12 @@ fn rank_sweep() -> Value {
 }
 
 /// One paired-response cell: compressed estimate, exact window reference, and
-/// the two charges. `sharp` is the measured compressed-flow discrepancy (S43
-/// sharp tier, the number that certifies the 1e-3-scale responses);
-/// `certified` is the full-action Duhamel state bound converted to a
-/// probability charge by `2 eps + eps^2`. The certified charge is sound but
-/// wide here (~1e-1) because the evolution error is nearly orthogonal to the
-/// seed: the state error is ~1e-2 while the probability error is ~1e-5.
+/// the charges. `sharp` is the measured compressed-flow discrepancy (S43 sharp
+/// tier). `certified` is the full-action **amplitude-overlap** bound
+/// (`sm_defect::amplitude_terms`), which prices `<psi|e>` instead of `||e||`
+/// and is `2 a + a^2` on the amplitude bound `a`; the state-norm charge
+/// (`2 eps + eps^2`) is recorded beside it as `state_charge`, because it is
+/// ~100x wider for the same cell.
 fn response_cell(lam: f64, width_k: f64, t: f64) -> Value {
     let started = Instant::now();
     let window = ScalarMomCont::window_labels(8);
@@ -474,11 +505,21 @@ fn response_cell(lam: f64, width_k: f64, t: f64) -> Value {
         &initial,
         t,
     );
+    let amplitude = fock_sirk::sm_defect::amplitude_terms(
+        &result.orthonormal_basis,
+        &result.orthonormal_images,
+        &result.function_generator,
+        &initial,
+        t,
+    );
     let p_sirk = return_probability(&result, &initial, t);
-    let p_exact = WindowOperator::build(&h, &window).reference_return(&initial, t);
+    let reference = WindowOperator::build(&h, &window);
+    let p_exact = reference.reference_return(&initial, t);
+    let amplitude_gap = reference.amplitude_gap(&result, &initial, t);
     let discrepancy = (p_sirk - p_exact).abs();
     let epsilon = defect.evolution_bound;
-    let certified = 2.0 * epsilon + epsilon * epsilon;
+    let state_charge = 2.0 * epsilon + epsilon * epsilon;
+    let certified = amplitude.probability_bound;
 
     json!({
         "status": "measured",
@@ -500,9 +541,17 @@ fn response_cell(lam: f64, width_k: f64, t: f64) -> Value {
             "value": discrepancy,
         },
         "certified_charge": {
-            "kind": "2 eps + eps^2 from the full-action Duhamel state bound",
+            "kind": "2 a + a^2 from the full-action amplitude-overlap bound",
             "value": certified,
         },
+        "state_charge": {
+            "kind": "2 eps + eps^2 from the full-action Duhamel state bound",
+            "value": state_charge,
+            "note": "kept for comparison: the state norm cannot see the near-orthogonality that the amplitude overlap does",
+        },
+        "amplitude_defect": amplitude.to_json(),
+        "measured_amplitude_gap": amplitude_gap,
+        "amplitude_bound_dominates_gap": amplitude.amplitude_bound >= amplitude_gap,
         "full_action_defect": {
             "status": "charged (sound, wide)",
             "initial_leakage": defect.initial_leakage,
@@ -511,7 +560,7 @@ fn response_cell(lam: f64, width_k: f64, t: f64) -> Value {
             "defect_action_envelope": defect.defect_action_envelope,
             "state_weighted_bound": defect.state_weighted_bound,
             "evolution_bound": defect.evolution_bound,
-            "note": "the envelope is now a grid-converged maximum sampled along the returned trajectory (the ||D G||_F ||c|| exp(omega t) product it replaced was shift-scaled and ~100 at this rank); it stays at 1e-1 here, ~25x the true state error and ~600x the true probability error, so it certifies soundness but not the 1e-3 responses",
+            "note": "the envelope is a grid-converged maximum sampled along the returned trajectory (the ||D G||_F ||c|| exp(omega t) product it replaced was shift-scaled and ~100 at this rank); it stays at 1e-1 here, ~23x the true state error and ~600x the true probability error",
         },
         "solver": solver_health(&result),
         "runtime_ms": started.elapsed().as_millis() as u64,
@@ -597,9 +646,9 @@ fn parity_and_comparisons() -> Value {
         let state = result
             .reconstruct(&result.time_evolve(t).unwrap())
             .expect("state");
-        let parity_holds = state.keys().all(|basis| {
-            occupations_of(basis.inner_occupations()[0].0)[0] % 2 == parity
-        });
+        let parity_holds = state
+            .keys()
+            .all(|basis| occupations_of(basis.inner_occupations()[0].0)[0] % 2 == parity);
         let ritz_values = result.ritz_residuals().unwrap_or_default();
         let ground = ritz_values.first().map(|v| v.0).unwrap_or(f64::NAN);
         let ritz: Vec<Value> = ritz_values
@@ -626,7 +675,10 @@ fn parity_and_comparisons() -> Value {
     let (mean, variance, outside) = model.seed_moments();
     let jet = frozen_jet_comparison();
     let image = jet
-        .apply(&model.hermite_state(&vacuum_support()), ActionLimits::default())
+        .apply(
+            &model.hermite_state(&vacuum_support()),
+            ActionLimits::default(),
+        )
         .expect("finite action");
     let jet_variance: f64 = image
         .iter()
@@ -726,7 +778,7 @@ fn main() {
     root.insert(
         "limitations".into(),
         json!([
-            "the full-action defect envelope is now a grid-converged maximum sampled along the returned trajectory, which removes the shift-scaled ||D G||_F ||c|| exp(omega t) product: the state bound falls from 5.95 to 0.18 at the base cell. It is charged as 2 eps + eps^2 and is sound, but it stays ~25x the true state error and ~600x the true probability error, so it cannot certify a 1e-3 response; the sharp-tier charge (measured compressed-flow discrepancy against the exact Padé evolution of the declared window) is what does",
+            "the full-action charge is the amplitude-overlap bound (2 a + a^2 on <psi|e>), not the state bound: the state bound was tightened from 5.95 to 0.18 and its charge 0.39 -> 0.00076 (base), an ~500x improvement, which is what lets the defect route certify the 5.6e-2 momentum-spread response (charge 1.27e-2) but not the 1.6e-3 coupling response (charge 1.79e-3, a factor 1.1 short). The sharp tier (measured compressed-flow discrepancy against the exact Pade evolution of the declared window) certifies both",
             "the rank-2 cell on the degree-2 window reports the windowed return probability, which is 8.65e-4 below the converged window value because the omitted tail (squared norm 9/2) is projected out",
             "the ForwardProducts diagnostic is more accurate than shift-invert at m = 4 on these bounded windows; the plan's degradation claim appears only as growth with C, not as a rank-for-rank deficit",
             "momenta are continuous; no lattice or momentum sum is used anywhere in this record",

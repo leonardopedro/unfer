@@ -1,5 +1,65 @@
 # Standard-Model operator audit and current implementation state
 
+## Continuous-momentum Cadabra2 work order
+
+**2026-11-24.** Derive the full inner SM action between continuous momentum packets
+from the field strengths, covariant Higgs derivative and chiral matter terms in
+`book.tex`. Use the scalar study's Fourier normalization and Gaussian packet checks.
+The independent-jet export `sm_full_nested.cdb` supplies signs, species and generator
+tables for comparison. Its 1,241 expressions have no incoming/outgoing momentum
+routing. The following calculation and its SM fixture are proposed.
+[Manuscript](../../timepiece/book.tex) · [Scalar Cadabra2 calculation](phi4_momentum_nested.cdb)
+
+1. **Declare conventions in the module.** Write the new calculation alongside
+   `sm_full_nested.cdb`. Use $\hat f(k)=\int e^{-2\pi i k\cdot x}f(x)\,d^3x$,
+   $\widehat{\partial_i f}(k)=2\pi i k_i\hat f(k)$ and
+   $(a*b)(K)=\int a(q)b(K-q)\,d^3q$. With matrix or operator coefficients preserve
+   order. For adjoints, $\widehat{f^\dagger}(q)=\hat f(-q)^\dagger$.
+   Keep the integration measure explicitly in each convolution. Only internal
+   indices and basis labels are summed. No derivative-constraint sector is needed.
+2. **Derive and square the physical forms.** For $D=d+igTA$ the manuscript convention gives
+
+   $$
+   \widehat F^a_{ij}(K)=2\pi i\big(K_i\widehat A^a_j(K)-K_j\widehat A^a_i(K)\big)
+      -g\sum_{bc} f^{abc}(\widehat A_i^b*\widehat A_j^c)(K).
+   $$
+
+   Use the structure constants in the manuscript basis for color and weak isospin.
+   Hypercharge has only the curl. For the Higgs doublet derive
+   $\widehat{D_i\Phi}=2\pi iK_i\hat\Phi+
+   ig\,T^a(\hat W^a_i*\hat\Phi)+ig'Y(\hat B_i*\hat\Phi)$ in the specified
+   realification. Form the integrated adjoint squares. Check their free quadratic,
+   derivative–interaction cross and interaction-square terms independently, with the
+   magnetic normalization $B_i=\epsilon_{ijk}F_{jk}/2$. Retain the canonical kinetic
+   terms and the complete Higgs square in the four-real-component normalization.
+   Construct its pair field by convolution. A constant transforms as a delta acting
+   on a test packet. Use spatial smearing or a declared volume normalization to
+   account for the vacuum-energy constant before squaring. A squared delta on
+   infinite volume is undefined.
+3. **Include the ordered matter action.** Derive the free spatial Dirac multiplier
+   in the manuscript spin frame. For external momenta $k,l$, a gauge or Higgs
+   insertion carries $k-l$ in the kernel between the CAR creation and annihilation
+   legs. Check chiral/color/generation matrices, both Higgs contractions and Hermitian
+   conjugates for quarks and leptons, including the right-handed neutrinos. On smeared
+   packets test $h(k,l)=h(l,k)^\dagger$ in the weak sense. Export ordered leg labels
+   separately from the commuting coefficients processed by mathhook. Assemble every
+   term inside $h$ before the single graded lift $d\Gamma(h)$.
+4. **Deliver a reproducible reference.** Emit labeled equations, a versioned kernel
+   and Gaussian–Hermite matrix-element fixture, Fourier convention, parameter values
+   and a terminal success marker after all assertions. Compare the Fourier results
+   with an independent coordinate-space packet integral. Use distinct packet centers
+   and internal indices with nonzero structure constants so the mixed terms survive.
+   Check a Cartan/abelian control and the scalar free-gradient limit. Require the
+   checks to detect reversing the transfer, omitting $2\pi$, flipping the nonabelian
+   sign, removing a Higgs cross term and dropping a Yukawa adjoint or inner constant.
+   Register the new module with the strict Cadabra verifier and compare regenerated
+   fixtures before reporting a pass. These checks establish algebra and specified
+   packet entries. Domain estimates and gauge reduction go to the Lean work order.
+   [Formalization](../../timepiece/SM_ESA_COMPLETION_PLAN.md) ·
+   [Numerical acceptance](SM_RESEARCH_PLAN.md#continuous-momentum-numerical-work-order)
+
+## Independent-coordinate E1 audit · historical scope
+
 2026-11-15 source/planning review. Complete E1 term assembly and joint rational
 integration are implemented; the dated execution records remain in
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md). No fresh build, symbolic run,

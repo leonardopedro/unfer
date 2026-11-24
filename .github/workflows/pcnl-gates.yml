@@ -35,9 +35,9 @@ on:
   workflow_dispatch:
     inputs:
       quick:
-        description: "skip the >15 min entries (hit-and-run 5,000)"
+        description: "skip the >15 min entries (hit-and-run 5,000, tempering)"
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
@@ -74,6 +74,10 @@ jobs:
       - name: structure first (manifest ↔ logs)
         run: bash scripts/check-pcnl-gates --check-manifest
 
+      # `--all` is the default everywhere: a budget is a runtime estimate, so a
+      # gate that grows past `SLOW_SECS` would otherwise drop out of the lane
+      # silently (temper-4 did exactly that, 950 s). Only the explicit `quick`
+      # dispatch skips the long entries, and the run prints what it skipped.
       - name: re-run the gates and diff their summaries
         run: |
           set -euo pipefail

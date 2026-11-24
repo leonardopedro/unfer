@@ -23,14 +23,16 @@
 //!    contrast (continuous 553/32 vs static-jet 145/32 vs 2-site 337/16).
 
 use fock_sirk::joint_sirk::{
-    hashimoto_unitary_shifts, joint_inner_product, solve_joint_sirk, JointKrylovMethod,
-    JointSirkOptions, JointSirkResult,
+    JointKrylovMethod, JointSirkOptions, JointSirkResult, hashimoto_unitary_shifts,
+    joint_inner_product, solve_joint_sirk,
 };
-use fock_sirk::sm_defect::{defect_terms, reduced_growth, DefectTerms};
+use fock_sirk::sm_defect::{
+    AmplitudeBound, DefectTerms, amplitude_terms, defect_terms, reduced_growth,
+};
 use nalgebra::DMatrix;
 use nested_fock_algebra::exact_inner::{ActionLimits, InnerExpr, JointOuterBasis, NestedVector};
 use nested_fock_algebra::phi4_momentum::{
-    frozen_jet_comparison, occupations_of, ScalarMomCont, S3_MODES,
+    S3_MODES, ScalarMomCont, frozen_jet_comparison, occupations_of,
 };
 use nested_fock_algebra::phi4_scalar::ScalarGrid;
 use num_complex::Complex64 as C;
@@ -116,8 +118,8 @@ impl WindowOperator {
         Self { index, matrix }
     }
 
-    /// Exact unitary return probability of a single-label seed in this window.
-    fn reference_return(&self, initial: &NestedVector, t: f64) -> f64 {
+    /// Index of the single unit basis label of the seed.
+    fn seed_index(&self, initial: &NestedVector) -> usize {
         let mut label = None;
         for (basis, amplitude) in initial {
             assert!(
@@ -127,9 +129,41 @@ impl WindowOperator {
             assert!(label.is_none(), "reference seed must be a single label");
             label = Some(basis.clone());
         }
-        let j = self.index[&label.expect("nonempty seed")];
+        self.index[&label.expect("nonempty seed")]
+    }
+
+    /// Exact unitary return probability of a single-label seed in this window.
+    fn reference_return(&self, initial: &NestedVector, t: f64) -> f64 {
+        let j = self.seed_index(initial);
         let evolved = (self.matrix.clone() * C::new(0.0, -t)).exp();
         evolved[(j, j)].norm_sqr()
+    }
+
+    /// `|⟨ψ|ψ(t)⟩ − ⟨ψ|w(t)⟩|` on the declared window. The seed is `e_j`, so
+    /// the amplitude is the `j`th entry of the exact evolved column, and of the
+    /// reconstructed SIRK state after summing its contributions to label `j`.
+    fn amplitude_gap(&self, result: &JointSirkResult, initial: &NestedVector, t: f64) -> f64 {
+        let j = self.seed_index(initial);
+        let exact = (self.matrix.clone() * C::new(0.0, -t))
+            .exp()
+            .column(j)
+            .into_owned();
+        let state = result
+            .reconstruct(&result.time_evolve(t).expect("finite time"))
+            .expect("reconstruction");
+        let mut sirk = C::new(0.0, 0.0);
+        let mut found = 0.0;
+        for (label, amplitude) in &state {
+            if self.index.get(label) == Some(&j) {
+                sirk += *amplitude;
+                found += amplitude.norm();
+            }
+        }
+        assert!(
+            found > 0.0,
+            "the reconstructed state must occupy the seed label"
+        );
+        (exact[j] - sirk).norm()
     }
 }
 
@@ -153,7 +187,13 @@ fn rank_two_hashimoto_certificate_on_the_degree_two_window() {
     assert_close(shifts[0].im, 10.0, 1e-12, "first physical shift");
     assert_close(shifts[1].im, 5.0, 1e-12, "second physical shift");
 
-    let result = solve(&model.hamiltonian(), &initial, &shifts, window, shift_invert());
+    let result = solve(
+        &model.hamiltonian(),
+        &initial,
+        &shifts,
+        window,
+        shift_invert(),
+    );
     assert_eq!(result.rank(), 2, "rank-2 Hashimoto subspace");
     assert!(
         result.hermiticity_defect < 1e-12,
@@ -277,8 +317,7 @@ fn window_and_rank_sweeps_separate_the_two_error_sources() {
             window,
             JointKrylovMethod::ForwardProducts,
         );
-        forward_errors_by_cutoff
-            .push((return_probability(&forward, &initial, t) - exact).abs());
+        forward_errors_by_cutoff.push((return_probability(&forward, &initial, t) - exact).abs());
     }
     assert!(
         forward_errors_by_cutoff[2] > 100.0 * forward_errors_by_cutoff[0],
@@ -333,9 +372,7 @@ fn window_and_rank_sweeps_separate_the_two_error_sources() {
     // these bounded windows the shifted polynomial flow is the more accurate
     // of the two (5.4e-5 vs 3.1e-3 at C=8), which is why it stays labeled a
     // diagnostic rather than a competitor.
-    eprintln!(
-        "NOTE rank-m errors={errors:?} forward={forward_errors:?} exact={exact:.12}"
-    );
+    eprintln!("NOTE rank-m errors={errors:?} forward={forward_errors:?} exact={exact:.12}");
     // The tail is reported separately from the inside-window error.
     let result = solve(
         &h,
@@ -377,6 +414,11 @@ struct Cell {
     discrepancy: f64,
     /// Full-action state bound from `sm_defect::defect_terms`.
     epsilon: f64,
+    /// Full-action *amplitude* bound from `sm_defect::amplitude_terms`.
+    amplitude: AmplitudeBound,
+    /// `|⟨ψ|ψ(t)⟩ − ⟨ψ|w(t)⟩|` measured exactly on the declared window: the
+    /// observable piece the amplitude bound has to dominate.
+    amplitude_gap: f64,
     /// Arnoldi steps taken by the largest shift solve of this cell.
     iterations: usize,
     defect: DefectTerms,
@@ -404,13 +446,26 @@ fn certified_cell(
         initial,
         t,
     );
+    let amplitude = amplitude_terms(
+        &result.orthonormal_basis,
+        &result.orthonormal_images,
+        &result.function_generator,
+        initial,
+        t,
+    );
     let p_sirk = return_probability(&result, initial, t);
-    let p_exact = WindowOperator::build(h, window).reference_return(initial, t);
+    let reference = WindowOperator::build(h, window);
+    let p_exact = reference.reference_return(initial, t);
+    // The seed is a single joint label, so the amplitude is one entry of the
+    // exact evolved column and of the reconstructed SIRK state.
+    let amplitude_gap = reference.amplitude_gap(&result, initial, t);
     Cell {
         p_sirk,
         p_exact,
         discrepancy: (p_sirk - p_exact).abs(),
         epsilon: defect.evolution_bound,
+        amplitude,
+        amplitude_gap,
         iterations: result.max_shift_solve_iterations(),
         defect,
     }
@@ -453,19 +508,16 @@ fn coupling_and_momentum_spread_responses_are_certified() {
         );
     }
 
-    // The full-action defect bound is the *charge*: a probability is priced by
-    // `2 eps + eps^2` because `|a|^2` is Lipschitz with constant `2|a|` on the
-    // unit ball. `eps` is the Duhamel state bound from `sm_defect`, now sampled
-    // along the returned trajectory instead of `||D G||_F ||c|| exp(omega t)`.
-    // Soundness is asserted below; at this operator/window it is ~1e-1, i.e.
-    // 25x the true state error and ~600x the true probability error, so the
-    // certified intervals are wide by construction (see
-    // docs/VERIFY_PHI4_MOMENTUM.md). The sharp-tier charge (`discrepancy`)
-    // stays the number that certifies the 1e-3-scale responses.
-    let certified_charge = |a: &Cell, b: &Cell| {
-        let eps = a.epsilon.max(b.epsilon);
-        2.0 * eps + eps * eps
-    };
+    // The full-action charge is now the *amplitude* bound: a probability is
+    // quadratic in the amplitude, so `| |a|^2 - |b|^2 | <= 2|a-b| + |a-b|^2`
+    // prices the overlap `<psi|e>` instead of `||e||`, which is where the
+    // near-orthogonality that defeats the state route cancels. Its computed
+    // overlap term is 9.06e-6 against a true amplitude difference of 3.55e-5;
+    // the residual `(int ||r||)^2/2` term is what is left. Soundness is
+    // asserted below (every certified interval contains the exact response).
+    // See docs/VERIFY_PHI4_MOMENTUM.md.
+    let certified_charge =
+        |a: &Cell, b: &Cell| a.amplitude.probability_bound + b.amplitude.probability_bound;
     for (label, c) in [
         ("base", &base),
         ("null", &null),
@@ -481,6 +533,34 @@ fn coupling_and_momentum_spread_responses_are_certified() {
             c.iterations > 0 && c.iterations <= 64,
             "{label}: the shift solve must report 1..=64 Arnoldi steps, got {}",
             c.iterations
+        );
+        // The amplitude bound must dominate the measured amplitude gap on the
+        // declared window, and its pieces must be finite and nonnegative.
+        let amp = &c.amplitude;
+        assert!(
+            amp.amplitude_bound.is_finite()
+                && amp.overlap_integral >= 0.0
+                && amp.replacement_integral >= 0.0
+                && amp.defect_action_integral > 0.0,
+            "{label}: amplitude pieces must be finite and nonnegative"
+        );
+        assert!(
+            amp.amplitude_bound >= amp.overlap_integral + amp.replacement_integral,
+            "{label}: the amplitude bound must contain its own terms"
+        );
+        assert!(
+            amp.amplitude_bound >= c.amplitude_gap,
+            "{label}: the amplitude bound {:.3e} must dominate the measured \
+             declared-window amplitude gap {:.3e}",
+            amp.amplitude_bound,
+            c.amplitude_gap
+        );
+        assert!(
+            amp.amplitude_bound < c.epsilon,
+            "{label}: the amplitude bound ({:.3e}) must be sharper than the state \
+             bound ({:.3e}); if this ever fails the routing is wrong",
+            amp.amplitude_bound,
+            c.epsilon
         );
         assert!(
             c.epsilon >= c.discrepancy,
@@ -515,6 +595,18 @@ fn coupling_and_momentum_spread_responses_are_certified() {
         "the compressed λ response {lambda_sirk} must agree with the exact one {lambda_exact} \
          within the certified charge {lambda_budget}"
     );
+    // The amplitude charge is *within a factor 2* of the coupling response but
+    // does not exclude 0 (charge 1.786e-3 against a 1.613e-3 response): the
+    // remaining slack is the replacement term, which bounds `||e(tau)||` by the
+    // accumulated defect `int_0^tau ||r||`. Both facts are recorded rather than
+    // asserted as a certification the bounds do not support.
+    assert!(
+        certified_charge(&base, &coupled) <= 2.0 * lambda_exact.abs(),
+        "the amplitude charge {:.3e} must be within 2x the coupling response \
+         {lambda_exact:.3e}",
+        certified_charge(&base, &coupled)
+    );
+
     // Sharp tier: the measured compressed-flow charge is far below the response.
     // Raising `lambda` *lowers* the return probability (the quartic term dephases
     // the packet faster), so the sign is asserted explicitly.
@@ -537,6 +629,15 @@ fn coupling_and_momentum_spread_responses_are_certified() {
         (spread_sirk - spread_exact).abs() <= spread_certified,
         "the compressed width_k response {spread_sirk} must agree with the exact one \
          {spread_exact} within the certified charge {spread_certified}"
+    );
+    // The amplitude-overlap charge *certifies* this response: it is strictly
+    // smaller than the response itself, so the interval excludes 0 with no
+    // sharp-tier input at all. This is the payoff of pricing `<psi|e>` rather
+    // than `||e||` (the state charge was 2.05 for the same pair).
+    assert!(
+        spread_certified < spread_exact.abs(),
+        "the amplitude charge {spread_certified} must certify the width_k response \
+         {spread_exact} (exclude 0); if this fails the amplitude bound has regressed"
     );
     let spread_budget = base.half_width() + spread.half_width();
     assert!(
@@ -564,6 +665,18 @@ fn coupling_and_momentum_spread_responses_are_certified() {
             "the seed lies inside the declared window"
         );
     }
+
+    eprintln!(
+        "NOTE amplitude charge: base={:.3e} coupled={:.3e} spread={:.3e} | lambda response \
+         {:.3e} vs charge {:.3e} | width_k response {:.3e} vs charge {:.3e}",
+        base.amplitude.probability_bound,
+        coupled.amplitude.probability_bound,
+        spread.amplitude.probability_bound,
+        lambda_exact.abs(),
+        certified_charge(&base, &coupled),
+        spread_exact.abs(),
+        certified_charge(&base, &spread),
+    );
 }
 
 #[test]
@@ -633,7 +746,10 @@ fn parity_gap_and_comparison_contrast() {
     // Static-jet comparison: same mean, no continuous momentum–field coupling.
     let jet = frozen_jet_comparison();
     let image = jet
-        .apply(&model.hermite_state(&vacuum_support()), ActionLimits::default())
+        .apply(
+            &model.hermite_state(&vacuum_support()),
+            ActionLimits::default(),
+        )
         .expect("finite action");
     let mut jet_variance = 0.0;
     for (basis, amplitude) in &image {
@@ -675,8 +791,8 @@ fn rational(text: &str) -> f64 {
 }
 
 /// The evidence record's cutoff sweep must stay consistent with the live
-/// operator. `C <= 12` is recomputed here; the `C = 16, 20` rows (which cost
-/// 11.5 s and 73 s per cell and need a `4e6` component budget with a looser
+/// operator. `C <= 12` is recomputed here; the `C = 16 … 26` rows (which cost
+/// 5.7 s to 406 s per cell and need an `8e6` component budget with a looser
 /// `1e-10` solve policy) are checked for the trend they are quoted for:
 /// the tail keeps shrinking, the inside-window error stays flat, the
 /// `ForwardProducts` diagnostic keeps growing, and every Arnoldi step count is
@@ -698,12 +814,16 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .iter()
         .map(|c| c["hermite_cutoff"].as_u64().unwrap())
         .collect();
-    assert_eq!(cutoffs, vec![4, 8, 12, 16, 20], "sweep cutoffs");
+    assert_eq!(cutoffs, vec![4, 8, 12, 16, 20, 22, 24, 26], "sweep cutoffs");
     let sizes: Vec<u64> = tails
         .iter()
         .map(|c| c["window_labels"].as_u64().unwrap())
         .collect();
-    assert_eq!(sizes, vec![15, 70, 210, 495, 1001], "window sizes");
+    assert_eq!(
+        sizes,
+        vec![15, 70, 210, 495, 1001, 1365, 1820, 2380],
+        "window sizes"
+    );
     let tail_values: Vec<f64> = tails
         .iter()
         .map(|c| c["window_tail_norm_max"].as_f64().unwrap())
@@ -715,6 +835,14 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
     assert!(
         tail_values[4] < 0.5 * tail_values[0],
         "the tail must be meaningfully reduced by C = 20: {tail_values:?}"
+    );
+    assert!(
+        tail_values[6] < 0.7 * tail_values[4],
+        "pushing to C = 24 must keep shrinking the tail: {tail_values:?}"
+    );
+    assert!(
+        tail_values[7] < 0.85 * tail_values[6],
+        "pushing to C = 26 must keep shrinking the tail: {tail_values:?}"
     );
     let tail_steps: Vec<u64> = tails
         .iter()
@@ -766,7 +894,7 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .iter()
         .map(|c| c["forward_products_diagnostic"]["error"].as_f64().unwrap())
         .collect();
-    assert_eq!(sirk.len(), 5);
+    assert_eq!(sirk.len(), 8);
     assert!(
         sirk.iter().all(|e| *e < 1e-2),
         "the primary solver must stay bounded across the sweep: {sirk:?}"
@@ -778,12 +906,19 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         "the rank-4 inside-window error must stay flat in C (ratio {spread_ratio}): {sirk:?}"
     );
     assert!(
-        forward.windows(2).all(|w| w[1] > w[0]),
-        "the forward diagnostic must degrade monotonically: {forward:?}"
+        forward[..5].windows(2).all(|w| w[1] > w[0]),
+        "the forward diagnostic must degrade monotonically up to C = 20: {forward:?}"
     );
     assert!(
         forward[4] > 100.0 * forward[0],
         "the forward diagnostic must degrade by >100x to C = 20: {forward:?}"
+    );
+    // Past C = 20 the diagnostic saturates instead of growing: the window has
+    // long covered the seed's support, so the omitted directions are the same
+    // ones. Read the four largest cells as equal within 10%.
+    assert!(
+        forward[4..].iter().all(|e| *e > 0.9 * forward[4]),
+        "the forward diagnostic must plateau past C = 20: {forward:?}"
     );
     for cell in contrast {
         assert!(
@@ -872,5 +1007,10 @@ fn mehler_fixture_matches_the_live_model() {
     );
     assert_close(mean, 17.0 / 8.0, 1e-12, "plan mean");
     assert_close(variance, 553.0 / 32.0, 1e-12, "plan variance");
-    assert_close(outside, 9.0 / 2.0, 1e-12, "plan outside-window squared norm");
+    assert_close(
+        outside,
+        9.0 / 2.0,
+        1e-12,
+        "plan outside-window squared norm",
+    );
 }

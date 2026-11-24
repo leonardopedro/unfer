@@ -117,6 +117,19 @@ impl Budget {
         Ok(())
     }
 
+    /// Charge a batch of work. An action that asks for more than
+    /// `max_work` fails; asking for exactly `max_work` succeeds, matching
+    /// [`Self::tick`] (which errors on the attempt to exceed the limit).
+    fn charge(&mut self, work: usize) -> Result<(), ActionError> {
+        self.work = self.work.saturating_add(work);
+        if self.work > self.limits.max_work {
+            return Err(ActionError::WorkLimit {
+                limit: self.limits.max_work,
+            });
+        }
+        Ok(())
+    }
+
     fn add<B: Ord>(
         &mut self,
         vector: &mut BTreeMap<B, Complex64>,
@@ -293,25 +306,63 @@ impl InnerExpr {
                     return Err(ActionError::NonFiniteAmplitude);
                 }
                 let mut out = InnerVector::new();
-                for (b, a) in input {
-                    budget.add(&mut out, b.clone(), c * a)?;
+                let (produced, _) = map_entries(input, |b, a| Ok(Some((b.clone(), c * a))))?;
+                for (b, value) in produced {
+                    budget.add(&mut out, b, value)?;
                 }
                 Ok(out)
             }
             Self::Ladder(ladder) => {
                 let mut out = InnerVector::new();
-                for (b, a) in input {
-                    budget.tick()?;
-                    if let Some((next, factor)) = ladder.transition(b)? {
-                        budget.add(&mut out, next, a * factor)?;
-                    }
+                let (produced, work) = map_entries(input, |b, a| {
+                    Ok(ladder
+                        .transition(b)?
+                        .map(|(next, factor)| (next, a * factor)))
+                })?;
+                budget.charge(work)?;
+                for (b, value) in produced {
+                    budget.add(&mut out, b, value)?;
                 }
                 Ok(out)
             }
             Self::Sum(terms) => {
                 let mut out = InnerVector::new();
-                for term in terms {
-                    for (b, a) in term.apply_with_budget(input, budget)? {
+                let threads = sum_threads(terms.len());
+                if threads <= 1 || in_worker() {
+                    for term in terms {
+                        for (b, a) in term.apply_with_budget(input, budget)? {
+                            budget.add(&mut out, b, a)?;
+                        }
+                    }
+                    return Ok(out);
+                }
+                // One worker per term. Each term's image is merged as a whole
+                // map in term order, and a term contributes at most one value
+                // per output label, so every label accumulates in the same
+                // term order as the serial path: bit-identical, not merely close.
+                let by_reference = &*input;
+                let limits = budget.limits;
+                let joined = std::thread::scope(|scope| {
+                    let handles: Vec<_> = terms
+                        .iter()
+                        .map(|term| {
+                            scope.spawn(move || {
+                                with_worker_context(|| {
+                                    let mut local = Budget { limits, work: 0 };
+                                    let image = term.apply_with_budget(by_reference, &mut local)?;
+                                    Ok::<_, ActionError>((image, local.work))
+                                })
+                            })
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("action worker panicked"))
+                        .collect::<Result<Vec<_>, ActionError>>()
+                })?;
+                for (image, work) in joined {
+                    budget.charge(work)?;
+                    for (b, a) in image {
                         budget.add(&mut out, b, a)?;
                     }
                 }
@@ -371,20 +422,195 @@ impl InnerExpr {
             }
             return Ok(out);
         }
-        for (outer, amplitude) in input {
-            for source in outer.occupied() {
-                budget.tick()?;
-                let basis_vector = InnerVector::from([(source.clone(), Complex64::new(1.0, 0.0))]);
-                let image = self.apply_with_budget(&basis_vector, &mut budget)?;
-                for (target, coefficient) in image {
-                    if let Some((next, factor)) = outer.transition(source, &target)? {
-                        budget.add(&mut out, next, amplitude * coefficient * factor)?;
+        let entries: Vec<(&JointOuterBasis, &Complex64)> = input.iter().collect();
+        let threads = action_threads(entries.len());
+        self.apply_outer_labels(&entries, limits, &mut out, threads)?;
+        Ok(out)
+    }
+
+    /// The multi-particle branch of [`Self::d_gamma`], with the worker count
+    /// passed in so a test can compare the parallel and serial paths on the same
+    /// input without touching the process environment.
+    ///
+    /// The expensive part is `apply_with_budget` on a one-particle basis vector,
+    /// once per (outer label, occupied inner label). Those units are
+    /// independent, so they are farmed out over contiguous chunks of the input
+    /// order. The *contributions* come back per entry and are merged on this
+    /// thread in the original order, which keeps the floating-point accumulation
+    /// sequence identical to the serial path: the parallel result is
+    /// bit-identical, not merely close.
+    fn apply_outer_labels(
+        &self,
+        entries: &[(&JointOuterBasis, &Complex64)],
+        limits: ActionLimits,
+        out: &mut NestedVector,
+        threads: usize,
+    ) -> Result<(), ActionError> {
+        let mut budget = Budget { limits, work: 0 };
+        if threads <= 1 {
+            for (outer, amplitude) in entries {
+                for source in outer.occupied() {
+                    budget.tick()?;
+                    let basis_vector =
+                        InnerVector::from([(source.clone(), Complex64::new(1.0, 0.0))]);
+                    let image = self.apply_with_budget(&basis_vector, &mut budget)?;
+                    for (target, coefficient) in image {
+                        if let Some((next, factor)) = outer.transition(source, &target)? {
+                            budget.add(out, next, *amplitude * coefficient * factor)?;
+                        }
                     }
                 }
             }
+            return Ok(());
         }
-        Ok(out)
+        let chunk = entries.len().div_ceil(threads);
+        let joined = std::thread::scope(|scope| {
+            let handles: Vec<_> = entries
+                .chunks(chunk)
+                .map(|group| {
+                    scope.spawn(move || {
+                        // A private counter: the work limit is checked against
+                        // the aggregate below, so the total tick count is the
+                        // same as the serial path.
+                        let mut local = Budget { limits, work: 0 };
+                        let mut produced = Vec::with_capacity(group.len());
+                        for (outer, amplitude) in group {
+                            let mut per_entry = Vec::new();
+                            for source in outer.occupied() {
+                                local.tick()?;
+                                let basis_vector =
+                                    InnerVector::from([(source.clone(), Complex64::new(1.0, 0.0))]);
+                                let image = self.apply_with_budget(&basis_vector, &mut local)?;
+                                for (target, coefficient) in image {
+                                    if let Some((next, factor)) =
+                                        outer.transition(source, &target)?
+                                    {
+                                        per_entry.push((next, *amplitude * coefficient * factor));
+                                    }
+                                }
+                            }
+                            produced.push(per_entry);
+                        }
+                        Ok::<_, ActionError>((produced, local.work))
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("action worker panicked"))
+                .collect::<Result<Vec<_>, ActionError>>()
+        })?;
+        for (produced, work) in joined {
+            budget.charge(work)?;
+            for per_entry in produced {
+                for (next, value) in per_entry {
+                    budget.add(out, next, value)?;
+                }
+            }
+        }
+        Ok(())
     }
+}
+
+/// Map over the entries of an inner vector, optionally across threads.
+///
+/// Returns the contributions in the *input order* — chunks are contiguous, so
+/// concatenating them reproduces the serial sequence exactly — plus the number
+/// of entries, which the caller charges as work so the limit accounting is the
+/// same serial and parallel. Returning contributions instead of partial sums is
+/// what makes the parallel result bit-identical rather than merely close.
+fn map_entries<F>(
+    input: &InnerVector,
+    f: F,
+) -> Result<(Vec<(JointInnerBasis, Complex64)>, usize), ActionError>
+where
+    F: Fn(
+        &JointInnerBasis,
+        &Complex64,
+    ) -> Result<Option<(JointInnerBasis, Complex64)>, ActionError>,
+{
+    // Deliberately serial: splitting this map across threads measured *slower*
+    // (46.0 ms -> 62.5 ms per C = 20 matvec) because one fork/join per factor
+    // does not amortize against a per-entry cost of a few map lookups. The
+    // parallelism is taken at the coarser sum-over-terms level instead.
+    let mut produced = Vec::with_capacity(input.len());
+    for (b, a) in input {
+        if let Some(item) = f(b, a)? {
+            produced.push(item);
+        }
+    }
+    Ok((produced, input.len()))
+}
+
+thread_local! {
+    /// Set inside a sum worker so a nested sum does not spawn again.
+    static IN_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn in_worker() -> bool {
+    IN_WORKER.with(|flag| flag.get())
+}
+
+fn with_worker_context<R>(f: impl FnOnce() -> R) -> R {
+    IN_WORKER.with(|flag| {
+        let previous = flag.replace(true);
+        let out = f();
+        flag.set(previous);
+        out
+    })
+}
+
+/// Test-only override so a test can force the serial path without touching the
+/// process environment (which would race with the other tests in this binary).
+#[cfg(test)]
+static FORCED_THREADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The worker count a caller asked for: the test override, else
+/// `FOCK_SIRK_ACTION_THREADS`. Forcing a count is how the serial path is
+/// measured against the parallel one.
+fn requested_threads() -> Option<usize> {
+    #[cfg(test)]
+    {
+        let forced = FORCED_THREADS.load(std::sync::atomic::Ordering::Relaxed);
+        if forced > 0 {
+            return Some(forced);
+        }
+    }
+    std::env::var("FOCK_SIRK_ACTION_THREADS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|count| *count > 0)
+}
+
+fn available_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+}
+
+/// Worker count for the sum-over-terms split: one per term, bounded by the
+/// machine.
+fn sum_threads(terms: usize) -> usize {
+    if terms < 2 {
+        return 1;
+    }
+    if let Some(forced) = requested_threads() {
+        return forced.clamp(1, terms);
+    }
+    available_threads().clamp(1, terms)
+}
+
+/// Worker count for the outer-label action. One thread below 64 entries (the
+/// fork/join cost dominates there), otherwise bounded by the machine and by the
+/// number of chunks worth splitting into.
+fn action_threads(entries: usize) -> usize {
+    if entries < 64 {
+        return 1;
+    }
+    if let Some(forced) = requested_threads() {
+        return forced.clamp(1, entries);
+    }
+    available_threads().clamp(1, entries / 32).max(1)
 }
 
 /// Symmetric, antisymmetric or parity-graded Fock space over the joint inner basis.
@@ -568,5 +794,153 @@ impl JointOuterBasis {
                 Ok(Some((Self::Fermionic(next), sign)))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod parallel_action_tests {
+    use super::*;
+    use crate::phi4_momentum::ScalarMomCont;
+
+    /// A wide multi-particle state over the continuous-momentum phi4 window.
+    fn wide_state(width: usize) -> NestedVector {
+        let model = ScalarMomCont::unit();
+        let mut state = NestedVector::new();
+        for n in 0..width {
+            let label = model.inner_basis([n as u32, 0, 0, 0]).unwrap();
+            // Two-particle outer labels take the multi-particle branch, and the
+            // mixed amplitudes make the accumulation order observable.
+            let basis = JointOuterBasis::bosonic([(label, 2)]).unwrap();
+            let amplitude = Complex64::new(1.0 / (3.0 + n as f64), 1.0 / (7.0 + n as f64));
+            state.insert(basis, amplitude);
+        }
+        state
+    }
+
+    fn bits(v: &NestedVector) -> Vec<(JointOuterBasis, u64, u64)> {
+        v.iter()
+            .map(|(b, a)| (b.clone(), a.re.to_bits(), a.im.to_bits()))
+            .collect()
+    }
+
+    #[test]
+    fn parallel_outer_labels_reproduce_the_serial_bits() {
+        let model = ScalarMomCont::unit();
+        let h = model.hamiltonian();
+        let limits = ActionLimits {
+            max_components: 100_000,
+            max_work: 100_000_000,
+        };
+        let state = wide_state(96);
+        assert!(state.len() >= 64, "need enough entries to engage workers");
+        let entries: Vec<(&JointOuterBasis, &Complex64)> = state.iter().collect();
+
+        let mut serial = NestedVector::new();
+        h.apply_outer_labels(&entries, limits, &mut serial, 1)
+            .unwrap();
+        assert!(!serial.is_empty());
+
+        // Every non-zero component must match to the bit, not merely closely.
+        for threads in [2, 3, 4, 7, 16] {
+            let mut parallel = NestedVector::new();
+            h.apply_outer_labels(&entries, limits, &mut parallel, threads)
+                .unwrap();
+            assert_eq!(
+                bits(&serial),
+                bits(&parallel),
+                "threads={threads} changed the accumulation order"
+            );
+        }
+
+        // And the public entry point, which picks its own worker count, agrees.
+        let public = h.d_gamma(&state, limits).unwrap();
+        assert_eq!(bits(&serial), bits(&public));
+    }
+
+    #[test]
+    fn parallel_sum_reproduces_the_serial_bits() {
+        let model = ScalarMomCont::unit();
+        let h = model.hamiltonian();
+        let limits = ActionLimits {
+            max_components: 4_000_000,
+            max_work: 100_000_000,
+        };
+        // A one-particle outer state over the widest window: the inner action
+        // then maps over ~1000 inner entries, which is the sweep's hot path.
+        let mut state = NestedVector::new();
+        for (n, basis) in ScalarMomCont::window_labels(20).into_iter().enumerate() {
+            let amplitude = Complex64::new(1.0 / (2.5 + n as f64), 1.0 / (11.0 + n as f64));
+            state.insert(basis, amplitude);
+        }
+        assert!(state.len() > 900);
+
+        let serial = {
+            FORCED_THREADS.store(1, std::sync::atomic::Ordering::Relaxed);
+            let image = h.d_gamma(&state, limits).unwrap();
+            FORCED_THREADS.store(0, std::sync::atomic::Ordering::Relaxed);
+            image
+        };
+        let parallel = h.d_gamma(&state, limits).unwrap();
+        assert_eq!(
+            bits(&serial),
+            bits(&parallel),
+            "the inner map changed the accumulation order"
+        );
+
+        // And the serial result is the same as forcing an odd chunk count.
+        let ragged = {
+            FORCED_THREADS.store(7, std::sync::atomic::Ordering::Relaxed);
+            let image = h.d_gamma(&state, limits).unwrap();
+            FORCED_THREADS.store(0, std::sync::atomic::Ordering::Relaxed);
+            image
+        };
+        assert_eq!(bits(&serial), bits(&ragged));
+    }
+
+    #[test]
+    fn parallel_path_keeps_the_work_limit() {
+        let model = ScalarMomCont::unit();
+        let h = model.hamiltonian();
+        let state = wide_state(72);
+        let entries: Vec<(&JointOuterBasis, &Complex64)> = state.iter().collect();
+
+        // Find the serial work count by bisecting the limit, then check that the
+        // parallel path reports the same failure at the same total work.
+        let fits = |limit: usize, threads: usize| {
+            let mut out = NestedVector::new();
+            h.apply_outer_labels(
+                &entries,
+                ActionLimits {
+                    max_components: 100_000,
+                    max_work: limit,
+                },
+                &mut out,
+                threads,
+            )
+            .is_ok()
+        };
+        let mut lo = 1usize;
+        let mut hi = 10_000_000usize;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if fits(mid, 1) { hi = mid } else { lo = mid + 1 }
+        }
+        assert_eq!(
+            lo,
+            {
+                let mut hi = 10_000_000usize;
+                let mut lo2 = 1usize;
+                while lo2 < hi {
+                    let mid = lo2 + (hi - lo2) / 2;
+                    if fits(mid, 4) {
+                        hi = mid
+                    } else {
+                        lo2 = mid + 1
+                    }
+                }
+                lo2
+            },
+            "parallel path charges a different total work than the serial one"
+        );
     }
 }
