@@ -73,6 +73,18 @@ pub struct JobClaim {
     holder: String,
 }
 
+#[cfg(test)]
+impl JobClaim {
+    /// Build a claim from a known fence, for tests in sibling modules that
+    /// need to present a superseded claim the queue never granted.
+    pub(crate) fn for_test(fence: JobFence, holder: &str) -> Self {
+        Self {
+            fence,
+            holder: holder.to_string(),
+        }
+    }
+}
+
 impl JobClaim {
     pub fn fence(&self) -> &JobFence {
         &self.fence
@@ -85,6 +97,33 @@ impl JobClaim {
     pub fn resource(&self) -> &str {
         &self.fence.resource
     }
+}
+
+/// D14: the schema an ordered job command is read under. Distinct from the
+/// ledger transaction schema, so the apply path can dispatch by schema instead
+/// of guessing from the payload.
+pub const JOB_COMMAND_SCHEMA: u16 = 2;
+
+/// An ordered job command: the unit the deployment agrees on.
+///
+/// Every replica applies the same commands in the same order to its own
+/// [`JobQueue`], so they converge on the same current fence. A command that is
+/// refused (stale fence, wrong holder, not queued) is a deterministic no-op on
+/// every replica — the verdict is stable, so it is not an error and changes no
+/// state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JobCommand {
+    Claim { resource: String, holder: String },
+    TakeOver {
+        resource: String,
+        epoch: u64,
+        holder: String,
+    },
+    Renew { claim: JobClaim },
+    Release { claim: JobClaim },
+    Reclaim { resource: String, holder: String },
+    Settle { claim: JobClaim },
+    Disable { claim: JobClaim },
 }
 
 /// Deterministic scheduler and owner of the current fence per resource.
@@ -334,6 +373,25 @@ impl JobQueue {
         self.jobs
             .insert(claim.resource().to_string(), JobState::Disabled);
         Ok(())
+    }
+
+    /// Apply one ordered command. The caller decides what a refusal means; this
+    /// module keeps refusals side-effect free (a refused command leaves the
+    /// queue exactly as it was), which is what makes the verdict replicable.
+    pub fn apply(&mut self, command: &JobCommand) -> Result<(), Diagnostic> {
+        match command {
+            JobCommand::Claim { resource, holder } => self.claim(resource, holder).map(|_| ()),
+            JobCommand::TakeOver {
+                resource,
+                epoch,
+                holder,
+            } => self.take_over(resource, *epoch, holder).map(|_| ()),
+            JobCommand::Renew { claim } => self.renew(claim, claim.holder()).map(|_| ()),
+            JobCommand::Release { claim } => self.release(claim, claim.holder()),
+            JobCommand::Reclaim { resource, holder } => self.reclaim(resource, holder).map(|_| ()),
+            JobCommand::Settle { claim } => self.settle(claim, claim.holder()),
+            JobCommand::Disable { claim } => self.disable(claim, claim.holder()),
+        }
     }
 
     /// Whether `claim` is the committed state's current fence for its resource.

@@ -49,7 +49,7 @@ use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
 use crate::engine::ConsensusEngine;
-use crate::jobs::{JobFence, JobQueue};
+use crate::jobs::{JobCommand, JobFence, JobQueue, JOB_COMMAND_SCHEMA};
 
 /// D10: the schema a replicated ledger submission is read under. A command
 /// under any other schema is refused by name rather than applied as a
@@ -217,6 +217,32 @@ pub struct SharedLedger {
     file: Option<LedgerFile>,
 }
 
+/// D14: encode an ordered job command as a replicated value. It carries its
+/// own payload under [`JOB_COMMAND_SCHEMA`], so a replica that never saw the
+/// submission applies the same command from the decision alone.
+pub fn encode_job_value(command: &JobCommand) -> Result<ReplicatedValue, String> {
+    let json = serde_json::to_vec(command)
+        .map_err(|error| format!("could not encode job command: {error}"))?;
+    Command::new(JOB_COMMAND_SCHEMA, json)
+        .map(ReplicatedValue::Command)
+        .map_err(|error| format!("could not frame job command: {error}"))
+}
+
+/// Decode a job command from a decision value. `None` when the value is under a
+/// different schema; undecodable bytes under the job schema are an error, so a
+/// malformed command halts every replica instead of being silently skipped.
+fn decode_job_command(value: &ReplicatedValue) -> Result<Option<JobCommand>, String> {
+    let ReplicatedValue::Command(command) = value else {
+        return Ok(None);
+    };
+    if command.schema() != JOB_COMMAND_SCHEMA {
+        return Ok(None);
+    }
+    serde_json::from_slice(command.payload())
+        .map(Some)
+        .map_err(|error| format!("job command does not decode: {error}"))
+}
+
 /// D10: the value a submission becomes. The reservation id lives **inside**
 /// the payload, ahead of the canonical transaction bytes, so a decision is
 /// self-describing: the state machine needs no map to know which submission it
@@ -375,9 +401,15 @@ impl SharedLedger {
     /// ledger) is a no-op because the id is already committed.
     fn append(&self, values: Vec<ReplicatedValue>) -> Result<(), String> {
         // Decode before touching state: a malformed value must not leave the
-        // outbox half-edited.
+        // outbox half-edited. D14: a job command is dispatched by schema, so
+        // both kinds of decision flow through one ordered apply.
         let mut decoded = Vec::with_capacity(values.len());
+        let mut job_commands = Vec::new();
         for value in &values {
+            if let Some(command) = decode_job_command(value)? {
+                job_commands.push(command);
+                continue;
+            }
             if let Some((id, tx)) = decode_ledger_value(value)? {
                 decoded.push((id, tx));
             }
@@ -397,6 +429,12 @@ impl SharedLedger {
                 if !state.committed_ids.contains_key(&id) {
                     appended.push((id, tx));
                 }
+            }
+            // A refused job command is a deterministic no-op: every replica
+            // computes the same verdict, so it changes no state and is not an
+            // error here. It must still be applied in decision order.
+            for command in &job_commands {
+                let _ = state.jobs.apply(command);
             }
             if appended.is_empty() && values.is_empty() {
                 return Ok(());
@@ -2046,6 +2084,72 @@ mod tests {
         assert_eq!(state, Some(JobState::Claimed), "worker-b still holds it");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// D14: a job command is an ordered decision, so two replicas that apply
+    /// the same command stream converge on the same fence — and a command that
+    /// is refused is a deterministic no-op that changes neither replica.
+    #[test]
+    fn a_job_command_converges_across_replicas_and_a_refusal_mutates_nothing() {
+        use crate::jobs::{JobClaim, JobCommand, JobState};
+
+        let a = mem_ledger();
+        let b = mem_ledger();
+        for ledger in [&a, &b] {
+            ledger
+                .with_jobs(|jobs| {
+                    jobs.set_deployment("deploy-1");
+                    jobs.enqueue("settle-auction");
+                })
+                .unwrap();
+        }
+
+        let claim = encode_job_value(&JobCommand::Claim {
+            resource: "settle-auction".to_string(),
+            holder: "worker-a".to_string(),
+        })
+        .unwrap();
+        a.append(vec![claim.clone()]).unwrap();
+        b.append(vec![claim]).unwrap();
+        let fence = a.current_fence("settle-auction").expect("fenced");
+        assert_eq!(
+            Some(&fence),
+            b.current_fence("settle-auction").as_ref(),
+            "both replicas computed the same fence from the same command"
+        );
+
+        // A takeover moves the committed fence on both replicas.
+        let takeover = encode_job_value(&JobCommand::TakeOver {
+            resource: "settle-auction".to_string(),
+            epoch: 2,
+            holder: "worker-b".to_string(),
+        })
+        .unwrap();
+        a.append(vec![takeover.clone()]).unwrap();
+        b.append(vec![takeover]).unwrap();
+        let newer = a.current_fence("settle-auction").expect("fenced");
+        assert!(newer.supersedes(&fence));
+        assert_eq!(Some(&newer), b.current_fence("settle-auction").as_ref());
+
+        // The old worker's late settle is refused identically by both.
+        let stale = encode_job_value(&JobCommand::Settle {
+            claim: JobClaim::for_test(fence, "worker-a"),
+        })
+        .unwrap();
+        a.append(vec![stale.clone()]).expect("a refusal is not an apply error");
+        b.append(vec![stale]).expect("a refusal is not an apply error");
+        for ledger in [&a, &b] {
+            assert_eq!(
+                Some(&newer),
+                ledger.current_fence("settle-auction").as_ref(),
+                "a refused command must not change the fence"
+            );
+            assert_eq!(
+                ledger.with_jobs(|jobs| jobs.state("settle-auction")).unwrap(),
+                Some(JobState::Claimed),
+                "a refused command must not change the job state"
+            );
+        }
     }
 
     /// The outbox is a local durability device only: it is drained by the
