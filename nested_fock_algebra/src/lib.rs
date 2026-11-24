@@ -726,6 +726,7 @@ pub mod typst_math;
 pub use typst_math::compile_typst_math;
 
 pub mod field_theory;
+pub mod phi4_momentum;
 pub mod phi4_scalar;
 pub use field_theory::*;
 

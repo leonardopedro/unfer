@@ -1,4 +1,6 @@
 # Run: cadabra2-cli -q -n docs/phi4_mehler.cdb
+# COMPARISON ONLY - frozen periodic lattice benchmark (primary continuous-momentum
+# module: docs/phi4_momentum_nested.cdb).
 # Canonical unit-width Mehler coordinates, ordered actions on polynomials times the Gaussian.
 # SymPy handles exact scalar derivatives; Cadabra independently expands the two-site vertex.
 import json
@@ -9,6 +11,7 @@ def check(name, expr):
     if result != 0:
         raise AssertionError(name + ": " + str(result))
     print("PHI4_CHECK|" + name + "|0")
+    print("CHECK " + name + " (0 = ok): 0")
 
 # Each deliberate mutation must change an observable exact value.
 controls = {}
