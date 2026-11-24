@@ -2,7 +2,18 @@ use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
+use unfer_protocol::distributed::{preimage, SigningDomain, SignatureVersion};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
+
+/// The signing domain every new consensus-transaction signature covers. A
+/// signature made here is not a signature over the same transaction bytes in
+/// another deployment, audience, schema or context.
+pub const CONSENSUS_SIGNING_DOMAIN: SigningDomain<'static> = SigningDomain {
+    deployment: "unfer",
+    audience: "unfer-consensus",
+    schema: "consensus-transaction",
+    context: "consensus",
+};
 
 #[derive(Debug, Clone)]
 pub struct Keypair {
@@ -40,8 +51,11 @@ impl Keypair {
     }
 }
 
-pub fn canonical_bytes(tx: &ConsensusTransaction) -> Vec<u8> {
-    let mut unsigned = match tx {
+/// The unsigned canonical frame of a transaction: the same deterministic JSON
+/// the legacy construction hashed, before any hashing. D10 signs this frame
+/// under a domain prefix; the legacy preimage is `sha256(frame)`.
+pub fn canonical_frame(tx: &ConsensusTransaction) -> Vec<u8> {
+    match tx {
         ConsensusTransaction::IdentityOp(op) => {
             let mut o = op.clone();
             o.signature = [0u8; 64];
@@ -82,16 +96,72 @@ pub fn canonical_bytes(tx: &ConsensusTransaction) -> Vec<u8> {
             o.signature = [0u8; 64];
             serde_json::to_vec(&ConsensusTransaction::AttributionOp(o)).unwrap()
         }
-    };
-    use sha2::{Digest, Sha256};
-    let hash = Sha256::digest(&unsigned);
-    unsigned = hash.to_vec();
-    unsigned
+    }
 }
 
+/// The pre-D10 preimage: `sha256(canonical_frame(tx))`, no domain at all.
+/// Still produced (and accepted) so already-signed history keeps verifying.
+pub fn canonical_bytes(tx: &ConsensusTransaction) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(canonical_frame(tx)).to_vec()
+}
+
+/// The preimage a signature of `version` over `tx` covers under `domain`.
+///
+/// `Err` only when the frame or a domain field is past its bound; callers turn
+/// that into a refusal rather than signing something they cannot describe.
+pub fn signing_message(
+    version: SignatureVersion,
+    domain: &SigningDomain<'_>,
+    tx: &ConsensusTransaction,
+) -> Result<Vec<u8>, Diagnostic> {
+    preimage(version, domain, &canonical_frame(tx)).map_err(|error| {
+        Diagnostic::new(
+            Code::INVALID_SIGNATURE,
+            format!("transaction cannot be framed for signing: {error}"),
+            Severity::Error,
+        )
+    })
+}
+
+/// Every preimage a valid signature over `tx` may cover, most-preferred first:
+/// the domain-separated frame, then the legacy `sha256(frame)` so signatures
+/// made before D10 still verify. A verifier tries them in order and a signer
+/// only ever produces the first.
+pub fn accepted_messages(
+    domain: &SigningDomain<'_>,
+    tx: &ConsensusTransaction,
+) -> Vec<Vec<u8>> {
+    let mut messages = Vec::with_capacity(2);
+    if let Ok(message) = signing_message(SignatureVersion::DomainSeparated, domain, tx) {
+        messages.push(message);
+    }
+    messages.push(canonical_bytes(tx));
+    messages
+}
+
+/// Sign a transaction under the consensus signing domain (D10).
+///
+/// An unframeable transaction is a caller bug that must not circulate as a
+/// zeroed signature, so it panics here instead of failing later at a verifier
+/// far from the mistake.
 pub fn sign_transaction(tx: &mut ConsensusTransaction, keypair: &Keypair) {
+    let msg = signing_message(SignatureVersion::DomainSeparated, &CONSENSUS_SIGNING_DOMAIN, tx)
+        .expect("consensus transaction exceeds the signature frame bound");
+    let sig = keypair.sign(&msg);
+    set_signature(tx, sig);
+}
+
+/// Sign a transaction the pre-D10 way (`sha256(frame)`, no domain). Only for
+/// reproducing or witnessing legacy history; new signatures must use
+/// [`sign_transaction`].
+pub fn sign_transaction_legacy(tx: &mut ConsensusTransaction, keypair: &Keypair) {
     let msg = canonical_bytes(tx);
     let sig = keypair.sign(&msg);
+    set_signature(tx, sig);
+}
+
+fn set_signature(tx: &mut ConsensusTransaction, sig: [u8; 64]) {
     match tx {
         ConsensusTransaction::IdentityOp(op) => op.signature = sig,
         ConsensusTransaction::SessionOp(op) => op.signature = sig,
@@ -142,12 +212,13 @@ pub fn verify_arctic_threshold(
         Some(z) => z,
         None => return false,
     };
-    let msg = canonical_bytes(tx);
     // Threshold/total are informational here (the aggregate signature already
     // commits to the coalition size); the mathematical check is the Schnorr
     // verification against the group key.
     let _ = (threshold, total);
-    arctic::arctic_core::verify(&group_pk, &msg, &(r_point, z))
+    accepted_messages(&CONSENSUS_SIGNING_DOMAIN, tx)
+        .iter()
+        .any(|msg| arctic::arctic_core::verify(&group_pk, msg, &(r_point, z)))
 }
 
 /// Verify an `IdentityOp` against a caller-supplied key instead of the key the
@@ -163,7 +234,6 @@ pub fn verify_identity_op_as(
     pubkey: [u8; 32],
 ) -> Result<(), Diagnostic> {
     let tx = ConsensusTransaction::IdentityOp(op.clone());
-    let msg = canonical_bytes(&tx);
     let verifying_key = VerifyingKey::from_bytes(&pubkey).map_err(|_| {
         Diagnostic::new(
             Code::INVALID_SIGNATURE,
@@ -172,17 +242,26 @@ pub fn verify_identity_op_as(
         )
     })?;
     let signature = ed25519_dalek::Signature::from_bytes(&op.signature);
-    verifying_key.verify(&msg, &signature).map_err(|_| {
-        Diagnostic::new(
-            Code::INVALID_SIGNATURE,
-            "ed25519 signature verification failed",
-            Severity::Error,
-        )
-    })
+    let messages = accepted_messages(&CONSENSUS_SIGNING_DOMAIN, &tx);
+    if messages
+        .iter()
+        .any(|msg| verifying_key.verify(msg, &signature).is_ok())
+    {
+        return Ok(());
+    }
+    Err(Diagnostic::new(
+        Code::INVALID_SIGNATURE,
+        "ed25519 signature verification failed",
+        Severity::Error,
+    ))
 }
 
-pub fn verify_transaction(tx: &ConsensusTransaction) -> Result<(), Diagnostic> {
-    let msg = canonical_bytes(tx);
+/// Verify a transaction under its domain, accepting a legacy signature too.
+pub fn verify_transaction_in(
+    tx: &ConsensusTransaction,
+    domain: &SigningDomain<'_>,
+) -> Result<(), Diagnostic> {
+    let messages = accepted_messages(domain, tx);
     let sig = tx.signature();
     let pubkey_bytes = match tx {
         ConsensusTransaction::IdentityOp(op) => op.signing_key,
@@ -221,13 +300,23 @@ pub fn verify_transaction(tx: &ConsensusTransaction) -> Result<(), Diagnostic> {
     })?;
 
     let signature = ed25519_dalek::Signature::from_bytes(sig);
-    verifying_key.verify(&msg, &signature).map_err(|_| {
-        Diagnostic::new(
-            Code::INVALID_SIGNATURE,
-            "ed25519 signature verification failed",
-            Severity::Error,
-        )
-    })
+    if messages
+        .iter()
+        .any(|msg| verifying_key.verify(msg, &signature).is_ok())
+    {
+        return Ok(());
+    }
+    Err(Diagnostic::new(
+        Code::INVALID_SIGNATURE,
+        "ed25519 signature verification failed",
+        Severity::Error,
+    ))
+}
+
+/// Verify a transaction under the consensus signing domain, accepting a legacy
+/// signature made before D10 so signed history keeps verifying.
+pub fn verify_transaction(tx: &ConsensusTransaction) -> Result<(), Diagnostic> {
+    verify_transaction_in(tx, &CONSENSUS_SIGNING_DOMAIN)
 }
 
 #[cfg(test)]
@@ -300,6 +389,127 @@ mod tests {
         });
         sign_transaction(&mut tx, &kp2);
         assert!(verify_transaction(&tx).is_err());
+    }
+
+    fn identity_tx(kp: &Keypair) -> ConsensusTransaction {
+        ConsensusTransaction::IdentityOp(IdentityOp {
+            did: kp.did(),
+            op_kind: IdentityOpKind::Create,
+            signing_key: kp.public_key(),
+            signature: [0u8; 64],
+            seq: 1,
+            service_endpoint: None,
+        })
+    }
+
+    /// A pre-D10 signature must keep verifying: that is the whole reason the
+    /// legacy preimage is still in the accepted set.
+    #[test]
+    fn a_legacy_signature_still_verifies() {
+        let kp = Keypair::generate();
+        let mut tx = identity_tx(&kp);
+        sign_transaction_legacy(&mut tx, &kp);
+        assert_eq!(
+            *tx.signature(),
+            kp.sign(&canonical_bytes(&tx)),
+            "the legacy signer covers sha256(frame), exactly as before D10"
+        );
+        assert!(verify_transaction(&tx).is_ok(), "legacy history still verifies");
+        assert!(verify_identity_op_as(
+            match &tx {
+                ConsensusTransaction::IdentityOp(op) => op,
+                _ => unreachable!(),
+            },
+            kp.public_key()
+        )
+        .is_ok());
+    }
+
+    /// A new signature covers the domain-separated preimage, so it is not a
+    /// signature over the bare frame — and it is refused under another
+    /// deployment, audience, schema or context.
+    #[test]
+    fn a_domain_separated_signature_is_bound_to_its_domain() {
+        let kp = Keypair::generate();
+        let mut tx = identity_tx(&kp);
+        sign_transaction(&mut tx, &kp);
+
+        let frame = canonical_frame(&tx);
+        assert_ne!(
+            *tx.signature(),
+            kp.sign(&canonical_bytes(&tx)),
+            "a new signature must not be the legacy sha256(frame) signature"
+        );
+        assert_eq!(
+            *tx.signature(),
+            kp.sign(
+                &signing_message(SignatureVersion::DomainSeparated, &CONSENSUS_SIGNING_DOMAIN, &tx)
+                    .unwrap()
+            ),
+            "a new signature is over the domain-separated frame"
+        );
+        assert!(verify_transaction(&tx).is_ok(), "its own domain verifies");
+
+        for (label, other) in [
+            (
+                "deployment",
+                SigningDomain {
+                    deployment: "other-deployment",
+                    ..CONSENSUS_SIGNING_DOMAIN
+                },
+            ),
+            (
+                "audience",
+                SigningDomain {
+                    audience: "another-service",
+                    ..CONSENSUS_SIGNING_DOMAIN
+                },
+            ),
+            (
+                "schema",
+                SigningDomain {
+                    schema: "another-schema",
+                    ..CONSENSUS_SIGNING_DOMAIN
+                },
+            ),
+            (
+                "context",
+                SigningDomain {
+                    context: "another-lane",
+                    ..CONSENSUS_SIGNING_DOMAIN
+                },
+            ),
+        ] {
+            assert!(
+                verify_transaction_in(&tx, &other).is_err(),
+                "a signature for one {label} must not verify for another"
+            );
+        }
+        assert!(
+            !frame.is_empty(),
+            "the frame exists and is what the preimage carries"
+        );
+    }
+
+    /// A signature lifted onto altered bytes is refused, in either layout.
+    #[test]
+    fn altered_bytes_are_refused_under_both_layouts() {
+        let kp = Keypair::generate();
+        for legacy in [false, true] {
+            let mut tx = identity_tx(&kp);
+            if legacy {
+                sign_transaction_legacy(&mut tx, &kp);
+            } else {
+                sign_transaction(&mut tx, &kp);
+            }
+            if let ConsensusTransaction::IdentityOp(ref mut op) = tx {
+                op.seq = 2;
+            }
+            assert!(
+                verify_transaction(&tx).is_err(),
+                "tampered bytes must fail (legacy={legacy})"
+            );
+        }
     }
 
     #[test]

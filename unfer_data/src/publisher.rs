@@ -124,6 +124,10 @@ impl<'a> DataPublisher<'a> {
     }
 
     pub fn resolve(&self, cid: &str) -> Option<&ContentRef> {
+        // A halted node's memory is not a state: it applied the entry before it
+        // could record the application durably, so serving it would report
+        // content the committed history does not have.
+        self.node.servable().ok()?;
         self.node.content(cid)
     }
 }
@@ -172,6 +176,75 @@ mod tests {
         let resolved = node.content(&content_ref.cid);
         assert!(resolved.is_some());
         assert_eq!(resolved.unwrap().magnet_uri, content_ref.magnet_uri);
+    }
+
+    /// D12/D13: a halted node evaluated an entry it could not record durably, so
+    /// its memory holds content the committed history does not. `resolve` is a
+    /// serving surface and must refuse it rather than answer from memory.
+    #[test]
+    fn a_halted_node_does_not_serve_its_in_memory_state() {
+        use unfer_consensus::storage::FaultPoint;
+
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-publisher-halt-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut node = ConsensusNode::open(
+            Box::new(LocalConsensus::new()),
+            dir.join("ledger.log"),
+        )
+        .expect("open a journaled node")
+        .0;
+        let kp = Keypair::generate();
+        let mut id_tx = ConsensusTransaction::IdentityOp(unfer_protocol::IdentityOp {
+            did: kp.did(),
+            op_kind: unfer_protocol::IdentityOpKind::Create,
+            signing_key: kp.public_key(),
+            signature: [0u8; 64],
+            seq: 1,
+            service_endpoint: None,
+        });
+        unfer_consensus::sign_transaction(&mut id_tx, &kp);
+        node.submit(id_tx).unwrap();
+        node.sync().unwrap();
+
+        let data = b"served from memory only";
+        let mut tx = ConsensusTransaction::ContentOp(unfer_protocol::ContentOp {
+            did: kp.did(),
+            content_ref: unfer_protocol::ContentRef {
+                cid: "c0".repeat(32),
+                magnet_uri: "magnet:?xt=urn:btih:deadbeef".to_string(),
+                filesize: data.len() as u64,
+                mime_type: "text/plain".to_string(),
+                encryption_key: "x25519:0000".to_string(),
+                chunks: Vec::new(),
+            },
+            signature: [0u8; 64],
+        });
+        unfer_consensus::sign_transaction(&mut tx, &kp);
+        node.submit(tx).unwrap();
+        // The entry applies to memory, then the journal refuses it: the node
+        // halts with its watermark still at 1.
+        assert!(node.inject_storage_fault(FaultPoint::BeforeWrite));
+        assert!(node.sync().is_err());
+        assert!(node.servable().is_err());
+
+        let cid = "c0".repeat(32);
+        assert!(
+            node.content(&cid).is_some(),
+            "the evaluation is in memory — that is the hazard"
+        );
+        let publisher = DataPublisher::new(&mut node);
+        assert!(
+            publisher.resolve(&cid).is_none(),
+            "a serving surface must not answer from a halted node's memory"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
