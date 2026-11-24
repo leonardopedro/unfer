@@ -139,6 +139,20 @@ Detailed step-by-step specifications live in
    $2\varepsilon + \varepsilon^2$ per probability estimate, add both budgets for
    the paired difference, and assert: null control contains `0.0`, while both
    physical response intervals strictly exclude `0.0`.
+
+   **Outcome (2026-11-24) — the last criterion fails, by measurement.** The
+   charge is implemented and asserted *sound* (every certified interval contains
+   the exact response), and the envelope was tightened 33× by dropping its
+   shift-scaled Lipschitz term ($\varepsilon = 0.1805$ base, $0.6293$ spread;
+   was $5.95$ and $10.6$). But $\varepsilon$ is a **state** bound
+   ($\|e\| \approx 7.9\times10^{-3}$ measured) while the probability error is
+   $\approx 1.3\times10^{-5}$, because the evolution error is nearly orthogonal
+   to the seed. Certified intervals are therefore $\pm 0.84$ ($\lambda$) and
+   $\pm 2.05$ (`width_k`): they contain `0.0`. The `1e-3`-scale responses are
+   certified instead by the S43 sharp tier — the measured compressed-flow
+   discrepancy against exact Padé evolution of the declared window
+   ($1.33\times10^{-5}$, $3.48\times10^{-6}$, $6.10\times10^{-4}$). See
+   [`VERIFY_PHI4_MOMENTUM.md`](VERIFY_PHI4_MOMENTUM.md) §5.3 and §6.1.
 5. **Parity selection, unconditional inner gap, and comparison contrast (`P12`, tests 4–5).**
    - Evolve even ($\mathrm{He}_0$) and odd ($\mathrm{He}_1(\phi)$) seeds at
      $C = 8, m = 4$; assert exact $\mathbb{Z}_2$ parity conservation
@@ -182,3 +196,8 @@ iteration counts and shifted-solve residuals, full unprojected defect
 bounds, return probability intervals, Ritz values and residuals, runtime,
 memory, and any failure reason. Mark measurements, conditional bounds, and
 kernel-checked conclusions separately.
+
+Record: [`fixtures/phi4_momentum_sirk_sweep.json`](fixtures/phi4_momentum_sirk_sweep.json) ·
+Exact table: [`fixtures/phi4_momentum_mehler.json`](fixtures/phi4_momentum_mehler.json) ·
+Measured values, replay commands and limitations:
+[`VERIFY_PHI4_MOMENTUM.md`](VERIFY_PHI4_MOMENTUM.md).

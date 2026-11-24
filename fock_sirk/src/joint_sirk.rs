@@ -323,6 +323,13 @@ pub struct JointSirkResult {
     /// this bounds solve error, including occupation-projection error; no
     /// rounding enclosure is claimed. Empty for forward-product diagnostics.
     pub shift_solve_error_bounds: Vec<f64>,
+    /// Arnoldi steps actually taken by each rational shift solve, in the same
+    /// order as `shift_solve_error_bounds`. Empty for forward-product
+    /// diagnostics (those take no solve at all).
+    pub shift_solve_iterations: Vec<usize>,
+    /// Arnoldi steps taken by each solve of the bounded-resolvent compression
+    /// `B = V^dag (gamma+iH)^-1 V`; one per rank direction.
+    pub function_solve_iterations: Vec<usize>,
     pub options: JointSirkOptions,
     pub cached_components: usize,
 }
@@ -330,6 +337,23 @@ pub struct JointSirkResult {
 impl JointSirkResult {
     pub fn rank(&self) -> usize {
         self.h_proj.nrows()
+    }
+    /// Largest Arnoldi step count over the rational basis solves.
+    pub fn max_shift_solve_iterations(&self) -> usize {
+        self.shift_solve_iterations.iter().copied().max().unwrap_or(0)
+    }
+    /// Largest Arnoldi step count over the bounded-resolvent solves.
+    pub fn max_function_solve_iterations(&self) -> usize {
+        self.function_solve_iterations
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0)
+    }
+    /// Total Arnoldi steps taken by every shift-invert solve in this result.
+    pub fn total_solve_iterations(&self) -> usize {
+        self.shift_solve_iterations.iter().sum::<usize>()
+            + self.function_solve_iterations.iter().sum::<usize>()
     }
     fn initial_coefficients(&self) -> DVector<C> {
         DVector::from_iterator(
@@ -481,6 +505,7 @@ where
     let mut tails = Vec::new();
     let mut scales = vec![1.0];
     let mut solve_bounds = Vec::new();
+    let mut solve_iterations = Vec::new();
     for (k, &shift) in shifts.iter().enumerate() {
         let image = matvec(&sequence[k])?;
         let mut validated = NestedVector::new();
@@ -503,7 +528,7 @@ where
                 relative_tolerance,
                 max_iterations,
             } => {
-                let (solution, bound) = gmres_shift(
+                let (solution, bound, used) = gmres_shift(
                     &matvec,
                     &projected_matvec,
                     &sequence[k],
@@ -513,6 +538,7 @@ where
                     max_iterations,
                 )?;
                 solve_bounds.push(bound);
+                solve_iterations.push(used);
                 solution
             }
         };
@@ -634,9 +660,10 @@ where
         return Err(JointSirkError::NonHermitian(defect));
     }
     let h_proj = (&reduced + reduced.adjoint()) * C::new(0.5, 0.0);
-    let (projected_resolvent, function_generator, function_bounds) = match options.method {
+    let (projected_resolvent, function_generator, function_bounds, function_iterations) =
+        match options.method {
         JointKrylovMethod::ForwardProducts => {
-            (None, h_proj.clone() * C::new(0.0, -1.0), Vec::new())
+            (None, h_proj.clone() * C::new(0.0, -1.0), Vec::new(), Vec::new())
         }
         JointKrylovMethod::ShiftInvert {
             relative_tolerance,
@@ -651,8 +678,9 @@ where
             let gamma = shift.im;
             let mut bounded = DMatrix::<C>::zeros(rank, rank);
             let mut bounds = Vec::new();
+            let mut iterations_used = Vec::new();
             for j in 0..rank {
-                let (inverse, bound) = gmres_shift(
+                let (inverse, bound, used) = gmres_shift(
                     &matvec,
                     &projected_matvec,
                     &orthonormal[j],
@@ -662,6 +690,7 @@ where
                     max_iterations,
                 )?;
                 bounds.push(bound);
+                iterations_used.push(used);
                 for i in 0..rank {
                     bounded[(i, j)] = -C::i() * joint_inner_product(&orthonormal[i], &inverse);
                 }
@@ -670,7 +699,7 @@ where
                 JointSirkError::Invalid("singular bounded-resolvent compression".into())
             })?;
             let generator = DMatrix::<C>::identity(rank, rank) * C::new(gamma, 0.0) - inverse;
-            (Some(bounded), generator, bounds)
+            (Some(bounded), generator, bounds, iterations_used)
         }
     };
     Ok(JointSirkResult {
@@ -691,6 +720,8 @@ where
         projected_action_tail_norms: tails,
         hermiticity_defect: defect,
         shift_solve_error_bounds: solve_bounds,
+        shift_solve_iterations: solve_iterations,
+        function_solve_iterations: function_iterations,
         options: options.clone(),
         cached_components: 0,
     })
@@ -730,7 +761,7 @@ fn gmres_shift<F, P>(
     options: &JointSirkOptions,
     tolerance: f64,
     iterations: usize,
-) -> Result<(NestedVector, f64), JointSirkError>
+) -> Result<(NestedVector, f64, usize), JointSirkError>
 where
     F: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
     P: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
@@ -747,7 +778,7 @@ where
     }
     let beta = joint_norm(rhs);
     if beta == 0.0 {
-        return Ok((NestedVector::new(), 0.0));
+        return Ok((NestedVector::new(), 0.0, 0));
     }
     let limits = options.action_limits;
     let mut first = NestedVector::new();
@@ -791,7 +822,7 @@ where
             let compressed = project_joint(&residual, options).0;
             last_residual = joint_norm(&compressed) / beta;
             if last_residual <= tolerance {
-                return Ok((solution, full_norm / shift.im.abs()));
+                return Ok((solution, full_norm / shift.im.abs(), k + 1));
             }
             if next_norm <= 1e-14 {
                 break;

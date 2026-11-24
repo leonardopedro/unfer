@@ -476,6 +476,17 @@ it also does not close N11. This is a point estimate: exact `exp`, the returned
 `G`, and floating arithmetic remain assumptions. The obstruction is still the
 basis window, not only the defect norm choice.
 
+**Formula update (2026-11-24).** The numbers above were produced by a
+`defect_action_envelope` that added a Lipschitz correction
+`||D G||_F ||c|| exp(omega_+ t)` to a coarse grid. That correction is
+shift-scaled — every entry of a rational `G = gamma I - B^-1` carries `gamma`
+while the flow stays `O(1)` — so the envelope is now a grid-converged sampled
+maximum along the returned trajectory, and `evolution_bound = leakage + t *
+envelope` (the `state_weighted_bound` formula, which is why the two fields are
+now equal). On the phi4 continuous-momentum cells this cuts the state bound
+`5.95 -> 0.18`; see `docs/VERIFY_PHI4_MOMENTUM.md` §5.3 and §6.1. The SM baselines
+in this document predate the change and were not regenerated.
+
 Depth 3 exceeds the declared cache budget (`1,032,256` components against
 `1,000,000`), so it is refused rather than pruned. The raw quench-energy difference at a 10% quench is `0.6804`,
 larger than the state budget `0.5657`, but energy is an unbounded operator: the
