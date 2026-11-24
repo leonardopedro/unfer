@@ -2550,6 +2550,54 @@ pub struct AttributionReport {
     pub badges: Vec<AttributionBadgeId>,
 }
 
+/// A fence position supplied as a *precondition* by a job command.
+///
+/// It is not the fence the committed state will issue: a claim's fence is
+/// computed by replaying the job's history, and the state ignores any position
+/// the submitter proposes for a new claim. For a renewal, release, fire or
+/// disable this names the fence the caller believes is current, and the state
+/// refuses the command unless it is exactly current.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobFence {
+    pub epoch: u64,
+    pub generation: u64,
+}
+
+/// The lifecycle command carried by a [`JobOp`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum JobOpKind {
+    /// Register a scheduled job. Idempotent: registering a known job keeps its
+    /// current state, so every replica can replay the same command.
+    Register,
+    /// Take an idle job out of the queue. The fence is issued by the state.
+    Claim { holder: String },
+    /// Re-arm the current claim under a fresh fence.
+    Renew { expected: JobFence },
+    /// Return the job to the queue after a failed fire.
+    Release { expected: JobFence },
+    /// Mark the job fired after a successful settle.
+    Fire { expected: JobFence },
+    /// Disable the job after an authorization failure.
+    Disable { expected: JobFence },
+}
+
+/// A signed job-lifecycle transition.
+///
+/// The fence is *derived from the committed log*: every replica applies the
+/// same command in the same slot order, so every replica computes the same
+/// claim position. A submitter-supplied `expected` fence can only narrow a
+/// command (it is a compare-and-swap precondition), never widen it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JobOp {
+    pub did: String,
+    pub deployment: String,
+    pub job: String,
+    pub kind: JobOpKind,
+    #[serde(with = "hex_bytes_64")]
+    pub signature: [u8; 64],
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConsensusTransaction {
@@ -2575,6 +2623,10 @@ pub enum ConsensusTransaction {
     /// micropayments). Deterministic: every node replays the same log and
     /// converges on the same credits, approvals, revocations and badge ids.
     AttributionOp(AttributionOp),
+    /// A job-lifecycle transition (D14). Every replica derives the claim fence
+    /// from the committed order, so two workers contending for one job are
+    /// serialized by consensus rather than by a per-node table.
+    JobOp(JobOp),
 }
 
 impl ConsensusTransaction {
@@ -2588,6 +2640,7 @@ impl ConsensusTransaction {
             Self::MathBondOp(op) => &op.did,
             Self::MarketOp(op) => &op.did,
             Self::AttributionOp(op) => &op.did,
+            Self::JobOp(op) => &op.did,
         }
     }
 
@@ -2601,6 +2654,7 @@ impl ConsensusTransaction {
             Self::MathBondOp(op) => &op.signature,
             Self::MarketOp(op) => &op.signature,
             Self::AttributionOp(op) => &op.signature,
+            Self::JobOp(op) => &op.signature,
         }
     }
 }

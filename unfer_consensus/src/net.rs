@@ -1087,6 +1087,84 @@ pub fn state_digest(ledger: &SharedLedger) -> String {
     digest_of(ledger.committed_since(1).iter().map(|(slot, tx)| (*slot, tx)))
 }
 
+/// One job's committed state, read from a node's durable ledger without taking
+/// the node's lock. This replays the committed log through the same application
+/// node the running process uses, so the answer is the state the log implies,
+/// not a second interpretation of the ledger file.
+pub fn state_dir_job(directory: &Path, job: &str) -> Result<String, String> {
+    let snapshot = LedgerFile::new(directory).load()?;
+    let log = snapshot
+        .bank
+        .into_iter()
+        .enumerate()
+        .map(|(index, tx)| (index as u64 + 1, tx))
+        .collect::<Vec<_>>();
+    let mut node = crate::node::ConsensusNode::new(Box::new(ReplayEngine { log }));
+    node.sync()
+        .map_err(|error| format!("could not replay the committed log: {}", error.message))?;
+    let state = match node.job_state(job) {
+        Some(crate::jobs::JobState::Queued) => "queued",
+        Some(crate::jobs::JobState::Claimed) => "claimed",
+        Some(crate::jobs::JobState::Fired) => "fired",
+        Some(crate::jobs::JobState::Disabled) => "disabled",
+        None => "unknown",
+    };
+    let fence = node.job_fence(job);
+    let holder = node.jobs().fences().holder(job);
+    Ok(format!(
+        "{{\"job\":\"{job}\",\"state\":\"{state}\",\"holder\":{},\"epoch\":{},\"generation\":{}}}",
+        match holder {
+            Some(holder) => format!("\"{holder}\""),
+            None => "null".to_string(),
+        },
+        fence.map(|fence| fence.epoch.to_string())
+            .unwrap_or_else(|| "null".to_string()),
+        fence
+            .map(|fence| fence.generation.to_string())
+            .unwrap_or_else(|| "null".to_string()),
+    ))
+}
+
+/// A read-only engine over an already-committed log. Used by
+/// [`state_dir_job`] to replay a snapshot; it cannot submit.
+struct ReplayEngine {
+    log: Vec<(u64, ConsensusTransaction)>,
+}
+
+impl ConsensusEngine for ReplayEngine {
+    fn submit(&self, _tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
+        Err(Diagnostic::new(
+            Code::INTERNAL,
+            "the replay engine cannot submit",
+            Severity::Error,
+        ))
+    }
+
+    fn get_log(&self, from_seq: u64) -> Vec<(u64, ConsensusTransaction)> {
+        self.log
+            .iter()
+            .filter(|(seq, _)| *seq >= from_seq)
+            .cloned()
+            .collect()
+    }
+
+    fn current_seq(&self) -> u64 {
+        self.log.last().map(|(seq, _)| *seq).unwrap_or(0)
+    }
+
+    fn receipt(&self, _id: SubmissionId) -> ReceiptState {
+        ReceiptState::Pending
+    }
+
+    fn wait(
+        &self,
+        id: SubmissionId,
+        _timeout: Duration,
+    ) -> unfer_protocol::submission::Receipt {
+        unfer_protocol::submission::Receipt::pending(id)
+    }
+}
+
 /// The same digest, read straight from a state directory's durable ledger.
 ///
 /// This takes no lock and writes nothing, so it answers "what has this node
