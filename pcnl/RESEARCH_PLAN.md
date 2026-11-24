@@ -465,9 +465,14 @@ their commands committed under `logs/pcnl_r13_gates/`, and
 those logs. Low-rank 32 + jitter is in that same exact list: it needs
 `--start-scale legacy` too (R̂ `2.14626` / ESS `5.1`), which is why four earlier
 attempts without the flag landed at `2.34–2.49` — `--hmc-jitter` re-rolls every
-trajectory when a start-changing flag differs. One row still does not reproduce
-its recorded summary: the **tempering** cold chain (swaps do: `0/240`; R̂/RMSE
-depend on the unrecorded mode fit). The conclusions those rows support —
+trajectory when a start-changing flag differs. The **tempering** cold chain was
+the last open row and needed the same flag: with `--start-scale legacy --hmc-leapfrog 4`
+on the 3,000-step `5e-3` mode fit it returns R̂ `2.44665` /
+ESS `4.8` / RMSE `0.168598` exactly (swaps `0/240`); under `prior` the same
+command gives `2.15397` / `5.1` / `0.096604`. The CN exact-dense row was also
+re-executed and needs `--readout-only` — without it `--proposal exact` with
+`--init mean` is refused — giving R̂ `1.00616` / ESS `620.9` on the
+readout-conditional (dim 34) target. The conclusions those rows support —
 tempering is not viable at this energy scale, jitter does not close the gate —
 hold in the re-runs.
 
