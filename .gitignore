@@ -53,9 +53,13 @@ qfm_text_runs/**/*.qfm
 .lake/
 **/.lake/
 
-# Heavy-test run logs are ephemeral; keep only the cited ALL-GREEN evidence log.
+# Heavy-test run logs are ephemeral; keep only the cited ALL-GREEN evidence log
+# and the PCNL gate logs cited by docs/PCNL_STATUS.md (`/tmp` is not durable —
+# it was cleared mid-session on 2026-11-24, taking several cited logs with it).
 logs/*
 !logs/heavy_tests_20260823_201105.log
+!logs/pcnl_r13_gates/
+!logs/pcnl_r13_gates/**
 
 # Python bytecode caches (X5 build-artifact hygiene): regenerated on every run.
 __pycache__/

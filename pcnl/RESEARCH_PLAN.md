@@ -459,10 +459,14 @@ R̂ `2.50388` / ESS `4.8` / RMSE `0.150189` with `clipped_to_prior` `27,622`,
 low-rank 8 R̂ `2.39408` / ESS `4.9`, low-rank 32 R̂ `2.01334` / ESS `5.3`, and the
 readout-conditional gate R̂ `1.00935` / ESS `3000.0` / RMSE `0.105302`. The exact
 commands and log paths are tabulated in `docs/PCNL_STATUS.md`
-("Legacy-gate reproducibility after the init change"), which also records the
-two rows that do **not** reproduce: the live-attention q/k gate (recorded R̂
-`2.60278`, re-runs give `1.76–2.13`) and the tempering cold-chain summaries
-(swaps reproduce: `0/240`; R̂/RMSE depend on the mode fit).
+("Legacy-gate reproducibility after the init change"), with the raw logs and
+their commands committed under `logs/pcnl_r13_gates/`. Two rows still do not
+reproduce their recorded summaries: the **tempering** cold chain (swaps do:
+`0/240`; R̂/RMSE depend on the unrecorded mode fit) and **low-rank 32 + jitter**
+(recorded R̂ `2.14626`; re-runs give `2.34–2.49`, since `--hmc-jitter` re-rolls
+every trajectory when any flag differs). Both conclusions those rows support —
+tempering is not viable at this energy scale, jitter does not close the gate —
+hold in the re-runs.
 
 A first pass reported these as non-reproducible; that was an incomplete
 reconstruction, not a code drift. The three flags that mattered: `--pilot-inflate

@@ -1,0 +1,33 @@
+## R13 multimodality diagnostic: rows=240 dim=57378 runs=2 steps=8000 lr=0.005 init=prior init_std=0.02
+init_grad index=0 shape=[768, 64] rms=2.619e2
+init_grad index=1 shape=[16, 16] rms=2.393e3
+init_grad index=2 shape=[16, 16] rms=2.111e3
+init_grad index=3 shape=[16, 16] rms=8.508e3
+init_grad index=4 shape=[16, 16] rms=7.096e3
+init_grad index=5 shape=[16, 32] rms=1.018e4
+init_grad index=6 shape=[32, 16] rms=1.090e4
+init_grad index=7 shape=[16, 16] rms=2.282e3
+init_grad index=8 shape=[16, 16] rms=2.309e3
+init_grad index=9 shape=[16, 16] rms=6.841e3
+init_grad index=10 shape=[16, 16] rms=9.060e3
+init_grad index=11 shape=[16, 32] rms=1.241e4
+init_grad index=12 shape=[32, 16] rms=9.839e3
+init_grad index=13 shape=[16, 16] rms=1.114e3
+init_grad index=14 shape=[16, 16] rms=1.143e3
+init_grad index=15 shape=[16, 16] rms=8.944e3
+init_grad index=16 shape=[16, 16] rms=1.026e4
+init_grad index=17 shape=[16, 32] rms=9.314e3
+init_grad index=18 shape=[32, 16] rms=9.403e3
+init_grad index=19 shape=[16, 16] rms=2.203e3
+init_grad index=20 shape=[16, 16] rms=2.230e3
+init_grad index=21 shape=[16, 16] rms=8.179e3
+init_grad index=22 shape=[16, 16] rms=7.227e3
+init_grad index=23 shape=[16, 32] rms=1.404e4
+init_grad index=24 shape=[32, 16] rms=9.127e3
+init_grad index=25 shape=[16, 2] rms=1.414e5
+init_grad index=26 shape=[2] rms=1.059e5
+run=0 steps=8000 potential=28.090083 grad_rms=5.526e-2 test_rmse=0.076978
+run=1 steps=8000 potential=38.708304 grad_rms=4.840e-2 test_rmse=0.087130
+pair=0-1 rel_distance=2.2882 worst_segment=readout (2.7115) per_segment=[projection=2.286 block1=1.993 block2=2.002 block3=2.174 block4=2.214 readout=2.711 bias=0.060]
+summary runs=2 potential_range=[28.0901,38.7083] test_rmse_range=[0.0770,0.0871] pairs_above_0.1=1/1
+note: mode fits from independent inits; large relative distance at comparable potential means non-identifiability, not sampler failure
