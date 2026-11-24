@@ -19,6 +19,8 @@ use std::collections::HashMap;
 
 use unfer_protocol::{Code, Diagnostic, Severity};
 
+use crate::lease::LeaderLease;
+
 /// Lifecycle of a scheduled job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobState {
@@ -101,6 +103,30 @@ impl JobQueue {
     /// The queue's current ordered fence (the tick a fresh claim is made at).
     pub fn tick(&self) -> u64 {
         self.tick
+    }
+
+    /// Claim `job` at `tick` only if this node is the tick's single leader.
+    ///
+    /// D14 couples the two orderings at one call site: [`LeaderLease`] decides
+    /// *who* fires a tick, and the fence decides *which* tick a claim belongs
+    /// to. A non-leader is refused before the fence moves, so a losing node
+    /// cannot consume an ordered tick; the leader's claim is then fenced to
+    /// `tick` exactly like [`JobQueue::claim_slot`].
+    pub fn claim_slot_leased(
+        &mut self,
+        job: &str,
+        tick: u64,
+        participants: usize,
+        node_index: usize,
+    ) -> Option<JobClaim> {
+        if self.jobs.get(job) != Some(&JobState::Queued) {
+            return None;
+        }
+        if !LeaderLease::is_leader(tick, participants, node_index) {
+            return None;
+        }
+        self.advance_tick(tick).ok()?;
+        self.claim_slot(job)
     }
 
     /// `unclaimSlot`: a failed fire returns the job to `Queued` so it is
@@ -257,6 +283,55 @@ mod tests {
         q.unclaim_slot(&claim);
         q.disable(&claim);
         assert_eq!(q.state("job"), Some(JobState::Claimed));
+    }
+
+    #[test]
+    fn only_the_tick_leader_claims() {
+        // Two participants: tick 3 elects index 1 (3 % 2).
+        let mut q = JobQueue::new();
+        q.enqueue("job");
+        assert!(
+            q.claim_slot_leased("job", 3, 2, 0).is_none(),
+            "the non-leader must not claim"
+        );
+        assert_eq!(q.tick(), 0, "a refused claim does not move the fence");
+        assert_eq!(q.state("job"), Some(JobState::Queued));
+        let claim = q
+            .claim_slot_leased("job", 3, 2, 1)
+            .expect("the leader claims");
+        assert_eq!(q.tick(), 3);
+        q.mark_fired(&claim).expect("same-tick settle");
+        assert_eq!(q.state("job"), Some(JobState::Fired));
+    }
+
+    #[test]
+    fn zero_participants_never_claim() {
+        let mut q = JobQueue::new();
+        q.enqueue("job");
+        assert!(q.claim_slot_leased("job", 1, 0, 0).is_none());
+        assert_eq!(q.state("job"), Some(JobState::Queued));
+        assert_eq!(q.tick(), 0);
+    }
+
+    #[test]
+    fn leased_claim_refuses_a_tick_that_does_not_advance() {
+        let mut q = JobQueue::new();
+        q.enqueue("a");
+        q.enqueue("b");
+        // Single participant: index 0 leads every tick.
+        let first = q.claim_slot_leased("a", 4, 1, 0).expect("claim a");
+        assert_eq!(q.tick(), 4);
+        // Tick 4 cannot be re-used for a second job: the fence is ordered.
+        assert!(q.claim_slot_leased("b", 4, 1, 0).is_none());
+        assert_eq!(q.state("b"), Some(JobState::Queued));
+        // A strictly later tick is admitted.
+        let second = q.claim_slot_leased("b", 5, 1, 0).expect("claim b");
+        q.mark_fired(&second).expect("b fires at tick 5");
+        // `a` was claimed at tick 4 and is now behind the fence.
+        assert!(
+            q.mark_fired(&first).is_err(),
+            "a superseded claim must not fire"
+        );
     }
 
     #[test]
