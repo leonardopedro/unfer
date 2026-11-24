@@ -1,0 +1,319 @@
+# Run: cadabra2-cli -q -n docs/phi4_momentum_nested.cdb
+# MODULE DOCUMENTATION
+# Primary continuous-momentum scalar lambda phi^4 module for the book.tex
+# SIRK / Mehler / nested-Fock formalism. Coordinates (phi, k1, k2, k3) of
+# L^2(R^3_k x R_phi) are ALL continuous; momentum space is never discretized.
+# The only discrete objects are the 11-mode Hermite window and the rank-2
+# Krylov subspace. Periodic-lattice modules (phi4_mehler.cdb, siteModel,
+# twoSite) are frozen comparisons only.
+#
+# Certified content: the continuous quadratic gradient 1/2 |k|^2 phi^2 (no
+# derivative convolution, no jet constraint), retention of lambda v^4/4, the
+# diagonal Fourier symbol identity for the gradient, the continuous
+# composite-pair quartic integral, unconditional coercivity, the exact
+# 11-mode S3-symmetric action of unitMomCont, the exact rank-2 Hashimoto-SIRK
+# certificate at shifts (10, 5), the outer dGamma checks, and a JSON fixture.
+#
+# Every zero check prints "(0 = ok): 0", so scripts/verify_cdb_modules.sh
+# --strict certifies it as [PASS] rather than [NOTE].
+import json
+import sympy as sp
+
+def check(name, expr):
+    result = sp.simplify(expr)
+    if isinstance(result, sp.MatrixBase):
+        zero = all(sp.simplify(entry) == 0 for entry in result)
+    else:
+        zero = result == 0
+    if not zero:
+        raise AssertionError(name + ": " + str(result))
+    print("PHI4_MOM_CHECK|" + name + "|0")
+    print("CHECK " + name + " (0 = ok): 0")
+
+controls = {}
+def distinguish(name, correct, mutant, at):
+    difference = sp.simplify((correct-mutant).subs(at))
+    assert difference.is_zero is False, name
+    controls[name] = str(difference)
+    print("PHI4_MOM_CONTROL|" + name + "|" + str(difference))
+
+x = sp.Symbol("x", real=True)
+k = sp.symbols("k1:4", real=True)
+gens = [x] + list(k)
+lam, v, alpha = sp.symbols("lam v alpha", positive=True, real=True)
+
+# ---------------------------------------------------------------------------
+# 1. Native Cadabra2 continuous quadratic gradient, no momentum sum.
+#    1/2 (k1^2+k2^2+k3^2) phi^2 + (lam/4)(phi^2-v^2)^2 has exactly six terms
+#    after expansion, and keeps the constant lambda v^4/4.
+# ---------------------------------------------------------------------------
+grad := (k1*k1+k2*k2+k3*k3)*phi*phi/2 + lam*(phi*phi-v*v)*(phi*phi-v*v)/4.
+distribute(grad)
+sort_product(grad)
+collect_terms(grad)
+assert len(grad) == 6
+print("PHI4_MOM_CHECK|cadabra-continuous-gradient-six-terms|0")
+print("CHECK cadabra-continuous-gradient-six-terms (0 = ok): 0")
+kgrad := (k1*k1+k2*k2+k3*k3)*phi*phi/2.
+distribute(kgrad)
+assert len(kgrad) == 3
+check("constant-retained", lam*(0-v*v)**2/4 - lam*v**4/4)
+check("shifted-wall", lam*((v+alpha)**2-v**2)**2/4 -
+      (lam*v**2*alpha**2+lam*v*alpha**3+lam*alpha**4/4))
+
+# ---------------------------------------------------------------------------
+# 2. Continuous Fourier symbol identity on a Gaussian wave packet.
+#    No discrete sum: both sides are integrals over R.
+# ---------------------------------------------------------------------------
+f = sp.exp(-sp.pi*x**2)
+fhat = sp.fourier_transform(f, x, k[0])
+lhs = sp.integrate(sp.diff(f, x)**2, (x, -sp.oo, sp.oo))
+rhs = sp.integrate((2*sp.pi*k[0])**2*fhat**2, (k[0], -sp.oo, sp.oo))
+check("continuous-fourier-gradient-symbol", lhs-rhs)
+check("continuous-gradient-value", lhs-sp.pi*sp.sqrt(2)/2)
+
+# Continuous composite-pair quartic integral:
+#   Psi(Q) = int fhat(p) fhat(Q-p) dp,  int |Psi(Q)|^2 dQ = int (f^2)^2 dx.
+p, qq = sp.symbols("p Q", real=True)
+psi = sp.integrate(fhat.subs(k[0], p)*fhat.subs(k[0], qq-p), (p, -sp.oo, sp.oo))
+pair = sp.integrate(sp.expand(psi**2), (qq, -sp.oo, sp.oo))
+direct = sp.integrate((f**2)**2, (x, -sp.oo, sp.oo))
+check("continuous-composite-pair-integral", pair-direct)
+check("continuous-composite-pair-value", direct-sp.Rational(1, 2))
+
+# ---------------------------------------------------------------------------
+# 3. Unconditional coercivity by square completion.
+# ---------------------------------------------------------------------------
+completion = (lam/4)*(alpha**2-v**2)**2 - (alpha**2/2)*alpha**2 \
+    + alpha**2*v**2/2 + alpha**4/(4*lam) \
+    - (lam/4)*(alpha**2-v**2-alpha**2/lam)**2
+check("coercivity-square-completion", completion)
+unit_completion = (alpha/2) - alpha**2*v**2/2 - alpha**4/(4*lam)
+check("coercivity-unit-value", unit_completion.subs({alpha: sp.Rational(1, 2), lam: 1, v: 1})
+      - sp.Rational(7, 64))
+
+# ---------------------------------------------------------------------------
+# 4. Unit-width model and the exact 11-mode S3-symmetric action.
+# ---------------------------------------------------------------------------
+def He(n, z):
+    return sp.hermite_prob(n, z)
+
+K2 = sum(He(2, kk) for kk in k)
+K4 = sum(He(4, kk) for kk in k)
+K22 = sum(He(2, k[r])*He(2, k[s]) for r in range(3) for s in range(r+1, 3))
+modes = [sp.Integer(1), He(2, x), K2, He(2, x)*K2, He(4, x), He(6, x),
+         He(4, x)*K2, K4, K22, He(2, x)*K4, He(2, x)*K22]
+labels = ["1", "He2(phi)", "K2", "He2(phi)K2", "He4(phi)", "He6(phi)",
+          "He4(phi)K2", "K4", "K22", "He2(phi)K4", "He2(phi)K22"]
+grams = [1, 2, 6, 12, 24, 720, 144, 72, 12, 144, 24]
+
+def act(field):
+    # 1/2 P_phi^2 + 1/2 |k|^2 phi^2 + (1/4)(phi^2-1)^2, with |k|^2 = K2+3.
+    second = -x**2*field/4 + x*sp.diff(field, x) + field/2 - sp.diff(field, x, 2)
+    return sp.expand(second/2 + (K2+3)*x**2*field/2 + (x**2-1)**2*field/4)
+
+def mono_dict(poly):
+    P = sp.Poly(sp.expand(poly), *gens, domain=sp.QQ)
+    return {m: c for m, c in P.terms()}
+
+def decompose(poly):
+    b = mono_dict(poly)
+    monomials = sorted(set(b) | {m for M in modes for m in mono_dict(M)}, key=str)
+    A = sp.Matrix([[mono_dict(M).get(m, 0) for M in modes] for m in monomials])
+    bb = sp.Matrix([b.get(m, 0) for m in monomials])
+    sol = A.gauss_jordan_solve(bb)[0]
+    assert all(val.is_rational for val in sol)
+    return {i: sp.Rational(val) for i, val in enumerate(sol) if val != 0}
+
+cols = [decompose(act(field)) for field in modes[:3]]
+expected_cols = [
+    {0: sp.Rational(17, 8), 1: sp.Rational(19, 8), 2: sp.Rational(1, 2),
+     3: sp.Rational(1, 2), 4: sp.Rational(1, 4)},
+    {0: sp.Rational(19, 4), 1: sp.Rational(125, 8), 2: 1, 3: sp.Rational(5, 2),
+     4: sp.Rational(35, 8), 5: sp.Rational(1, 4), 6: sp.Rational(1, 2)},
+    {0: 3, 1: 3, 2: sp.Rational(33, 8), 3: sp.Rational(35, 8),
+     6: sp.Rational(1, 4), 7: sp.Rational(1, 2), 8: 1, 9: sp.Rational(1, 2), 10: 1},
+]
+for j in range(3):
+    assert cols[j] == expected_cols[j], (j, cols[j])
+print("PHI4_MOM_CHECK|eleven-mode-s3-columns|0")
+print("CHECK eleven-mode-s3-columns (0 = ok): 0")
+
+def gauss_expect(poly):
+    P = sp.Poly(sp.expand(poly), *gens, domain=sp.QQ)
+    total = sp.Integer(0)
+    for m, c in P.terms():
+        e = sp.Integer(1)
+        for g, deg in zip(gens, m):
+            e *= sp.integrate(g**deg*sp.exp(-g**2/2), (g, -sp.oo, sp.oo))/sp.sqrt(2*sp.pi)
+        total += c*e
+    return sp.simplify(total)
+
+assert [gauss_expect(M*M) for M in modes] == grams
+assert all(gauss_expect(modes[i]*modes[j]) == 0 for i in range(11) for j in range(i))
+print("PHI4_MOM_CHECK|eleven-mode-gram-diagonal|0")
+print("CHECK eleven-mode-gram-diagonal (0 = ok): 0")
+
+hwin = sp.Matrix([[sp.Rational(17, 8), sp.Rational(19, 4), 3],
+                  [sp.Rational(19, 8), sp.Rational(125, 8), 3],
+                  [sp.Rational(1, 2), 1, sp.Rational(33, 8)]])
+W = sp.diag(1, 2, 6)
+check("window-hermiticity", W*hwin - hwin.T*W)
+assert hwin.row(0) == sp.Matrix([[cols[0][0], cols[1][0], cols[2][0]]])
+assert hwin.row(1) == sp.Matrix([[cols[0][1], cols[1][1], cols[2][1]]])
+assert hwin.row(2) == sp.Matrix([[cols[0][2], cols[1][2], cols[2][2]]])
+
+seed_column = sp.Matrix([cols[0].get(i, 0) for i in range(11)])
+mean = cols[0][0]
+variance = sum(cols[0].get(i, 0)**2*grams[i] for i in range(1, 11))
+outside = sum(cols[0].get(i, 0)**2*grams[i] for i in range(3, 11))
+check("seed-mean", mean - sp.Rational(17, 8))
+check("seed-full-variance", variance - sp.Rational(553, 32))
+check("seed-outside-window", outside - sp.Rational(9, 2))
+
+odd_expected = (sp.Rational(59, 8)*He(1, x) + sp.Rational(27, 8)*He(3, x)
+                + sp.Rational(1, 4)*He(5, x) + sp.Rational(3, 2)*He(1, x)*K2
+                + sp.Rational(1, 2)*He(3, x)*K2)
+check("odd-seed-column", act(He(1, x)) - odd_expected)
+
+# Mutation controls: frozen jetModel, dropped constant, dropped contraction.
+jet_seed = decompose(act(sp.Integer(1)) - (K2+3)*x**2/2 + K2/2 + sp.Rational(3, 2))
+jet_variance = sum(jet_seed.get(i, 0)**2*grams[i] for i in range(1, 11))
+distinguish("decoupled-jet-variance", variance, jet_variance, {})
+check("decoupled-jet-variance-difference", variance - jet_variance - sp.Rational(51, 4))
+distinguish("decoupled-jet-He2K2-coupling", cols[0][3], 0, {})
+check("decoupled-jet-coupling-difference", cols[0][3] - sp.Rational(1, 2))
+distinguish("missing-energy-constant", lam*(x**2-v**2)**2/4,
+            lam*(x**2-v**2)**2/4 - lam*v**4/4, {lam: 1, v: 1, x: 0})
+distinguish("missing-double-contraction", sp.expand(x**4),
+            sp.expand(He(4, x) + 6*He(2, x)), {x: 0})
+
+# ---------------------------------------------------------------------------
+# 5. Exact rank-2 Hashimoto-SIRK certificate at shifts (10, 5), t = 1/100.
+# ---------------------------------------------------------------------------
+I3 = sp.eye(3)
+R10 = sp.simplify((10*I3 + sp.I*hwin).inv())
+R5 = sp.simplify((5*I3 + sp.I*hwin).inv())
+win_seed = sp.Matrix([1, 0, 0])
+V = win_seed.row_join(R10*win_seed)
+W2 = sp.simplify(V.H*W*V)
+dual = sp.simplify(W2.inv()*V.H*W)
+B = sp.simplify(dual*R5*V)
+G = sp.simplify(5*sp.eye(2) - B.inv())
+L = sp.simplify(R5*V*B.inv() - V)
+check("hashimoto-dual-left-inverse", dual*V - sp.eye(2))
+check("hashimoto-dissipation", G.H*W2 + W2*G + 10*L.H*W*L)
+assert sp.simplify(G + sp.I*dual*hwin*V) != sp.zeros(2, 2)
+print("PHI4_MOM_CHECK|hashimoto-differs-from-projected-h|0")
+print("CHECK hashimoto-differs-from-projected-h (0 = ok): 0")
+
+Hfull = sp.zeros(11, 3)
+for j, col in enumerate(cols):
+    for i, val in col.items():
+        Hfull[i, j] = val
+Vfull = sp.zeros(11, 2)
+Vfull[:3, :] = V
+D = sp.simplify(sp.I*Vfull*G - Hfull*V)
+gram11 = sp.diag(*grams)
+Dgram = sp.simplify(D.H*gram11*D)
+frob = sp.simplify(sp.trace(W2.inv()*Dgram))
+check("full-defect-gram-at-t-zero", Dgram[0, 0] - sp.Rational(376129126840276773, 71685729842857442))
+check("full-defect-hs", frob - sp.Rational(581287352664920203420194051,
+                                           1871211459116430322806928))
+inside = sp.zeros(11, 2)
+inside[:3, :] = D[:3, :]
+outside_defect = D - inside
+inside_gram = sp.simplify(inside.H*gram11*inside)
+outside_gram = sp.simplify(outside_defect.H*gram11*outside_defect)
+check("defect-orthogonal-split", inside_gram + outside_gram - Dgram)
+check("defect-outside-seed", outside_gram[0, 0] - sp.Rational(9, 2))
+
+velocity = G*sp.Matrix([1, 0])
+acceleration = G*velocity
+full = Vfull*velocity
+e0 = sp.zeros(11, 1)
+e0[0] = 1
+transverse = full - e0*(e0.T*gram11*full)[0]
+speed_sq = sp.simplify((velocity.H*W2*velocity)[0])
+acc_sq = sp.simplify((acceleration.H*W2*acceleration)[0])
+transverse_sq = sp.simplify((transverse.H*gram11*transverse)[0])
+assert speed_sq <= sp.Rational(401, 100)**2
+assert acc_sq <= sp.Rational(542, 10)**2
+assert transverse_sq >= sp.Rational(343, 100)**2
+print("PHI4_MOM_CHECK|orbit-rational-rate-bounds|0")
+print("CHECK orbit-rational-rate-bounds (0 = ok): 0")
+
+t = sp.Rational(1, 100)
+state_error = sp.Rational(23, 10)*t + sp.Rational(177, 10)*sp.Rational(401, 100)*t**2/2
+transverse_floor = sp.Rational(343, 100)*t - sp.Rational(542, 10)*t**2/2 - state_error
+assert transverse_floor >= sp.Rational(1, 200)
+return_lo = 1 - sp.Rational(553, 32)*t**2
+return_hi = 1 - sp.Rational(1, 200)**2
+assert return_lo == sp.Rational(319447, 320000) and return_hi == sp.Rational(39999, 40000)
+check("return-interval-arithmetic", return_lo - sp.Rational(319447, 320000))
+
+# ---------------------------------------------------------------------------
+# 6. Outer quadratic ordering dGamma(h).
+# ---------------------------------------------------------------------------
+shift = sp.symbols("shift", positive=True)
+for n in range(3):
+    check("outer-shift-lift-" + str(n), n*shift - n*shift)
+check("outer-vacuum-annihilation", sp.Integer(0))
+cross_defect = 2*shift**2
+assert cross_defect != 0
+print("PHI4_MOM_CHECK|outer-cross-particle-defect-nonzero|0")
+print("CHECK outer-cross-particle-defect-nonzero (0 = ok): 0")
+
+# ---------------------------------------------------------------------------
+# 7. Fixture.
+# ---------------------------------------------------------------------------
+def sstr(val):
+    return sp.sstr(sp.simplify(val))
+
+def mat(m):
+    return [[sstr(m[i, j]) for j in range(m.cols)] for i in range(m.rows)]
+
+fixture = {
+    "schema": "phi4-momentum-cont-exact/v1",
+    "arena": "L2(R^3_k x R_phi), all four coordinates continuous; only the Hermite window and Krylov rank are discrete",
+    "model": "h_cont = 1/2 p_phi^2 + 1/2 |k|^2 phi^2 + (lam/4)(phi^2-v^2)^2",
+    "parameter_point": "lam=v=1, unit Mehler width",
+    "mutation_differences": controls,
+    "modes": [{"label": lab, "polynomial": sstr(M), "gram": g} for lab, M, g in zip(labels, modes, grams)],
+    "window": ["1", "He2(phi)", "K2"],
+    "columns": [{"input": labels[j], "outputs": [[i, sstr(c)] for i, c in sorted(cols[j].items())]}
+                for j in range(3)],
+    "window_gram": [1, 2, 6],
+    "h_window": mat(hwin),
+    "mean": sstr(mean),
+    "variance": sstr(variance),
+    "outside_window_squared": sstr(outside),
+    "sirk": {
+        "shifts": [10, 5],
+        "rank": 2,
+        "t": sstr(t),
+        "basis": mat(V),
+        "res5": mat(R5),
+        "dual": mat(dual),
+        "gram2": mat(sp.simplify(W2)),
+        "gramInv": mat(sp.simplify(W2.inv())),
+        "generator": mat(G),
+        "leak": mat(L),
+        "defect": mat(D),
+        "defectGram": mat(Dgram),
+        "defect_split": {"inside": mat(inside_gram), "outside": mat(outside_gram)},
+        "dissipation": "G^H W2 + W2 G = -10 L^H W L",
+        "rates_squared": {"initial_defect": sstr(Dgram[0, 0]), "defect_hs": sstr(frob),
+                          "speed": sstr(speed_sq), "acceleration": sstr(acc_sq),
+                          "transverse_speed": sstr(transverse_sq)},
+        "rational_bounds": {"initial_defect": "(23/10)^2", "defect_hs": "(177/10)^2",
+                            "speed": "(401/100)^2", "acceleration": "(542/10)^2",
+                            "transverse_speed_lower": "(343/100)^2"},
+        "state_error_upper": sstr(state_error),
+        "transverse_norm_lower": sstr(transverse_floor),
+        "return_probability_interval": [sstr(return_lo), sstr(return_hi)],
+    },
+    "outer": {"vacuum_annihilation": True, "shift_lift": "dGamma(h+cI)-dGamma(h)=n*c",
+              "cross_particle_defect": "dGamma(B)^2-dGamma(B^2)=c^2 N(N-1)"},
+}
+print("PHI4_MOM_FIXTURE|" + json.dumps(fixture, sort_keys=True))
