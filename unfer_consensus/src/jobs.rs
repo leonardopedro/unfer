@@ -6,6 +6,14 @@
 //! fire is unclaimed (re-queued and retried), and an authz-fail disables the
 //! job. The queue is pure state — no wall-clock, no random — so a replayed
 //! schedule converges the same way the ledgers do.
+//!
+//! D14: claims are *ordered fenced*. A claim records the agreed tick it was
+//! made at, and every settle (fire, unclaim, disable) is refused once the
+//! queue's tick has advanced past that claim. This is [`LeaderLease`]'s
+//! ordering applied to the queue: the lease decides *who* fires a tick, the
+//! fence decides *which* tick a claim belongs to, so a superseded leader's
+//! late settle cannot fire against a schedule the cluster has moved past.
+//! [`crate::lease::LeaderLease`] couples the two.
 
 use std::collections::HashMap;
 
@@ -25,17 +33,27 @@ pub enum JobState {
 }
 
 /// A claim token for one job slot.
+///
+/// `tick` is the ordered fence: the agreed tick the claim was made at. A
+/// settle carrying a claim whose tick is behind the queue's current tick is
+/// stale and refused (D14).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct JobClaim {
     job: String,
     generation: u64,
+    tick: u64,
 }
 
 /// Deterministic scheduler for consensus/auction work.
+///
+/// `tick` is the queue's current ordered fence. It only moves forward
+/// ([`JobQueue::advance_tick`]); a claim settles only while the queue is still
+/// at the tick the claim was made at.
 #[derive(Debug, Clone, Default)]
 pub struct JobQueue {
     jobs: HashMap<String, JobState>,
     generation: HashMap<String, u64>,
+    tick: u64,
 }
 
 impl JobQueue {
@@ -62,7 +80,27 @@ impl JobQueue {
         Some(JobClaim {
             job: job.to_string(),
             generation,
+            tick: self.tick,
         })
+    }
+
+    /// Advance the ordered fence to `tick`. Strictly monotonic: a tick that
+    /// does not move forward (a clock regression or a replayed decision) is
+    /// refused, so the fence can never be rewound to re-admit a stale claim.
+    pub fn advance_tick(&mut self, tick: u64) -> Result<(), Diagnostic> {
+        if tick <= self.tick {
+            return Err(self.diag(
+                Code::DUPLICATE_TRANSACTION,
+                format!("tick {tick} does not advance the fence past {}", self.tick),
+            ));
+        }
+        self.tick = tick;
+        Ok(())
+    }
+
+    /// The queue's current ordered fence (the tick a fresh claim is made at).
+    pub fn tick(&self) -> u64 {
+        self.tick
     }
 
     /// `unclaimSlot`: a failed fire returns the job to `Queued` so it is
@@ -100,6 +138,7 @@ impl JobQueue {
     fn valid_claim(&self, claim: &JobClaim) -> bool {
         self.jobs.get(&claim.job) == Some(&JobState::Claimed)
             && self.generation.get(&claim.job) == Some(&claim.generation)
+            && claim.tick == self.tick
     }
 
     pub fn state(&self, job: &str) -> Option<JobState> {
@@ -176,5 +215,59 @@ mod tests {
             q.claim_slot("job").is_none(),
             "second claim must be refused"
         );
+    }
+
+    // ── D14: ordered fencing ────────────────────────────────────────────────
+
+    #[test]
+    fn advance_tick_is_strictly_monotonic() {
+        let mut q = JobQueue::new();
+        assert_eq!(q.tick(), 0);
+        q.advance_tick(5).expect("forward tick");
+        assert_eq!(q.tick(), 5);
+        assert!(q.advance_tick(5).is_err(), "an equal tick does not advance");
+        assert!(q.advance_tick(4).is_err(), "the fence never rewinds");
+        assert_eq!(q.tick(), 5);
+    }
+
+    #[test]
+    fn superseded_tick_cannot_fire() {
+        // Node 0 claims at tick 0; the cluster advances to tick 1 (another
+        // leader for this job). Node 0's late `mark_fired` must be refused
+        // even though the claim's generation still matches.
+        let mut q = JobQueue::new();
+        q.enqueue("auction-settle");
+        let claim = q.claim_slot("auction-settle").unwrap();
+        q.advance_tick(1).unwrap();
+        assert!(
+            q.mark_fired(&claim).is_err(),
+            "a claim from a superseded tick must not fire"
+        );
+        assert_eq!(q.state("auction-settle"), Some(JobState::Claimed));
+    }
+
+    #[test]
+    fn superseded_tick_cannot_unclaim_or_disable() {
+        let mut q = JobQueue::new();
+        q.enqueue("job");
+        let claim = q.claim_slot("job").unwrap();
+        q.advance_tick(2).unwrap();
+        // Both settles are no-ops against the stale fence, so the claimed job
+        // is neither re-queued nor disabled by a superseded leader.
+        q.unclaim_slot(&claim);
+        q.disable(&claim);
+        assert_eq!(q.state("job"), Some(JobState::Claimed));
+    }
+
+    #[test]
+    fn claim_at_the_current_tick_fires() {
+        // The fence admits a claim made at the tick the queue is at.
+        let mut q = JobQueue::new();
+        q.enqueue("job");
+        q.advance_tick(7).unwrap();
+        let claim = q.claim_slot("job").unwrap();
+        assert_eq!(q.tick(), 7, "the claim records the current tick");
+        q.mark_fired(&claim).expect("same-tick claim fires");
+        assert_eq!(q.state("job"), Some(JobState::Fired));
     }
 }
