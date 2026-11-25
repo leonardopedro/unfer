@@ -139,8 +139,12 @@ jobs:
   # remain the scheduled lane's job; `--quick` prints every row it skipped,
   # so this lane can never be mistaken for the full sweep.
   # ---------------------------------------------------------------------------
+  # The full gate sweep is the scheduled lane; a push gets the three canary
+  # rows only (reduced-length twins of stream/pilot/readout-exact; ~90 s of run
+  # time after the release build). They are a drift baseline, not a convergence
+  # verdict -- see the --quick note in `scripts/check-pcnl-gates`.
   pcnl-quick-gates:
-    name: R13 quick gate rows (per-push)
+    name: R13 canary rows (per-push)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1

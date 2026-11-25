@@ -14,7 +14,7 @@ matching fails loudly:
 ```
 ./scripts/check-pcnl-gates              # every gate under 900 s
 ./scripts/check-pcnl-gates --all        # includes hit-and-run 5,000
-./scripts/check-pcnl-gates --quick      # per-push: stream, pilot, readout-exact
+./scripts/check-pcnl-gates --quick      # per-push: the three *-canary rows (~94 s)
 ./scripts/check-pcnl-gates qk-gate      # one gate by name
 ```
 
@@ -42,6 +42,10 @@ Every run is from the repository root, against
 | `cn-exact-dense-24k.log` (alt) | the same with `--steps 24000 --burn 3000 --draws 21000` | ESS keeps scaling: R̂ 1.00274, ESS 3920.6, tail 2144.3, RMSE 0.105362; `gate=true` |
 | `basins.log` | `vector_basins --runs 2 --steps 8000` | potentials 28.0901/38.7083, RMSE 0.076978/0.087130 |
 | `stream.log` | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | warm coverage 1.0/1.0/0.9917/0.9833, z² 0.032/0.024/0.275/0.356 |
+| `stream-canary.log` (canary) | the same with `--adam-steps 50` | per-push drift baseline (6 s): joint test RMSE 0.114816, coverage90 1.0/1.0/1.0/1.0, z² 0.029/0.016/0.038/0.047 |
+| `pilot-canary.log` (canary) | `vector_regression --kernel hmc --init mode --mode-steps 300 --mode-lr 5e-3 --start-scale legacy --hmc-mass pilot --pilot-steps 100 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 100 --chains 4 --start-jitter 1e-4 --thin 1 --draws 75` | per-push drift baseline (45 s); full-parameter R̂ 2.60209, RMSE 0.104758, `gate=false` by length |
+| `readout-canary.log` (canary) | `vector_regression --readout-only --kernel hmc --init mean --hmc-mass exact --hmc-leapfrog 4 --steps 100 --burn 25 --thin 1 --draws 75 --chains 4` | per-push drift baseline (43 s); R̂ 1.07057, ESS 296.0, RMSE 0.105268, plus the `calibration` line |
+| `pilot-calibrated.log` (alt) | `pilot.log`'s command plus `--calibration` | full-parameter calibration contrast: train param 90% 478/480, predictive 480/480, band half-width 0.066869, residual sd 0.018003, df −56,898 → df-adjusted `NaN`; every other summary line identical to `pilot.log` |
 
 Three details worth keeping: hit-and-run takes `--steps` and `--hr-width` (burn is
 `steps/4`, there is no `--burn`); `--mode-lr 5e-3` is not the default (the
@@ -71,9 +75,13 @@ budgeted above 900 s (currently `temper-4` and `hitrun-5000`) is skipped by the
 default sweep, which is why the checker now prints a `not selected:` line for
 every row it left out, with the flag that would select it. The `alt` rows
 (`cn-exact-dense-12k`, `cn-exact-dense-24k` and the two `qk` alternates) need
-`--alts`. `--quick` is the per-push lane: it selects only `stream`, `pilot` and
-`readout-exact` (492 s of gate time measured idle; 1,410 s under load) and
-prints every row it skipped, so it can never be mistaken for the full sweep.
+`--alts`. `--quick` is the per-push lane: it selects only the three `canary`
+rows, which twin `stream`, `pilot` and `readout-exact` at a length that fits
+the budget (94 s measured idle against 492 s for the full rows; 1,410 s under
+load), and prints every row it skipped, so it can never be mistaken for the
+full sweep. Canary numbers are a drift baseline, not a gate: their `gate=`
+verdict is `false` at that chain length by construction, and the default sweep
+skips them because the full rows subsume them.
 
 Readout-only rows also print a `calibration` line, which scores the same 90%
 bands on the split the conditional likelihood was fitted on (train) and reports
@@ -83,10 +91,22 @@ the frozen backbone memorised the train split; the held-out residual is the
 operative scale behind the `0.158` coverage. See `docs/PCNL_STATUS.md`,
 "Why the readout-conditional 90% coverage is 0.158".
 
+`--calibration` adds the same line to a full-parameter run and is opt-in for
+that reason: it is a new summary line, so turning it on by default would
+invalidate every committed full-parameter log at once. `pilot-calibrated` is
+the contrast row — same train rows, same 90% band, all 57,378 coordinates
+marginalised — and its band is 3.5× wider (`0.0669` vs `0.0190`). Its `df` is
+negative (480 observations, 57,378 parameters), so the df-adjusted residual sd
+is `NaN`: a full-parameter run has no unbiased in-sample noise estimate.
+
 Measured on 2026-11-25 on the local 12-core machine: `--all` = 13 rows /
 6,645 s / ~1 h 55 m, `--all --alts` = 16 rows / 8,349 s / ~2 h 20 m, both
-reproducing every summary line (exit 0). The manifest now has 17 entries (the
-13 gates plus `cn-exact-dense-12k`, `cn-exact-dense-24k` and the two `qk`
-alternates); the 24k row alone is ~3,100 s, so a full `--all --alts` sweep is
+reproducing every summary line (exit 0); after the canaries landed `--all` is
+16 rows and adds their 94 s (~6,740 s expected — not re-measured end to end),
+and `--all --alts` is 21 rows adding the same 94 s plus `pilot-calibrated`'s
+196 s. The manifest now has 21 entries (13
+gates, five alternates — `cn-exact-dense-12k`, `cn-exact-dense-24k`, the two
+`qk` alternates and `pilot-calibrated` — and the three canaries); the 24k row
+alone is ~3,100 s, so a full `--all --alts` sweep is
 now above the recorded 2 h 20 m. Those figures are what the scheduled lane's
 `timeout-minutes` is sized against; the per-push lane is `--quick` instead.

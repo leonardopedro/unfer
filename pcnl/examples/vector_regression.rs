@@ -394,6 +394,13 @@ fn main() {
     // adaptation only; the target is unchanged and each production chain is
     // an exact MH chain for the covariance it is given.
     let readout_only = args.iter().any(|a| a == "--readout-only");
+    // The readout conditional is the only split with an analytic posterior, so
+    // its calibration line is emitted by default.  A full-parameter run scores
+    // the same bands against the same train split but marginalises the 57k
+    // coordinates, which is the contrast that shows how much of the readout
+    // band's tightness comes from conditioning on the frozen backbone; it is
+    // opt-in so every existing gate log keeps its line set.
+    let calibration = args.iter().any(|a| a == "--calibration");
     let sampled = if readout_only {
         Sampled::Readout(
             ReadoutTarget::new(train.clone(), theta_vec.clone()).expect("readout target"),
@@ -931,7 +938,10 @@ fn main() {
     // on, so score the same 90% bands on it (train) as well as on the held-out
     // split above.  A calibrated sampler must reproduce the analytic Gaussian
     // here; the residual sd is the noise-scale estimate that split can give.
-    if readout_only {
+    // `--calibration` adds the same line to a full-parameter run (see the flag's
+    // comment at the top of `main`), which is the readout-only contrast: the
+    // same train rows, the same 90% band, but the 57k coordinates marginalised.
+    if readout_only || calibration {
         // A band from every draw is the right estimator but O(draws) forward
         // passes per observation; on the 24k length probe that dominates the
         // run.  A deterministic evenly spaced subsample keeps the check
@@ -980,12 +990,7 @@ fn main() {
             let chain_slice = &draws[offset..offset + count];
             for row in 0..obs_rows {
                 for d in chain_slice {
-                    for (j, v) in test
-                        .predict_row(d, row)
-                        .unwrap()
-                        .into_iter()
-                        .enumerate()
-                    {
+                    for (j, v) in test.predict_row(d, row).unwrap().into_iter().enumerate() {
                         traces[row * q + j][chain_index].push(f64::from(v));
                     }
                 }

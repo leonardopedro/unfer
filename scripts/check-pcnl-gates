@@ -37,11 +37,14 @@
 # (see `.github/workflows/ci.yml`, job "artifact + corpus drift gates"); the
 # numeric sweep is the scheduled lane in `.github/workflows/pcnl-gates.yml`.
 #
-# `--quick` runs only `QUICK_NAMES`: the three cheapest rows (stream ~35 s,
-# pilot ~165 s, readout-exact ~292 s on an idle machine, so ~8 min plus the
-# release build; 1,410 s measured once while another job held the machine).
-# That is the per-push lane in `ci.yml`, where the scheduled lane's full sweep
-# is unaffordable. It selects the named rows only -- it is never a silent
+# `--quick` runs only `QUICK_NAMES`: the three `canary` rows, which are
+# reduced-length twins of `stream`, `pilot` and `readout-exact` (50 Adam steps,
+# 100 HMC steps and a 100-step exact-mass chain) at ~6 s + ~45 s + ~40 s, so a
+# per-push sweep lands in ~2 min instead of ~8. They are *drift canaries*, not
+# gates: the same seeded pipeline decides the same numbers, so a behaviour
+# change moves them, but their R-hat/ESS are not a convergence claim (the gate
+# verdict is `false` by construction at that length). The full rows still run
+# in the default sweep and in the scheduled lane. `--quick` is never a silent
 # subset: the closing report names every row it did not run.
 #
 # `--skip-slow` is the default: entries budgeted above `SLOW_SECS` (900 s) are
@@ -64,7 +67,7 @@ FIXTURE=docs/fixtures/ultrabert_20ng4_embeddings.safetensors
 SLOW_SECS=900
 # Per-push lane: see the header. Names only, so a renamed row fails the
 # selection check below instead of silently shrinking the quick lane.
-QUICK_NAMES="stream pilot readout-exact"
+QUICK_NAMES="stream-canary pilot-canary readout-canary"
 
 # name|class|budget_s|log|program|arguments
 # class: gate  = a row of the R13 gate table, run by default
@@ -93,6 +96,18 @@ jitter-lf4|gate|600|jitter-lf4.log|vector_regression|--kernel hmc --init mode --
 hitrun-5000|gate|3000|hitrun-5000.log|vector_regression|--kernel hitrun --init point --steps 5000 --hr-width 1 --thin 2 --draws 1875 --chains 4
 qk-alt-lf8-lr5e-3|alt|240|qk-alt-lf8-lr5e-3.log|vector_regression|--kernel hmc --init mode --mode-steps 8000 --mode-lr 5e-3 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
 qk-alt-lf8-lr2e-3|alt|240|qk-alt-lf8-lr2e-3.log|vector_regression|--kernel hmc --init mode --mode-steps 8000 --mode-lr 2e-3 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
+# Per-push canaries (class `canary`, selected only by --quick or --all): the
+# same three programs and code paths at a length that fits a ~2 min lane.  Their
+# numbers are a drift baseline, not a convergence result; the full rows above
+# remain the gates.
+stream-canary|canary|20|stream-canary.log|vector_stream|--prefixes 4 --adam-steps 50 --lr 0.02
+pilot-canary|canary|70|pilot-canary.log|vector_regression|--kernel hmc --init mode --mode-steps 300 --mode-lr 5e-3 --start-scale legacy --hmc-mass pilot --pilot-steps 100 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 100 --chains 4 --start-jitter 1e-4 --thin 1 --draws 75
+readout-canary|canary|70|readout-canary.log|vector_regression|--readout-only --kernel hmc --init mean --hmc-mass exact --hmc-leapfrog 4 --steps 100 --burn 25 --thin 1 --draws 75 --chains 4
+# Full-parameter twin of `pilot` with the calibration line: the readout-only
+# calibration above is conditioned on the frozen backbone, so its 90% band is
+# tight; marginalising all 57,378 coordinates is the contrast (and its df is
+# negative, which is why the df-adjusted sd is NaN here).
+pilot-calibrated|alt|240|pilot-calibrated.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass pilot --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --chains 4 --start-jitter 1e-4 --thin 1 --draws 300 --calibration
 EOF
 )
 # `#` lines inside the block above document a row; they are not entries.
@@ -183,6 +198,9 @@ selected() { # name class budget
     return 1
   fi
   [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ] && return 1
+  # Canaries are subsumed by the full rows they twin and exist only for the
+  # latency budget of the per-push lane, so the default sweep skips them.
+  [ "$cls" = canary ] && [ "$RUN_ALL" -eq 0 ] && return 1
   [ "$RUN_ALL" -eq 0 ] && [ "$budget" -gt "$SLOW_SECS" ] && return 1
   return 0
 }
@@ -238,6 +256,8 @@ while IFS='|' read -r name cls budget log prog args; do
       SKIPPED+=("$name (not in the per-push quick set; --all)")
     elif [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ]; then
       SKIPPED+=("$name (alternate; --alts)")
+    elif [ "$cls" = canary ] && [ "$RUN_ALL" -eq 0 ]; then
+      SKIPPED+=("$name (canary; --quick)")
     elif [ "$RUN_ALL" -eq 0 ] && [ "$budget" -gt "$SLOW_SECS" ]; then
       SKIPPED+=("$name (budget ${budget}s > ${SLOW_SECS}s; --all)")
     fi
@@ -308,7 +328,11 @@ if [ "$fail" -ne 0 ]; then
 fi
 echo "R13 gates reproduce: $ran compared, $skipped not selected."
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
-  echo "  unselected by --skip-slow / --alts:"
+  if [ "$RUN_QUICK" -eq 1 ]; then
+    echo "  unselected by --quick:"
+  else
+    echo "  unselected by --skip-slow / --alts:"
+  fi
   for s in "${SKIPPED[@]}"; do echo "    $s"; done
 fi
 exit 0

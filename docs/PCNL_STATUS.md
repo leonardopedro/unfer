@@ -7658,11 +7658,28 @@ silently.
 |---|---|---|---|---|---|---|
 | `readout-exact` (HMC, 3,000 draws) | `480/480` | `480/480` | `0.018983` | `0.004343` | `0.004505` (df `446`) | `0.05` |
 | `cn-exact-dense` (CN, 18,000 draws) | `480/480` | `480/480` | `0.019031` | `0.004451` | `0.004618` (df `446`) | `0.05` |
+| `pilot-calibrated` (full parameter, 1,200 draws) | `478/480` | `480/480` | `0.066869` | `0.018003` | `NaN` (df `−56,898`) | `0.05` |
 
 The bands are calibrated on the split they condition on, under both kernels:
 both cover every one of the 480 train observations, exactly as the analytic
 linear-Gaussian posterior requires. The `0.158` therefore belongs to the
 held-out split, not to the sampler.
+
+**The full-parameter contrast (2026-11-25).** `--calibration` adds the same line
+to a full-parameter run, so `pilot-calibrated` scores the *identical* train rows
+and 90% band while marginalising all 57,378 coordinates. The band is **3.5×
+wider** (`0.0669` vs `0.0190`) and the in-sample residual sd four times larger
+(`0.0180` vs `0.0044`), which is exactly the point: the readout-conditional
+band is tight because the frozen backbone already fits train, not because the
+sampler is overconfident. On train the full posterior over-covers (`478/480`
+parameter, `480/480` predictive) while on the held-out split the *same* run
+covers only `170/240` and `200/240` — in-sample it has absorbed the noise, so
+its train coverage is the memorisation again and the held-out numbers are the
+honest ones. `df` is `480 − 57,378 < 0`, so the df-adjusted residual sd is
+`NaN` by construction: with more parameters than train targets there is no
+unbiased in-sample noise estimate, which is why the full-parameter row can only
+supply the width contrast. The row is an `alt` (opt-in) entry: emitting the
+line by default would invalidate every committed full-parameter log.
 
 The same line also answers "estimate the noise scale", and the answer is that
 this split cannot: the frozen backbone was fitted on train, so the in-sample
@@ -7785,10 +7802,18 @@ and print into `logs/pcnl_r13_gates/`, which is committed together with
 `scripts/check-pcnl-gates` — that script re-runs every one of these commands
 and diffs the summary lines against the committed log, so a stale log or a
 command that has drifted from its log fails loudly instead of silently. The
-per-push CI lane runs `--quick` (`stream`, `pilot`, `readout-exact`; 492 s of
-gate time idle, 1,410 s under load) so ordinary drift fails on the push that
-caused it; the scheduled lane runs `--all`, and both print every row they did
-not run.
+per-push CI lane runs `--quick`, which now selects three *canary* rows instead
+of the full gate rows: `stream-canary` (50 Adam steps, 6 s), `pilot-canary`
+(100 HMC steps, 45 s) and `readout-canary` (100-step exact-mass chain, 43 s),
+94 s total on an idle machine against 492 s for the full twins. Each canary is
+the same program, code path and seed at a reduced length, so a behaviour change
+still moves its numbers, but their R̂/ESS are a drift baseline and **not** a
+convergence claim — the `gate=` verdict is `false` at that length by
+construction, and every table in this section cites the full rows. The full
+rows remain in the default sweep and in the scheduled `--all` lane; the default
+sweep skips canaries (they are subsumed) and both lanes print every row they
+did not run. This is the trade the per-push budget forces: ~2 min of coverage
+that fires on the push, with the complete gate sweep still scheduled.
 
 The four full-parameter rows (`pilot`, `hessian-64`, `lowrank-8`,
 `lowrank-32`) carried a flag the first reconstruction of this table dropped:
