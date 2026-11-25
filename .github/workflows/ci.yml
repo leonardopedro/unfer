@@ -148,6 +148,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+      # Cargo loads every workspace member's manifest even for `-p pcnl`, and
+      # two members path-dep siblings: unfer_consensus -> ../../dynamic-arctic
+      # and fock_sirk -> ../../australVM/safestos/gpu (optional `avm-gpu`, but
+      # the manifest path must still resolve). Without both clones the build
+      # dies before compiling anything, exit 101 -- which is exactly how the
+      # first run of this job failed.
+      - name: checkout the two sibling path deps
+        run: |
+          git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+          # master, not main: australVM's only remote branch is `master`
+          git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - name: build the examples the quick rows run
