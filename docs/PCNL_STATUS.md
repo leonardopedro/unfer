@@ -7815,6 +7815,18 @@ sweep skips canaries (they are subsumed) and both lanes print every row they
 did not run. This is the trade the per-push budget forces: ~2 min of coverage
 that fires on the push, with the complete gate sweep still scheduled.
 
+The hosted runner is not the recording machine, so the lane compares with
+`--band 0.2` and never byte-for-byte: the first two GitHub runs of this job
+showed that a seeded 50-step Adam canary moves `test_rmse_mean` by 0.1% and one
+`z2` by 4.7% with no code change, purely from a different CPU/libm, and an MCMC
+accept/reject decision can flip a whole chain — so no digit count can separate
+hardware from behaviour. Counts (`(478/480)`, `rows=240`), words (`gate=true`)
+and the `NaN` class still compare exactly; the band is a gross-drift net.
+Byte-exact reproduction stays `./scripts/check-pcnl-gates` on the machine that
+recorded the logs, which is why that is the default. (The structural check
+`--check-manifest` needs no numerics at all and is what the earlier per-push
+lane ran.)
+
 The four full-parameter rows (`pilot`, `hessian-64`, `lowrank-8`,
 `lowrank-32`) carried a flag the first reconstruction of this table dropped:
 `--start-scale legacy`. Under the shipped `prior` start the mode fit and the

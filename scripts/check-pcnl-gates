@@ -55,14 +55,16 @@
 # by an estimate above `SLOW_SECS`, so a row that grew past the threshold (as
 # `temper-4` did, 950 s) leaves the default sweep until `--all` is used.
 #
-# `--digits N` compares numeric fields to N significant digits instead of
+# `--band R` compares fractional numbers with a relative tolerance R instead of
 # byte-for-byte. The committed logs are bitwise on the machine that recorded
-# them; on a different CPU/libm (GitHub's hosted runner) the same seeded run can
-# differ in the last printed digits -- and 50 Adam steps or a 100-step HMC chain
-# amplify a last-bit difference, so the per-push lane uses `--digits 6` to
-# separate "different hardware" from "different behaviour". Counts, verdicts and
-# labels are never rounded: they are integers or words and still compare
-# exactly. Default stays exact, so local reproduction is unchanged.
+# them, and that is not portable: on GitHub's hosted runner the same seeded
+# canary moved its 50-step Adam RMSE by 0.1% and one `z2` by 4.7% through
+# last-bit differences alone, while an MCMC accept/reject decision can flip a
+# whole chain. So no digit count separates hardware from behaviour; the hosted
+# lane uses a wide band (`--band 0.2`) as a *gross*-drift net. Integer literals
+# (counts such as `(478/480)`, `rows=240`), words (`gate=true`, `sample_space=…`)
+# and the non-finite class (a `NaN` must stay `NaN`) always compare exactly, and
+# the default stays byte-exact, so local reproduction is unchanged.
 #
 # Exit status: 0 all compared rungs matched; 1 any mismatch or failed run;
 # 2 setup problem (no binary, no fixture, unknown gate).
@@ -128,7 +130,7 @@ RUN_ALL=0
 RUN_ALTS=0
 RUN_QUICK=0
 CHECK_MANIFEST=0
-DIGITS=0
+BAND=
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -137,7 +139,7 @@ while [ $# -gt 0 ]; do
     --alts)     RUN_ALTS=1 ;;
     --quick)    RUN_QUICK=1 ;;
     --check-manifest) CHECK_MANIFEST=1 ;;
-    --digits)   DIGITS=${2:?--digits needs a count}; shift ;;
+    --band)     BAND=${2:?--band needs a relative tolerance}; shift ;;
     --skip-slow) RUN_ALL=0 ;;
     --out)      OUT=${2:?--out needs a directory}; shift ;;
     -h|--help)  sed -n '2,40p' "$0"; exit 0 ;;
@@ -147,8 +149,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-printf '%s' "$DIGITS" | grep -qE '^[0-9]+$' && [ "$DIGITS" -le 17 ] \
-  || { echo "setup: --digits takes a significant-digit count 0..17" >&2; exit 2; }
+[ -z "$BAND" ] || printf '%s' "$BAND" | grep -qE '^[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$' \
+  || { echo "setup: --band takes a relative tolerance such as 0.2" >&2; exit 2; }
 
 [ -d "$LOG_DIR" ] || { echo "setup: $LOG_DIR missing" >&2; exit 2; }
 [ "$CHECK_MANIFEST" -eq 1 ] || [ -f "$FIXTURE" ] \
@@ -225,20 +227,43 @@ summaries() {
     | sed -e 's/[[:space:]]\+/ /g' -e 's/ *$//'
 }
 
-# Print every line with each number literal rounded to N significant digits.
-# Labels, counts and verdicts survive unchanged (an integer prints the same
-# either way), so only genuine numeric drift can be absorbed.
-to_digits() {
-  awk -v d="$1" '
-    function norm(s,   out, i, c, rest, L) {
-      out = ""; i = 1
+# Band comparison: every number may move within a relative band, but the key
+# sequence, the non-numeric tokens (`gate=true`, `sample_space=...`) and the
+# non-finite class (a `NaN` must stay `NaN`) compare exactly.  This is the only
+# portable mode: an MCMC accept/reject step and a training loop amplify a
+# last-bit difference on a foreign CPU/libm into a percent-level change (the
+# hosted runner moved a 50-step Adam canary's RMSE by 0.1% and one `z2` by
+# 4.7%), so no digit count can separate hardware noise from real drift.  The
+# band is a gross-drift net, not a reproduction claim.
+band_cmp() { # expected actual band
+  awk -v band="$3" '
+    function parse(line, VAL,   n, t, i, tok, eq, k) {
+      n = split(line, t, " "); GK = ""; k = ""
+      for (i = 1; i <= n; i++) {
+        tok = t[i]
+        if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+          eq = index(tok, "=")
+          k = substr(tok, 1, eq - 1)
+          VAL[k] = substr(tok, eq + 1)
+          GK = GK (GK == "" ? "" : ",") k
+        } else if (k != "") {
+          VAL[k] = VAL[k] " " tok
+        }
+      }
+      return 1
+    }
+    # Skeleton = the value with each number literal replaced by <n>; SN holds
+    # the literals found, in order.
+    function skel(s, VALS,   out, i, c, rest, L) {
+      out = ""; SN = 0; i = 1
       while (i <= length(s)) {
         c = substr(s, i, 1)
         if (c ~ /[-+0-9.]/) {
           rest = substr(s, i)
           if (match(rest, /^[-+]?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?/) && RLENGTH > 0) {
             L = substr(rest, 1, RLENGTH)
-            out = out sprintf("%.*e", d - 1, L + 0)
+            VALS[++SN] = L
+            out = out "<n>"
             i += RLENGTH
             continue
           }
@@ -248,7 +273,59 @@ to_digits() {
       }
       return out
     }
-    { print norm($0) }' "$2"
+    function nonfinite(v) { return (v ~ /^[-+]?[Nn]a[Nn]$/ || v ~ /^[-+]?[Ii]nf(inity)?$/) }
+    function val_ok(a, b,   sa, sb, na, i, x, y, d, m, t) {
+      if (a == b) return 1
+      sa = skel(a, VA); na = SN
+      sb = skel(b, VB)
+      if (sa != sb || na != SN) return 0
+      for (i = 1; i <= na; i++) {
+        x = VA[i]; y = VB[i]
+        if (nonfinite(x) || nonfinite(y)) { if (x != y) return 0; continue }
+        # Counts are integers: a moved count is structural, never rounding.
+        if (x ~ /^[-+]?[0-9]+$/ || y ~ /^[-+]?[0-9]+$/) { if (x + 0 != y + 0) return 0; continue }
+        x += 0; y += 0
+        d = (x > y) ? x - y : y - x
+        m = (x < 0 ? -x : x); t = (y < 0 ? -y : y); if (t > m) m = t
+        if (m == 0) m = 1
+        if (d > band * m) return 0
+      }
+      return 1
+    }
+    FNR == NR {
+      parse($0, EV)
+      EK[++el] = GK
+      for (k in EV) E[el, k] = EV[k]
+      split("", EV)
+      next
+    }
+    {
+      parse($0, AV)
+      al++
+      ak[al] = GK
+      for (k in AV) A[al, k] = AV[k]
+      split("", AV)
+    }
+    END {
+      if (el != al) { printf "      line count: recorded %d, rerun %d\n", el, al; exit 1 }
+      bad = 0
+      for (i = 1; i <= el; i++) {
+        if (EK[i] != ak[i]) {
+          printf "      line %d: key set changed\n        recorded %s\n        rerun    %s\n", i, EK[i], ak[i]
+          bad = 1
+          continue
+        }
+        nc = split(EK[i], ks, ",")
+        for (j = 1; j <= nc; j++) {
+          k = ks[j]
+          if (!val_ok(E[i, k], A[i, k])) {
+            printf "      line %d: %-22s %s -> %s (beyond band %g)\n", i, k, E[i, k], A[i, k], band
+            bad = 1
+          }
+        }
+      }
+      exit bad
+    }' "$1" "$2"
 }
 
 # Per-field report for two summary lines: key: recorded -> rerun.
@@ -287,7 +364,7 @@ SKIPPED=()
 
 echo "R13 gate re-run: $STAMP"
 echo "  rerun logs: $OUT"
-[ "$DIGITS" -gt 0 ] && echo "  numeric comparison: $DIGITS significant digits (not byte-exact)"
+[ -z "$BAND" ] || echo "  numeric comparison: relative band $BAND (not byte-exact)"
 echo
 
 while IFS='|' read -r name cls budget log prog args; do
@@ -338,10 +415,8 @@ while IFS='|' read -r name cls budget log prog args; do
   fi
 
   matched=0
-  if [ "$DIGITS" -gt 0 ]; then
-    to_digits "$DIGITS" "$expected" > "$expected.digits"
-    to_digits "$DIGITS" "$actual" > "$actual.digits"
-    cmp -s "$expected.digits" "$actual.digits" && matched=1
+  if [ -n "$BAND" ]; then
+    band_cmp "$expected" "$actual" "$BAND" && matched=1
   else
     cmp -s "$expected" "$actual" && matched=1
   fi
@@ -353,18 +428,21 @@ while IFS='|' read -r name cls budget log prog args; do
   fail=1
   echo "FAIL $name: summary differs (${elapsed}s)"
   # Walk the two files in parallel; report the first difference per line.
-  mapfile -t expl < "$expected"
-  mapfile -t actl < "$actual"
-  if [ "${#expl[@]}" -ne "${#actl[@]}" ]; then
-    echo "      line count: recorded ${#expl[@]}, rerun ${#actl[@]}"
+  # In --band mode band_cmp has already named the fields beyond tolerance.
+  if [ -z "$BAND" ]; then
+    mapfile -t expl < "$expected"
+    mapfile -t actl < "$actual"
+    if [ "${#expl[@]}" -ne "${#actl[@]}" ]; then
+      echo "      line count: recorded ${#expl[@]}, rerun ${#actl[@]}"
+    fi
+    for i in "${!expl[@]}"; do
+      e=${expl[$i]}
+      a=${actl[$i]:-<missing>}
+      [ "$e" = "$a" ] && continue
+      echo "      line $((i + 1)):"
+      field_diff "$e" "$a"
+    done
   fi
-  for i in "${!expl[@]}"; do
-    e=${expl[$i]}
-    a=${actl[$i]:-<missing>}
-    [ "$e" = "$a" ] && continue
-    echo "      line $((i + 1)):"
-    field_diff "$e" "$a"
-  done
   echo "      full diff: diff -u $expected $actual"
 done <<< "$MANIFEST"
 

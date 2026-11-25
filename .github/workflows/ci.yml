@@ -163,14 +163,16 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - name: build the examples the quick rows run
         run: cargo build --locked --release -p pcnl --example vector_regression --example vector_stream
-      # `--digits 6`: the logs are bitwise on the machine that recorded them, and
-      # this runner is a different CPU/libm, so a seeded 100-step chain can move in
-      # the last printed digits. Counts, verdicts and labels still compare exactly,
-      # so real drift (a changed trajectory, a changed threshold) still fails.
+      # `--band 0.2`: the logs are bitwise on the machine that recorded them, and
+      # this runner is a different CPU/libm -- a seeded 50-step Adam canary moved
+      # one RMSE by 0.1% and one `z2` by 4.7% with no code change, and an MCMC
+      # accept/reject can flip a whole chain. Counts, verdicts and labels still
+      # compare exactly, so a changed trajectory shape or policy still fails; the
+      # band is a gross-drift net, not a reproduction claim.
       - name: rerun the quick R13 canary rows
         run: |
           set +e
-          bash scripts/check-pcnl-gates --quick --digits 6 > /tmp/canary.log 2>&1
+          bash scripts/check-pcnl-gates --quick --band 0.2 > /tmp/canary.log 2>&1
           status=$?
           tail -60 /tmp/canary.log
           if [ "$status" -ne 0 ]; then

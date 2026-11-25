@@ -83,6 +83,15 @@ full sweep. Canary numbers are a drift baseline, not a gate: their `gate=`
 verdict is `false` at that chain length by construction, and the default sweep
 skips them because the full rows subsume them.
 
+The scripts are byte-exact by default, which is only true on the machine that
+recorded the logs. Both GitHub workflows therefore pass `--band 0.2`: the first
+hosted runs of the canary lane moved a 50-step Adam `test_rmse_mean` by 0.1%
+and one `z2` by 4.7% with no code change, and an MCMC accept/reject can flip a
+whole chain, so numeric tolerance cannot separate hardware from behaviour.
+Integer literals (counts), words (`gate=true`) and the `NaN` class still compare
+exactly; `--band` is a gross-drift net, and byte-exact reproduction stays
+`./scripts/check-pcnl-gates` on the recording machine.
+
 Readout-only rows also print a `calibration` line, which scores the same 90%
 bands on the split the conditional likelihood was fitted on (train) and reports
 the residual sd there, its df-adjusted value, and the declared noise. Its
