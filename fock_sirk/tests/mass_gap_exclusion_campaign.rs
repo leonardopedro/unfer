@@ -2704,3 +2704,52 @@ fn the_converged_shift_reaches_48_in_the_odd_block() {
         count.fill
     );
 }
+
+/// Recompute the finite reflection-sector comparison and count *both* blocks
+/// at common thresholds. Emit only when the caller requests a fresh fixture.
+#[test]
+fn finite_model_witness_emission() {
+    let trunc = Truncated::build(&qcd_ym_hamiltonian(2.0), 10);
+    let odd = trunc.sector_matrix(false);
+    let even = trunc.sector_matrix(true);
+    let ground = |a: &DMatrix<f64>| {
+        let spectrum = a.clone().symmetric_eigen();
+        let i = spectrum.eigenvalues.imin();
+        let x = spectrum.eigenvectors.column(i).normalize();
+        let hx = a * &x;
+        let theta = x.dot(&hx);
+        (theta, (hx - theta * x).norm())
+    };
+    let (theta_odd, residual_odd) = ground(&odd);
+    let (theta_even, _) = ground(&even);
+    let beta = fock_sirk::certify_spectrum(&odd)
+        .unwrap().second_eigenvalue_lower_bound().unwrap();
+    let temple = certified_gap_lower_bound_with_exclusion(
+        theta_odd, residual_odd, beta, theta_even).unwrap();
+    assert!(temple > 1.0 && theta_odd + residual_odd < beta);
+
+    // Count at dyadic separators away from pivots. Bounds refer to the
+    // spectrum of the assembled finite matrices used by the inertia routine.
+    let columns = |matrix: &DMatrix<f64>| -> Vec<Vec<(usize, f64)>> {
+        matrix.column_iter().map(|v| v.iter().copied().enumerate()
+            .filter(|&(_, x)| x != 0.0).collect()).collect()
+    };
+    let odd_columns = columns(&odd);
+    let even_columns = columns(&even);
+    let mut counts = Vec::new();
+    for shift in [-10.25, -10.234375, -9.03125, -9.015625] {
+        let n_odd = fock_sirk::certificate::inertia_below(&odd_columns, shift).unwrap().below;
+        let n_even = fock_sirk::certificate::inertia_below(&even_columns, shift).unwrap().below;
+        counts.push(serde_json::json!({"shift":shift,"odd":n_odd,"even":n_even}));
+    }
+    let row = serde_json::json!({
+        "schema":"qym-finite-reflection-count/v1", "physical":false,
+        "coupling":2, "cutoff":10, "dimension":odd.nrows(), "even_dimension":even.nrows(),
+        "theta_odd":theta_odd, "residual_odd":residual_odd, "theta_even":theta_even,
+        "beta_lambda2_odd":beta, "temple_bound":temple, "inertia_counts":counts
+    });
+    println!("{row}");
+    if let Some(path) = std::env::var_os("QYM_FINITE_WITNESS_OUTPUT") {
+        std::fs::write(path, format!("{row}\n")).unwrap();
+    }
+}
