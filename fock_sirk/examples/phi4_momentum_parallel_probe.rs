@@ -25,17 +25,32 @@
 //! not the action, dominates it at this size; `axpy_ms` shows the cost of one
 //! nested-vector addition, which the Krylov loop performs far more often than a
 //! matvec.
+//!
+//! `PROBE_CUTOFF` selects the window (default 20) and `PROBE_COMPONENT_BUDGET`
+//! the component ceiling (default 8e6, matching the sweep; `C = 26` needs
+//! 5.71e6 and `C = 28` needs 9.36e6). The probe also times the exact window
+//! reference the sweep evaluates beside every solve — the seed column of
+//! `exp(-i t H_window)` from `common::window_reference`, the other half of a
+//! large cell under the dense reference and a few seconds of it now
+//! (`docs/VERIFY_PHI4_MOMENTUM.md` §5.7–§5.8):
+//!
+//! ```text
+//! PROBE_CUTOFF=26 PHI4_PROFILE=1 cargo run -q -p fock_sirk --release \
+//!     --example phi4_momentum_parallel_probe
+//! ```
 
 use fock_sirk::joint_sirk::{
     JointKrylovMethod, JointSirkOptions, hashimoto_unitary_shifts, joint_axpy, joint_inner_product,
     solve_joint_sirk,
 };
-use nalgebra::DMatrix;
 use nested_fock_algebra::exact_inner::{ActionLimits, JointOuterBasis, NestedVector};
 use nested_fock_algebra::phi4_momentum::ScalarMomCont;
 use num_complex::Complex64 as C;
-use std::collections::BTreeMap;
 use std::time::Instant;
+
+mod common;
+
+use common::window_reference::WindowOperator;
 
 fn main() {
     let t = 0.05;
@@ -162,40 +177,19 @@ fn main() {
         probability
     );
     // The recorded sweep cell is not only the Krylov solve: it also evaluates
-    // the exact dense window reference (one action application per label, then
-    // a Pade `exp` of the window matrix). Time both halves so "what dominates
-    // the cell at this cutoff" has a measured answer, not an inference.
+    // the exact window reference (one action application per label, then the
+    // seed column of `exp(-i t H)`). Time both halves so "what dominates the
+    // cell at this cutoff" has a measured answer, not an inference.
     let started = Instant::now();
-    let labels: Vec<JointOuterBasis> = window.iter().cloned().collect();
-    let index: BTreeMap<JointOuterBasis, usize> = labels
-        .iter()
-        .cloned()
-        .enumerate()
-        .map(|(i, b)| (b, i))
-        .collect();
-    let n = labels.len();
-    let mut matrix = DMatrix::<C>::zeros(n, n);
-    for (j, basis) in labels.iter().enumerate() {
-        let image = h
-            .d_gamma(
-                &NestedVector::from([(basis.clone(), C::new(1.0, 0.0))]),
-                limits,
-            )
-            .expect("finite action");
-        for (target, amplitude) in image {
-            if let Some(&i) = index.get(&target) {
-                matrix[(i, j)] += amplitude;
-            }
-        }
-    }
+    let reference = WindowOperator::build(&h, &window);
     let build = started.elapsed().as_secs_f64();
-    let seed_index = index[initial.keys().next().expect("nonempty seed")];
+    let seed_index = reference.seed_index(&initial);
     let started = Instant::now();
-    let reference = (matrix * C::new(0.0, -t)).exp()[(seed_index, seed_index)].norm_sqr();
-    let expm = started.elapsed().as_secs_f64();
+    let probability = reference.exp_action_column(seed_index, t)[seed_index].norm_sqr();
+    let action = started.elapsed().as_secs_f64();
     println!(
-        "reference build_s={build:.3} expm_s={expm:.3} total_s={:.3} probability={reference:.17e}",
-        build + expm
+        "reference build_s={build:.3} expm_s={action:.3} total_s={:.3} probability={probability:.17e}",
+        build + action
     );
 
     for (threads, pdot, paxpy, worst) in parallel {

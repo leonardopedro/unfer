@@ -193,6 +193,22 @@ neutrinos + PMNS) included**:
   `dΓ`-ESA wave in the tree (`dGamma_essentiallySelfAdjointOn_fockCore`,
   `dGamma_essentiallySelfAdjointOn_of_esa`), not a symbolic computation.
 
+## Rust-side certification of named rows
+
+`scripts/verify_cdb_modules.sh` certifies every zero-intent handle in `docs/*.cdb`,
+but it is a shell gate, not a test: a change to the module could regress a row and
+nothing in `cargo test` would notice. `fock_sirk/tests/sm_validation.rs::
+sm_cdb_check_rows_reduce_to_zero` closes that gap for the rows the excluded
+sm_validation tests (13/15) named — **CHECK 17a, 17b, 28, 29, 30a, 30b, 30c** and
+both **CHECK 33** lines. It runs the module through `cadabra2-cli` (a subprocess,
+never linked) and requires each of those printed values to be exactly `0`; the
+engine is located through `CADABRA_CLI` or `PATH`, and the test **skips** — it
+does not pass — when the engine is absent.
+
+What this certifies is the symbolic algebra of those rows, which is what the
+module is for. It does *not* reinstate tests 13/15: their numerical-dictionary
+claims still need the helper layer described in the `sm_validation.rs` header.
+
 ## What the module does **not** certify
 
 Cadabra is a symbolic engine on classical expressions.  It certifies: the canonical-pair
@@ -229,6 +245,8 @@ This is the same division of labour as the NS/QG/YM modules (see `VERIFY_FARIS_L
 ## Files
 
 * `docs/faris_lavine_n_sm.cdb` — the module.
+* `fock_sirk/tests/sm_validation.rs` — `sm_cdb_check_rows_reduce_to_zero` runs it and
+  certifies the CHECK 17/28–30/33 rows in `cargo test` (skips without `cadabra2-cli`).
 * `docs/faris_lavine_n_ns.cdb`, `docs/faris_lavine_n_qg.cdb` — the NS/QG counterparts.
 * `docs/VERIFY_FARIS_LAVINE_N.md` — the NS/QG evidence base (incl. the core/lift section).
 * `../timepiece/CONSOLIDATED_PLAN.md` §D6b — the `N`-and-core work list (now including SM).

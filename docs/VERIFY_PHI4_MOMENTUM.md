@@ -10,8 +10,10 @@ The arena is `L²(ℝ³_k × ℝ_φ)`: momentum `k ∈ ℝ³` and field `φ ∈ 
 only discrete structures are the Mehler–Hermite occupation window and the Krylov
 rank.
 
-**How to read the response intervals.** In the recorded sweep, `exact` denotes a dense
-floating-point Padé reference on the same window. The tier labelled `certified` uses
+**How to read the response intervals.** In the recorded sweep, `exact` denotes the exact
+evolution of the same window — since §5.8 a Hermitian-Lanczos seed column of
+`exp(-i t H_window)`, before that a dense floating-point Padé `exp` of the window
+matrix, whose values it reproduces (§5.8). The tier labelled `certified` uses
 time samples and trapezoidal refinement. Its width-response interval excludes zero
 and its coupling interval includes zero. Rigorous bounds on the adjoint approximation,
 the error between time samples and the floating-point operations remain open for these
@@ -38,15 +40,14 @@ The operator keeps the full nonnegative square including `λv⁴/4`, forms the
 
 * Cadabra2 `2.5.15 private` (`nix shell nixpkgs#cadabra2`)
 * `rustc 1.99.0 (b940084d7 2026-09-28)`
-* repository `HEAD = 65a86f85d0ea` when the record was regenerated, with the
-  `P11`–`P13` files (including the parallel action and the map-operation fixes
-  of §5.5–§5.6) uncommitted
+* repository `HEAD = 7da9838` when the record was regenerated, with the
+  seed-column reference of §5.8 (and its `window_reference` module) uncommitted
 
 | file | SHA-256 |
 |---|---|
 | `docs/phi4_momentum_nested.cdb` | `669510d3c55d334b065b0d94c6f7a4d402cdf29408865856178c3b475fb8d709` |
 | `docs/fixtures/phi4_momentum_mehler.json` | `9b1e9c15ccbb53c876a4818f8d2898d8faec5f26c54d0664406cbcc9912d15bb` |
-| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `11edac4097cc40a4eb858eea56a8068e2b3c504a8ed053aa909dbebe81c9cc3c` |
+| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `cc21379f5c060ac279bf1f08989ec4de4f984734103ee4f3403d714e0fb69bdb` |
 
 ## 3. Replay
 
@@ -62,9 +63,9 @@ cargo test -p nested_fock_algebra phi4_momentum
 # the P12 suite (needs a C compiler, e.g. via `nix shell nixpkgs#gcc`)
 cargo test -p fock_sirk --test phi4_momentum_sirk   # 6 tests; ~5 s release
 
-# regenerate the evidence record (~30 min in release: the eight cutoff cells
-# cost 22 ms, 0.13 s, 0.75 s, 5.7 s, 35.9 s, 85.1 s, 184.9 s and 406.4 s at
-# m = 2 and 46 ms, 0.2 s, 1.7 s, 11.6 s, 70.3 s, 167.2 s, 317.5 s and 534.3 s
+# regenerate the evidence record (~19 min in release: the eight cutoff cells
+# cost 21 ms, 0.13 s, 0.68 s, 4.4 s, 25.2 s, 55.4 s, 112.3 s and 197.6 s at
+# m = 2 and 36 ms, 0.2 s, 1.2 s, 8.3 s, 46.1 s, 99.5 s, 199.7 s and 355.4 s
 # at m = 4; the debug build is impractical for them)
 cargo run -p fock_sirk --release --example phi4_momentum_sirk
 
@@ -75,6 +76,21 @@ FOCK_SIRK_ACTION_THREADS=1 \
 cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
 PHI4_PROFILE=1 \
   cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
+
+# the section 5.7/5.8 profile: same probe at C = 26 (~3.5 min: 196 s solve,
+# then a 3 s seed-column window reference; PROBE_COMPONENT_BUDGET defaults to
+# the sweep's 8e6 because C = 26 needs 5.71e6 components)
+PROBE_CUTOFF=26 PHI4_PROFILE=1 \
+  cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
+
+# the section 5.8 C = 28 cell (~6 min, budget 12e6 because C = 28 needs
+# 9,363,600 components; the old dense reference made the same run 12 min)
+PROBE_CUTOFF=28 PROBE_COMPONENT_BUDGET=12000000 PHI4_PROFILE=1 \
+  cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
+
+# bit-identity pin for the two map operations (previous implementations as the
+# oracle, amplitudes compared on to_bits())
+cargo test -p fock_sirk --test joint_map_ops
 ```
 
 The fixture itself is regenerated from the module's own `PHI4_MOM_FIXTURE|`
@@ -187,12 +203,12 @@ window, and the runtime grows faster than the label count.
 |---|---|---|---|---|
 | 4 | 15 | `1.7866` | `[6, 6]` | `22 ms` |
 | 8 | 70 | `1.4001` | `[17, 18]` | `0.13 s` |
-| 12 | 210 | `0.8946` | `[38, 43]` | `0.75 s` |
-| 16 | 495 | `0.5067` | `[70, 82]` | `5.7 s` |
-| 20 | 1001 | `0.3189` | `[112, 138]` | `35.9 s` |
-| 22 | 1365 | `0.2615` | `[137, 174]` | `85.1 s` |
-| 24 | 1820 | `0.2129` | `[163, 212]` | `184.9 s` |
-| 26 | 2380 | `0.1703` | `[190, 242]` | `406.4 s` |
+| 12 | 210 | `0.8946` | `[38, 43]` | `0.68 s` |
+| 16 | 495 | `0.5067` | `[70, 82]` | `4.4 s` |
+| 20 | 1001 | `0.3189` | `[112, 138]` | `25.5 s` |
+| 22 | 1365 | `0.2615` | `[137, 174]` | `55.8 s` |
+| 24 | 1820 | `0.2129` | `[163, 212]` | `112.3 s` |
+| 26 | 2380 | `0.1703` | `[190, 242]` | `197.6 s` |
 
 The `C ≥ 16` cells solve to a `1e-10` relative residual with a 1024-step cap:
 at `C = 20` the `1e-13` target stalls at `2.3e-13` and exhausts even 512 steps.
@@ -207,8 +223,10 @@ at `C = 26` (`5.71e6` components), and the dictionary charges one component per
 is a norm of the *action* outside `P_C`; it need not reach zero as the window
 grows, and it is still `0.17` at `C = 26` because `H` moves the seed to labels
 the window does not contain. The tail falls by only `0.32 → 0.17` from `C = 20`
-to `C = 26` while the cell cost grows `35.9 s → 406.4 s` (§5.5 explains where
-that time goes).
+to `C = 26` while the cell cost grows `25.2 s → 197.6 s` (§5.5–§5.7: the
+nested-vector arithmetic dominates the solve; the exact window reference, which
+was half of the `C = 26` cell under the dense Padé factorisation, is now `2.7 s`
+of it — §5.8).
 
 Rank sweep on the fixed `C = 8` window (`N = 3m + 2`, `h = 3`):
 
@@ -243,15 +261,15 @@ keeps shrinking. The `C = 20 … 26` entry is a shallow plateau with no monotone
 trend: `2.99e-3, 2.90e-3, 2.85e-3, 2.84e-3` differs in the third digit, which
 is the `solve_policy` tolerance's neighbourhood, so those four cells are read as
 equal, not as a decaying sequence. Growing `C` past 12 therefore buys tail, not
-accuracy, at a steeply rising cost (1.7 s → 11.6 s → 70.3 s → 167.2 s →
-317.5 s → 534.3 s per `m = 4` cell).
+accuracy, at a steeply rising cost (1.2 s → 8.3 s → 46.1 s → 99.5 s →
+199.7 s → 355.4 s per `m = 4` cell).
 That is exactly why it stays a labeled diagnostic. At `m = 2` the contrast is
 not yet visible (`1.9e-3, 1.3e-3, 1.3e-3`), so the m = 2 sweep is used for the
 plan-literal tail measurement and the contrast is recorded at `m = 4`.
 
 ### 5.3 Paired return responses, `C = 8, m = 4, t = 0.05, N = 250, h = 50`
 
-`p_exact` is the dense floating-point Padé reference for the *declared window*. Each cell
+`p_exact` is the exact evolution of the *declared window* (§5.8). Each cell
 carries three numbers:
 
 * `sharp` = `|p_sirk − p_exact|`, the measured compressed-flow discrepancy
@@ -401,7 +419,10 @@ same order. The end-to-end check at `C = 20`, `m = 2` is
 **`63.2 s → 24.1 s` (2.6×)** with the same 528 Arnoldi steps and the same
 `9.80001510278448618e-1`. In the record, where the fix applies to all eight
 cells and both ranks, the `m = 2` cells went `74.7 → 35.9 s` (2.08×),
-`172.2 → 85.1 s` (2.02×) and `367.1 → 184.9 s` (1.99×).
+`172.2 → 85.1 s` (2.02×) and `367.1 → 184.9 s` (1.99×). (Those cell figures are
+as recorded then, beside the dense window reference. §5.8 subsequently replaced
+that reference, which lowers every cell again — the map-operation comparison is
+the one measured here and is unaffected by it.)
 
 The regression check is stronger than a spot comparison: the record was
 regenerated with the new map operations and compared field by field against the
@@ -434,6 +455,128 @@ So the honest headline for `P13` is: a **1.5× action matvec, no gain from
 parallelising the Krylov arithmetic, and a 2.0–2.6× end-to-end win from
 replacing two per-entry map operations with structural ones**. `C = 22 … 26`
 were reached with that 2× plus wall clock (`30 min` for the recorded sweep).
+
+### 5.7 C = 26: the same two operations, but the cell is now half reference
+
+The question for the extension was whether the `C = 20` profile survives the
+move to `C = 26`. It does, and the arithmetic share edges up. `PROBE_CUTOFF=26
+PHI4_PROFILE=1` on 2380 labels, `m = 2`, four shift solves, 918 steps total:
+
+| phase | 190-step | 242-step | 242-step | 244-step | total | share of the solve |
+|---|---|---|---|---|---|---|
+| action matvec | `1.36 s` | `1.76 s` | `1.75 s` | `1.76 s` | `6.63 s` | **3.4 %** |
+| `joint_axpy` in MGS (contains the dot) | `27.44 s` | `47.74 s` | `47.57 s` | `47.87 s` | `170.62 s` | **87.1 %** |
+| — `joint_inner_product` inside it | `8.98 s` | `15.32 s` | `15.26 s` | `15.32 s` | `54.88 s` | `28.0 %` |
+| per-step basis SVD | `1.48 s` | `3.74 s` | `3.70 s` | `3.82 s` | `12.74 s` | `6.5 %` |
+
+Solve wall clock `196.0 s` (`918` Arnoldi steps, probability
+`9.79979792832502916e-1`, which is the record's `C = 26` value). A second run,
+with compilation on the same machine, reproduced the shares within `3 %` and the
+wall clock at `202.1 s`.
+
+The per-call cost grew roughly with the label count, not faster: `axpy`
+`0.76–0.81 ms` against `0.26–0.29 ms` at `C = 20`, `dot` `0.25–0.26 ms` against
+`0.08–0.09 ms`, for `2.38×` the labels. The in-solve `dot` is `≈ 3×` the
+standalone `dot_ms = 0.0864 ms` the probe prints, because the Krylov basis
+vectors are dense in the inner sector while the probe's pair is not — quote the
+`PROFILE` shares for cost, the probe numbers for the operations in isolation.
+
+**What changed is not the solver but the cell.** The recorded `C = 26` cell is
+`406.4 s` then (the record now carries `197.6 s` after §5.8), and the probe now
+times the other half of it — the exact dense window
+reference (`WindowOperator::build` plus the Padé `exp`) that the sweep evaluates
+beside every solve:
+
+| cell at `C = 26` | time | share of the `406.4 s` cell |
+|---|---|---|
+| Krylov solve (4 shifts, 918 steps) | `196.0 s` | `48 %` |
+| exact reference: dense build / Padé `exp` | `1.73 s` / `174.98 s` | `43 %` |
+| not individually timed (window, seed, residual bookkeeping, run variance) | `≈ 34 s` | `8 %` |
+
+The reference is a dense `2380 × 2380` Padé exponential, so it grows like `n³`:
+the same probe at `C = 20` (`1001` labels) measures `0.73 s` to build and
+`11.83 s` to exponentiate, `12.6 s` against `177 s` here — a `14.8×` rise for
+`2.38×` the labels, exponent `3.1`. Past `C = 24` the experiment is no longer
+solver-bound: **the Krylov solve is half the cell and the exact reference tier
+is the other half**, and it is the reference, not GMRES, that sets what `C = 28`
+would cost. Lengthening the sweep therefore needs either a cheaper reference (a
+Krylov or Lanczos `exp` action on the seed column instead of a full dense
+exponential) or a decision to record the sharp tier on a subsample of cutoffs.
+§5.8 takes the first route.
+
+The two halves are measured by different programs — the cell figure is the
+record's, the split is the probe's — and they sum to `373 s` against `406 s`, so
+the third row is a residual, not an attribution.
+
+The parallel map operations still lose at this size, by more than at `C = 20`:
+
+| operation (`C = 26`, 2380 labels) | direct | 1 worker (chunked) | 2 workers | 4 workers | 8 workers |
+|---|---|---|---|---|---|
+| `joint_inner_product` | `0.086 ms` | `0.080 ms` | `0.46 ms` | `0.29 ms` | `0.30 ms` |
+| `joint_axpy` | `0.96 ms` | `1.31 ms` | `2.59 ms` | `3.13 ms` | `3.12 ms` |
+
+and the chunked dot's deviation from the serial scalar is `3.5e-15` relative
+here against `1.1e-15` at `C = 20` — the association error grows with the entry
+count, so the bit-identity objection gets worse, not better, as the window
+widens.
+
+### 5.8 C = 28, and the reference that stopped being cubic
+
+The first question about the next cutoff was what it would cost *under the
+reference as it then stood*. `PROBE_CUTOFF=28 PROBE_COMPONENT_BUDGET=12000000`
+on 3060 labels (`C = 28` needs `9,363,600` components, so the sweep's `8e6`
+ceiling is not enough there), `m = 2`, four shift solves, 1060 steps:
+
+| phase of the `C = 28` cell (old reference) | time | share |
+|---|---|---|
+| Krylov solve (4 shifts, 1060 steps) | `356.0 s` | `49 %` |
+| reference: window build / dense Padé `exp` (`3060 × 3060`) | `2.26 s` / `364.6 s` | `51 %` |
+| cell (solve + reference) | `723 s` (`12.1 min`) | — |
+
+Peak RSS `3.2 GB`, almost all of it the dense window matrix and the `exp`
+temporaries. The cell essentially doubles from `C = 26` (`406 s` → `723 s`)
+while the *solve* only grows `1.8×` (`196 s` → `356 s`): under the dense
+reference the marginal cost of the next cutoff was more than half reference,
+which is the measurement §5.7 predicted and the reason it was replaced.
+
+**The reference is now a seed column.** `fock_sirk/examples/common/window_reference.rs`
+replaced the dense `n × n` Padé exponential with the column the sweep actually
+uses: `exp(-i t H_window) e_j`. The window matrix is `P H P` in the orthonormal
+Fock basis, hence Hermitian, so Hermitian Lanczos with full reorthogonalisation
+builds a tridiagonal `T_m` and the column is `V_m exp(-i t T_m) e_1` —
+`O(m n² + m² n)` for Krylov dimension `m`, against `O(n³)` for the dense
+factorisation. The dimension is chosen by measurement: the column is formed at
+`m = 64, 128, 256, 512` and accepted when two successive checkpoints agree to
+`1e-13` on a column of norm 1; an invariant Krylov subspace returns exactly, and
+non-convergence panics rather than silently degrading the reference tier.
+
+The same `C = 28` cell with the seed column:
+
+| phase | old dense reference | seed-column reference |
+|---|---|---|
+| window build (one action per label) | `2.26 s` | `2.28 s` |
+| exponential action | `364.6 s` | `1.20 s` |
+| reference total | `366.9 s` | `3.47 s` |
+| return probability of the window | `9.66679088641535622e-1` | `9.66679088641579365e-1` |
+
+The two references differ by `4.4e-15` absolute (`4.5e-15` relative) — four
+orders below the `1e-3`-scale discrepancy the reference is used to certify — and
+the reference is now `106×` cheaper: the `C = 28` cell is `360 s` instead of
+`723 s`, and what remains is the solve.
+
+The whole evidence record was then regenerated with the seed column and compared
+field by field against the previous record. Every `return_probability_window_exact`
+entry moved by at most `7.1e-14` absolute (at `C = 16`; most are `≤ 1e-14`), and
+nothing else changed except the timings and the source revision. The record now
+carries `reference_tier` saying which implementation produced the column. The
+cells came down with it — the `m = 2` cells are `21 ms, 0.13 s, 0.68 s, 4.4 s,
+25.2 s, 55.4 s, 112.3 s, 197.6 s` (the `C = 26` cell was `406.4 s`), the `m = 4`
+cells `36 ms … 355.4 s` (was `46 ms … 534.3 s`), peak RSS `0.69 GB` (was
+`2.1 GB`), and the full run `18.5 min` (was `30.4 min`).
+
+The dense implementation is still in `fock_sirk/tests/phi4_momentum_sirk.rs` on
+the `C ≤ 12` windows, where it costs milliseconds, as an independent oracle for
+the seed-column tier.
 
 ## 6. Limitations — read this before quoting a number
 
@@ -494,10 +637,10 @@ were reached with that 2× plus wall clock (`30 min` for the recorded sweep).
    neither `t` nor the rank; it must be shrunk by raising `C`
    (`1.79 → 1.40 → 0.89 → 0.51 → 0.32 → 0.26 → 0.21 → 0.17` for
    `C = 4, 8, 12, 16, 20, 22, 24, 26`). It does not reach zero, and the last
-   rows cost 5.7 s, 36 s, 85 s, 185 s and 406 s per `m = 2` cell, so the window
-   cannot be pushed much further by brute force — and, as §5.5–§5.6 measure,
-   neither by parallelising the action matvec nor by parallelising the Krylov
-   arithmetic.
+   rows cost 4.4 s, 25 s, 55 s, 112 s and 198 s per `m = 2` cell (the last three
+   of them solve-bound after §5.8), so the window cannot be pushed much further
+   by brute force — and, as §5.5–§5.6 measure, neither by parallelising the
+   action matvec nor by parallelising the Krylov arithmetic.
 3. **`ForwardProducts` is not worse here** at equal rank (see §5.2). Do not
    quote the plan's "Arnoldi deteriorates" as a rank comparison on bounded
    windows; the observable degradation is growth with `C`.
@@ -522,7 +665,9 @@ were reached with that 2× plus wall clock (`30 min` for the recorded sweep).
 
 * Symbolic (`cadabra`/`.cdb`): all 32 λφ⁴ zero-intent checks reduce to `0`;
   the fixture is cross-checked against the live operator.
-* Dense reference: floating-point Padé evolution of each declared window.
+* Window reference: exact evolution of each declared window — a Hermitian-Lanczos
+  seed column of `exp(-i t H_window)` with a `1e-13` convergence check on the column
+  (§5.8), not the dense floating-point Padé `n³` factorisation it replaced.
 * Measured: every probability, tail, Ritz value, response and charge above,
   reproducible with the commands in §3.
 * Measured and reported against the stated goal: the parallel action is
@@ -533,7 +678,22 @@ were reached with that 2× plus wall clock (`30 min` for the recorded sweep).
 * Measured and adopted: rebuilding those two map operations (merge walk instead
   of per-entry binary search; in-place `get_mut` instead of clone-and-insert)
   is bit-identical and gives **2.6×** on one `C = 20` solve and **2.0–2.1×** on
-  the recorded cells, which is what made `C = 26` affordable (§5.6).
+  the recorded cells, which is what made `C = 26` affordable (§5.6). Bit-identity
+  is pinned by `fock_sirk/tests/joint_map_ops.rs`, which keeps the previous
+  implementations as the oracle and compares every amplitude on `to_bits()`.
+* Measured and *not* extrapolated: at `C = 26` the map operations still dominate
+  the solve (`87 %` axpy including a `28 %` dot, `3.4 %` matvec, `6.5 %` SVD),
+  and in the cell as recorded then it was only half of it — `177 s` of `406.4 s`
+  was the dense Padé reference, whose `n³` growth set the cost of the next
+  cutoff (`723 s` for a `C = 28` cell); the reference is now the seed column.
+  The parallel variants lose by more than at `C = 20`, and the chunked dot's
+  association error rose to `3.5e-15` (§5.7).
+* Measured and adopted: the reference tier is now the seed column of
+  `exp(-i t H_window)` (Hermitian Lanczos, `1e-13` on the column), not the dense
+  `n³` Padé exponential. At `C = 28` the reference falls from `366.9 s` to
+  `3.47 s` for a probability that moves by `4.4e-15`, taking the cell from
+  `723 s` to `365 s` — after which the solve, not the reference, is again what a
+  wider window costs (§5.8).
 * On the base cell the probability charge fell from about `0.394` (state)
   to `0.000763` (amplitude). The paired amplitude charge is `0.001786` for
   coupling and `0.01266` for momentum spread. Rigorous response signs for

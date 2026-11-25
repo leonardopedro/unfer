@@ -39,7 +39,7 @@
         "hermite_cutoff": 4,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9673024240041677,
-        "runtime_ms": 46,
+        "runtime_ms": 36,
         "shift_invert": {
           "error": 0.0008017726890894306,
           "return_probability": 0.9681041966932571,
@@ -93,7 +93,7 @@
       {
         "attained_rank": 4,
         "forward_products_diagnostic": {
-          "error": 0.00005444984464186842,
+          "error": 0.00005444984464442193,
           "label": "diagnostic only, not the primary solver",
           "return_probability": 0.9667909561594172,
           "solver": {
@@ -127,10 +127,10 @@
         },
         "hermite_cutoff": 8,
         "requested_rank": 4,
-        "return_probability_window_exact": 0.9667365063147754,
-        "runtime_ms": 249,
+        "return_probability_window_exact": 0.9667365063147728,
+        "runtime_ms": 202,
         "shift_invert": {
-          "error": 0.003074202015469596,
+          "error": 0.0030742020154721494,
           "return_probability": 0.969810708330245,
           "solver": {
             "cached_components": 5940,
@@ -182,7 +182,7 @@
       {
         "attained_rank": 4,
         "forward_products_diagnostic": {
-          "error": 0.0001398366823150976,
+          "error": 0.0001398366823240904,
           "label": "diagnostic only, not the primary solver",
           "return_probability": 0.966862413262548,
           "solver": {
@@ -216,10 +216,10 @@
         },
         "hermite_cutoff": 12,
         "requested_rank": 4,
-        "return_probability_window_exact": 0.9667225765802329,
-        "runtime_ms": 1668,
+        "return_probability_window_exact": 0.9667225765802239,
+        "runtime_ms": 1179,
         "shift_invert": {
-          "error": 0.0024296540890300644,
+          "error": 0.0024296540890390572,
           "return_probability": 0.9691522306692629,
           "solver": {
             "cached_components": 47530,
@@ -271,7 +271,7 @@
       {
         "attained_rank": 4,
         "forward_products_diagnostic": {
-          "error": 0.0001736760243267188,
+          "error": 0.00017367602439766205,
           "label": "diagnostic only, not the primary solver",
           "return_probability": 0.966862413262548,
           "solver": {
@@ -305,10 +305,10 @@
         },
         "hermite_cutoff": 16,
         "requested_rank": 4,
-        "return_probability_window_exact": 0.9666887372382212,
-        "runtime_ms": 11632,
+        "return_probability_window_exact": 0.9666887372381503,
+        "runtime_ms": 8281,
         "shift_invert": {
-          "error": 0.0027333609350747023,
+          "error": 0.0027333609351456456,
           "return_probability": 0.9694220981732959,
           "solver": {
             "cached_components": 253620,
@@ -360,7 +360,7 @@
       {
         "attained_rank": 4,
         "forward_products_diagnostic": {
-          "error": 0.00018600377298017,
+          "error": 0.00018600377301469795,
           "label": "diagnostic only, not the primary solver",
           "return_probability": 0.966862413262548,
           "solver": {
@@ -394,10 +394,10 @@
         },
         "hermite_cutoff": 20,
         "requested_rank": 4,
-        "return_probability_window_exact": 0.9666764094895678,
-        "runtime_ms": 70327,
+        "return_probability_window_exact": 0.9666764094895333,
+        "runtime_ms": 46104,
         "shift_invert": {
-          "error": 0.002988879824072699,
+          "error": 0.0029888798241072267,
           "return_probability": 0.9696652893136405,
           "solver": {
             "cached_components": 1020140,
@@ -449,7 +449,7 @@
       {
         "attained_rank": 4,
         "forward_products_diagnostic": {
-          "error": 0.0001815059072460823,
+          "error": 0.00018150590718568616,
           "label": "diagnostic only, not the primary solver",
           "return_probability": 0.966862413262548,
           "solver": {
@@ -483,10 +483,10 @@
         },
         "hermite_cutoff": 22,
         "requested_rank": 4,
-        "return_probability_window_exact": 0.9666809073553019,
-        "runtime_ms": 167196,
+        "return_probability_window_exact": 0.9666809073553623,
+        "runtime_ms": 99483,
         "shift_invert": {
-          "error": 0.0028994061487576106,
+          "error": 0.0028994061486972145,
           "return_probability": 0.9695803135040595,
           "solver": {
             "cached_components": 1888380,
@@ -538,7 +538,7 @@
       {
         "attained_rank": 4,
         "forward_products_diagnostic": {
-          "error": 0.0001848692699245591,
+          "error": 0.00018486926988803276,
           "label": "diagnostic only, not the primary solver",
           "return_probability": 0.966862413262548,
           "solver": {
@@ -572,10 +572,10 @@
         },
         "hermite_cutoff": 24,
         "requested_rank": 4,
-        "return_probability_window_exact": 0.9666775439926234,
-        "runtime_ms": 317485,
+        "return_probability_window_exact": 0.9666775439926599,
+        "runtime_ms": 199737,
         "shift_invert": {
-          "error": 0.002847765066718355,
+          "error": 0.002847765066681829,
           "return_probability": 0.9695253090593418,
           "solver": {
             "cached_components": 3346434,
@@ -627,7 +627,7 @@
       {
         "attained_rank": 4,
         "forward_products_diagnostic": {
-          "error": 0.0001839129087461977,
+          "error": 0.00018391290867680876,
           "label": "diagnostic only, not the primary solver",
           "return_probability": 0.966862413262548,
           "solver": {
@@ -661,10 +661,10 @@
         },
         "hermite_cutoff": 26,
         "requested_rank": 4,
-        "return_probability_window_exact": 0.9666785003538018,
-        "runtime_ms": 534291,
+        "return_probability_window_exact": 0.9666785003538712,
+        "runtime_ms": 355388,
         "shift_invert": {
-          "error": 0.0028423241009946087,
+          "error": 0.00284232410092522,
           "return_probability": 0.9695208244547964,
           "solver": {
             "cached_components": 5709480,
@@ -715,7 +715,7 @@
       }
     ],
     "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; they solve to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
-    "runtime_ms": 1821907,
+    "runtime_ms": 1106227,
     "status": "measured",
     "tail_sweep_fixed_rank_2": [
       {
@@ -735,7 +735,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9811577855463359,
         "return_probability_window_exact": 0.9673024240041677,
-        "runtime_ms": 22,
+        "runtime_ms": 21,
         "shifts": [
           {
             "im": 5.0,
@@ -798,15 +798,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 8,
-        "inside_window_error": 0.013219412751012238,
+        "inside_window_error": 0.013219412751014792,
         "projected_action_tail_norms": [
           0.0,
           1.4001127006943543
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
-        "return_probability_window_exact": 0.9667365063147754,
-        "runtime_ms": 126,
+        "return_probability_window_exact": 0.9667365063147728,
+        "runtime_ms": 128,
         "shifts": [
           {
             "im": 5.0,
@@ -869,15 +869,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 12,
-        "inside_window_error": 0.012556001906643965,
+        "inside_window_error": 0.012556001906652958,
         "projected_action_tail_norms": [
           0.0,
           0.8946226120268739
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9792785784868768,
-        "return_probability_window_exact": 0.9667225765802329,
-        "runtime_ms": 753,
+        "return_probability_window_exact": 0.9667225765802239,
+        "runtime_ms": 680,
         "shifts": [
           {
             "im": 5.0,
@@ -940,15 +940,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 16,
-        "inside_window_error": 0.013366146670629409,
+        "inside_window_error": 0.013366146670700352,
         "projected_action_tail_norms": [
           0.0,
           0.5067381194365828
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9800548839088506,
-        "return_probability_window_exact": 0.9666887372382212,
-        "runtime_ms": 5678,
+        "return_probability_window_exact": 0.9666887372381503,
+        "runtime_ms": 4444,
         "shifts": [
           {
             "im": 5.0,
@@ -1011,15 +1011,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 20,
-        "inside_window_error": 0.013325100788880828,
+        "inside_window_error": 0.013325100788915356,
         "projected_action_tail_norms": [
           0.0,
           0.3189148802437992
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9800015102784486,
-        "return_probability_window_exact": 0.9666764094895678,
-        "runtime_ms": 35886,
+        "return_probability_window_exact": 0.9666764094895333,
+        "runtime_ms": 25171,
         "shifts": [
           {
             "im": 5.0,
@@ -1082,15 +1082,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 22,
-        "inside_window_error": 0.013290920471414891,
+        "inside_window_error": 0.013290920471354495,
         "projected_action_tail_norms": [
           0.0,
           0.26145082794815044
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9799718278267168,
-        "return_probability_window_exact": 0.9666809073553019,
-        "runtime_ms": 85130,
+        "return_probability_window_exact": 0.9666809073553623,
+        "runtime_ms": 55408,
         "shifts": [
           {
             "im": 5.0,
@@ -1153,15 +1153,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 24,
-        "inside_window_error": 0.013292544972490106,
+        "inside_window_error": 0.01329254497245358,
         "projected_action_tail_norms": [
           0.0,
           0.2129206971866505
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9799700889651135,
-        "return_probability_window_exact": 0.9666775439926234,
-        "runtime_ms": 184940,
+        "return_probability_window_exact": 0.9666775439926599,
+        "runtime_ms": 112302,
         "shifts": [
           {
             "im": 5.0,
@@ -1224,15 +1224,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 26,
-        "inside_window_error": 0.013301292478701154,
+        "inside_window_error": 0.013301292478631765,
         "projected_action_tail_norms": [
           0.0,
           0.17032660831261817
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9799797928325029,
-        "return_probability_window_exact": 0.9666785003538018,
-        "runtime_ms": 406411,
+        "return_probability_window_exact": 0.9666785003538712,
+        "runtime_ms": 197604,
         "shifts": [
           {
             "im": 5.0,
@@ -1295,7 +1295,7 @@
     "source": "docs/phi4_momentum_nested.cdb via cadabra2-cli"
   },
   "limitations": [
-    "the full-action charge is the amplitude-overlap bound (2 a + a^2 on <psi|e>), not the state bound: the state bound was tightened from 5.95 to 0.18 and its charge 0.39 -> 0.00076 (base), an ~500x improvement, which is what lets the defect route certify the 5.6e-2 momentum-spread response (charge 1.27e-2) but not the 1.6e-3 coupling response (charge 1.79e-3, a factor 1.1 short). The sharp tier (measured compressed-flow discrepancy against the exact Pade evolution of the declared window) certifies both",
+    "the full-action charge is the amplitude-overlap bound (2 a + a^2 on <psi|e>), not the state bound: the state bound was tightened from 5.95 to 0.18 and its charge 0.39 -> 0.00076 (base), an ~500x improvement, which is what lets the defect route certify the 5.6e-2 momentum-spread response (charge 1.27e-2) but not the 1.6e-3 coupling response (charge 1.79e-3, a factor 1.1 short). The sharp tier (measured compressed-flow discrepancy against the exact seed-column evolution of the declared window) certifies both",
     "the rank-2 cell on the degree-2 window reports the windowed return probability, which is 8.65e-4 below the converged window value because the omitted tail (squared norm 9/2) is projected out",
     "the ForwardProducts diagnostic is more accurate than shift-invert at m = 4 on these bounded windows; the plan's degradation claim appears only as growth with C, not as a rank-for-rank deficit",
     "momenta are continuous; no lattice or momentum sum is used anywhere in this record"
@@ -1450,7 +1450,7 @@
         "window_labels": 35
       }
     },
-    "runtime_ms": 167,
+    "runtime_ms": 168,
     "static_jet": {
       "he2_k2_coupling": 0.0,
       "mean": 2.125,
@@ -1464,22 +1464,22 @@
       "variance": 21.06250000000001
     }
   },
-  "peak_rss_kb": 2105860,
+  "peak_rss_kb": 690852,
   "rank_sweep": {
     "cells": [
       {
         "attained_rank": 2,
-        "forward_products_error": 0.0013462613306156612,
+        "forward_products_error": 0.0013462613306131077,
         "hashimoto": {
           "N": 8.0,
           "h": 3.0,
           "m": 2,
           "t": 0.05
         },
-        "inside_window_error": 0.013219412751012238,
+        "inside_window_error": 0.013219412751014792,
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
-        "runtime_ms": 121,
+        "runtime_ms": 123,
         "shifts": [
           {
             "im": 5.0,
@@ -1529,17 +1529,17 @@
       },
       {
         "attained_rank": 4,
-        "forward_products_error": 0.00005444984464186842,
+        "forward_products_error": 0.00005444984464442193,
         "hashimoto": {
           "N": 14.0,
           "h": 3.0,
           "m": 4,
           "t": 0.05
         },
-        "inside_window_error": 0.003074202015469596,
+        "inside_window_error": 0.0030742020154721494,
         "requested_rank": 4,
         "return_probability_sirk": 0.969810708330245,
-        "runtime_ms": 147,
+        "runtime_ms": 149,
         "shifts": [
           {
             "im": 11.0,
@@ -1601,17 +1601,17 @@
       },
       {
         "attained_rank": 6,
-        "forward_products_error": 6.29752592296029e-8,
+        "forward_products_error": 6.297526178311585e-8,
         "hashimoto": {
           "N": 20.0,
           "h": 3.0,
           "m": 6,
           "t": 0.05
         },
-        "inside_window_error": 0.0002525224603980858,
+        "inside_window_error": 0.0002525224603955323,
         "requested_rank": 6,
         "return_probability_sirk": 0.9664839838543773,
-        "runtime_ms": 173,
+        "runtime_ms": 177,
         "shifts": [
           {
             "im": 17.0,
@@ -1685,8 +1685,8 @@
       }
     ],
     "hermite_cutoff": 8,
-    "return_probability_window_exact": 0.9667365063147754,
-    "runtime_ms": 496,
+    "return_probability_window_exact": 0.9667365063147728,
+    "runtime_ms": 508,
     "status": "measured",
     "window_labels": 70
   },
@@ -1717,10 +1717,10 @@
     ],
     "rank_two_charge": 0.000864917872097748,
     "requested_rank": 2,
-    "return_probability_converged_window": 0.9982986001322924,
+    "return_probability_converged_window": 0.9982986001322911,
     "return_probability_sirk": 0.9978594340244482,
     "return_probability_window_exact": 0.998724351896546,
-    "runtime_ms": 81,
+    "runtime_ms": 84,
     "seed": "outer vacuum with one inner Gaussian, He_0(phi) label",
     "shifts": [
       {
@@ -1771,6 +1771,19 @@
     "window_labels": 5,
     "window_rule": "even occupation in all four modes, total degree <= 2"
   },
+  "reference_tier": {
+    "agreement_with_dense": "§5.8: every return_probability_window_exact entry moved by at most 7.1e-14 absolute against the dense run to C = 26",
+    "convergence_tolerance_on_column": 1e-13,
+    "krylov_checkpoints": [
+      64,
+      128,
+      256,
+      512
+    ],
+    "method": "Hermitian Lanczos seed column + Padé exp of the tridiagonal",
+    "replaced": "dense n x n Padé exp of the window matrix (cubic in the label count)",
+    "why": "past C = 24 the dense reference dominated the cell it certified; see docs/VERIFY_PHI4_MOMENTUM.md §5.8"
+  },
   "responses": {
     "cells": {
       "base": {
@@ -1813,18 +1826,18 @@
         },
         "hermite_cutoff": 8,
         "interval": [
-          0.9667365063147754,
-          0.9667630497462604
+          0.9667365063147728,
+          0.9667630497462629
         ],
         "lambda": 1.0,
-        "measured_amplitude_gap": 0.00003553124950229517,
+        "measured_amplitude_gap": 0.00003553124950244587,
         "requested_rank": 4,
         "return_probability_sirk": 0.9667497780305179,
-        "return_probability_window_exact": 0.9667365063147754,
-        "runtime_ms": 538,
+        "return_probability_window_exact": 0.9667365063147728,
+        "runtime_ms": 548,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
-          "value": 0.000013271715742502188
+          "value": 0.000013271715745055701
         },
         "shifts": [
           {
@@ -1936,11 +1949,11 @@
           0.9651233600098685
         ],
         "lambda": 1.1,
-        "measured_amplitude_gap": 0.00004771416368739352,
+        "measured_amplitude_gap": 0.00004771416368725604,
         "requested_rank": 4,
         "return_probability_sirk": 0.9651198843829879,
         "return_probability_window_exact": 0.9651233600098685,
-        "runtime_ms": 934,
+        "runtime_ms": 940,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 3.47562688063352e-6
@@ -2051,18 +2064,18 @@
         },
         "hermite_cutoff": 8,
         "interval": [
-          0.9667365063147754,
-          0.9667630497462604
+          0.9667365063147728,
+          0.9667630497462629
         ],
         "lambda": 1.0,
-        "measured_amplitude_gap": 0.00003553124950229517,
+        "measured_amplitude_gap": 0.00003553124950244587,
         "requested_rank": 4,
         "return_probability_sirk": 0.9667497780305179,
-        "return_probability_window_exact": 0.9667365063147754,
-        "runtime_ms": 538,
+        "return_probability_window_exact": 0.9667365063147728,
+        "runtime_ms": 549,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
-          "value": 0.000013271715742502188
+          "value": 0.000013271715745055701
         },
         "shifts": [
           {
@@ -2170,18 +2183,18 @@
         },
         "hermite_cutoff": 8,
         "interval": [
-          0.9093554547568932,
-          0.9105759974454466
+          0.9093554547568957,
+          0.910575997445444
         ],
         "lambda": 1.0,
-        "measured_amplitude_gap": 0.0003646685872088203,
+        "measured_amplitude_gap": 0.00036466858720760563,
         "requested_rank": 4,
         "return_probability_sirk": 0.9099657261011699,
-        "return_probability_window_exact": 0.9105759974454466,
-        "runtime_ms": 1726,
+        "return_probability_window_exact": 0.910575997445444,
+        "runtime_ms": 1738,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
-          "value": 0.0006102713442767138
+          "value": 0.0006102713442741603
         },
         "shifts": [
           {
@@ -2263,22 +2276,22 @@
         ]
       },
       "exact": {
-        "difference": 0.0016131463049068318,
+        "difference": 0.0016131463049042782,
         "excludes_zero": true,
         "interval": [
-          0.001596398962283696,
+          0.001596398962278589,
           0.0016298936475299675
         ],
-        "sharp_charge": 0.000016747342623135708
+        "sharp_charge": 0.00001674734262568922
       },
       "sirk": {
         "difference": 0.0016298936475299675,
         "excludes_zero": true,
         "interval": [
-          0.0016131463049068318,
-          0.0016466409901531032
+          0.0016131463049042782,
+          0.0016466409901556567
         ],
-        "sharp_charge": 0.000016747342623135708
+        "sharp_charge": 0.00001674734262568922
       }
     },
     "momentum_spread_response": {
@@ -2329,30 +2342,30 @@
         "difference": 0.0,
         "excludes_zero": false,
         "interval": [
-          -0.000026543431485004376,
-          0.000026543431485004376
+          -0.000026543431490111402,
+          0.000026543431490111402
         ],
-        "sharp_charge": 0.000026543431485004376
+        "sharp_charge": 0.000026543431490111402
       },
       "sirk": {
         "difference": 0.0,
         "excludes_zero": false,
         "interval": [
-          -0.000026543431485004376,
-          0.000026543431485004376
+          -0.000026543431490111402,
+          0.000026543431490111402
         ],
-        "sharp_charge": 0.000026543431485004376
+        "sharp_charge": 0.000026543431490111402
       }
     },
-    "runtime_ms": 3739,
+    "runtime_ms": 3778,
     "status": "measured",
     "time": 0.05
   },
-  "runtime_ms": 1826438,
+  "runtime_ms": 1110806,
   "schema": "phi4-momentum-sirk-sweep/v1",
   "source_revision": {
     "crate": "fock_sirk",
-    "git_head": "65a86f85d0ea0754ecbe8f5c4e53b73c09cd4a1e",
+    "git_head": "7da9838471c1bba0c8ff2c7bfe0dafa15df44d81",
     "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
     "version": "0.1.0"
   }
