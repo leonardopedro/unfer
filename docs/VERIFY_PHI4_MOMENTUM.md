@@ -40,14 +40,14 @@ The operator keeps the full nonnegative square including `λv⁴/4`, forms the
 
 * Cadabra2 `2.5.15 private` (`nix shell nixpkgs#cadabra2`)
 * `rustc 1.99.0 (b940084d7 2026-09-28)`
-* repository `HEAD = f7da0af` when the record was regenerated, with the Givens
-  least squares and the `C = 30/32` rows of §5.11 uncommitted
+* repository `HEAD = 4a7846b` when the record was regenerated, with the
+  `C = 34/36` rows of §5.12 uncommitted
 
 | file | SHA-256 |
 |---|---|
 | `docs/phi4_momentum_nested.cdb` | `669510d3c55d334b065b0d94c6f7a4d402cdf29408865856178c3b475fb8d709` |
 | `docs/fixtures/phi4_momentum_mehler.json` | `9b1e9c15ccbb53c876a4818f8d2898d8faec5f26c54d0664406cbcc9912d15bb` |
-| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `50f4971fb44408b422ea1086521980eab9f2f96ddc34140702bea523ff163388` |
+| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `926f3603ccf27ad7cc645ab571fd7ef48e7ed6435cf85c5d2d936f90391515f9` |
 
 ## 3. Replay
 
@@ -63,11 +63,11 @@ cargo test -p nested_fock_algebra phi4_momentum
 # the P12 suite (needs a C compiler, e.g. via `nix shell nixpkgs#gcc`)
 cargo test -p fock_sirk --test phi4_momentum_sirk   # 7 tests; ~5 s release
 
-# regenerate the evidence record (~6.3 min in release: the eleven cutoff cells
-# cost 22 ms, 0.11 s, 0.39 s, 1.0 s, 2.7 s, 4.5 s, 7.7 s, 12.3 s, 20.2 s,
-# 34.6 s and 54.7 s at m = 2 and 33 ms, 0.16 s, 0.54 s, 1.5 s, 4.3 s, 7.4 s,
-# 12.6 s, 20.9 s, 34.9 s, 58.7 s and 95.6 s at m = 4; the debug build is
-# impractical for them)
+# regenerate the evidence record (~16.5 min in release: the thirteen cutoff
+# cells cost 21 ms, 0.11 s, 0.37 s, 0.98 s, 2.7 s, 4.4 s, 7.5 s, 12.3 s,
+# 20.1 s, 34.5 s, 55.0 s, 85.5 s and 130 s at m = 2 and 35 ms, 0.17 s,
+# 0.55 s, 1.5 s, 4.3 s, 7.4 s, 12.6 s, 21.1 s, 35.0 s, 58.8 s, 94.0 s,
+# 159 s and 242 s at m = 4; the debug build is impractical for them)
 cargo run -p fock_sirk --release --example phi4_momentum_sirk
 
 # the measurements of section 5.5 (serial, then default workers), plus the
@@ -87,6 +87,13 @@ PROBE_CUTOFF=26 PROBE_COMPONENT_BUDGET=25000000 PHI4_PROFILE=1 \
 # the section 5.11 C = 28 cell (~1.3 min, the same budget; the same solve took
 # 40.5 s before section 5.11)
 PROBE_CUTOFF=28 PROBE_COMPONENT_BUDGET=25000000 PHI4_PROFILE=1 \
+  cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
+
+# the section 5.12 profile: the same probe at C = 32 (~2.5 min; the budget must
+# exceed that window's components, 2.36e7). The gap between `matvec_ms` (one
+# sparse nested action) and the solve's per-step `PROFILE matvec=` is the
+# measured price of not having the projected gemv.
+PROBE_CUTOFF=32 PROBE_COMPONENT_BUDGET=25000000 PHI4_PROFILE=1 \
   cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
 
 # agreement check between the coordinate and map solves (section 5.11), and the
@@ -196,24 +203,26 @@ instead of pretending rank 2 reproduces the full-action number.
 
 ### 5.2 Cutoff and rank sweeps, `t = 0.05`
 
-Rank-2 tail sweep (`N = 8, h = 3`), `max_k ‖(I − P_C) H V_k‖`. The `C = 16 … 32`
+Rank-2 tail sweep (`N = 8, h = 3`), `max_k ‖(I − P_C) H V_k‖`. The `C = 16 … 36`
 rows extend the plan's `C ≤ 12` range past 20: the tail keeps falling, but the
 Arnoldi steps the smallest scheduled shift (`γ = 40`) needs grow with the
 window, and the runtime grows faster than the label count.
 
 | `C` | labels | tail | Arnoldi steps | cell runtime |
 |---|---|---|---|---|
-| 4 | 15 | `1.7866` | `[6, 6]` | `22 ms` |
+| 4 | 15 | `1.7866` | `[6, 6]` | `21 ms` |
 | 8 | 70 | `1.4001` | `[17, 18]` | `0.11 s` |
-| 12 | 210 | `0.8946` | `[38, 43]` | `0.39 s` |
-| 16 | 495 | `0.5067` | `[70, 82]` | `1.0 s` |
+| 12 | 210 | `0.8946` | `[38, 43]` | `0.37 s` |
+| 16 | 495 | `0.5067` | `[70, 82]` | `0.98 s` |
 | 20 | 1001 | `0.3189` | `[112, 138]` | `2.7 s` |
-| 22 | 1365 | `0.2615` | `[137, 173]` | `4.5 s` |
-| 24 | 1820 | `0.2129` | `[163, 212]` | `7.7 s` |
+| 22 | 1365 | `0.2615` | `[137, 173]` | `4.4 s` |
+| 24 | 1820 | `0.2129` | `[163, 212]` | `7.5 s` |
 | 26 | 2380 | `0.1703` | `[190, 242]` | `12.3 s` |
-| 28 | 3060 | `0.1337` | `[213, 281]` | `20.2 s` |
-| 30 | 3876 | `0.1037` | `[240, 312]` | `34.6 s` |
-| 32 | 4845 | `0.0802` | `[266, 350]` | `54.7 s` |
+| 28 | 3060 | `0.1337` | `[213, 281]` | `20.1 s` |
+| 30 | 3876 | `0.1037` | `[240, 312]` | `34.5 s` |
+| 32 | 4845 | `0.0802` | `[266, 350]` | `55.0 s` |
+| 34 | 5985 | `0.0625` | `[289, 385]` | `85.5 s` |
+| 36 | 7315 | `0.0495` | `[315, 420]` | `130 s` |
 
 The `C ≥ 16` cells solve to a `1e-10` relative residual with a 1024-step cap:
 at `C = 20` the `1e-13` target stalls at `2.3e-13` and exhausts even 512 steps.
@@ -223,23 +232,26 @@ being measured, and every cell records its policy (`solve_policy`,
 numbers are never silently mixed. `C ≥ 20` also needs a larger component
 budget: the window alone is 1001 labels at `C = 20`, 1820 at `C = 24`, 2380 at
 `C = 26` (`5.71e6` components), 3060 at `C = 28` (`9.42e6`), 3876 at `C = 30`
-(`1.51e7`) and 4845 at `C = 32` (`2.36e7`), and the dictionary charges one
-component per (outer label, inner state) pair, so the default `1e6` limit (and
-`C = 20`'s `4e6`) is hit during span registration; the runner now uses `2.5e7`.
-The component budget was not the only ceiling: the projected action is a dense
-`n × n` product, so `ActionLimits::max_work` (default `1e7`, which the `C = 28`
-window's `9.36e6` entries nearly fill) binds at `C = 30`. The runner raises it
-to `4 × 2.5e7` rather than charging the same `gemv` less work — the count is a
-resource policy, and the action really does touch `n²` entries.
+(`1.51e7`), 4845 at `C = 32` (`2.36e7`), 5985 at `C = 34` (`3.59e7`) and 7315 at
+`C = 36` (`5.37e7`), and the dictionary charges one component per (outer label,
+inner state) pair, so the default `1e6` limit (and `C = 20`'s `4e6`) is hit
+during span registration; the runner now uses `6e7`, which is the `C = 36`
+window with `12 %` headroom. The component budget was not the only ceiling: the
+projected action is a dense `n × n` product, so `ActionLimits::max_work`
+(default `1e7`, which the `C = 28` window's `9.36e6` entries nearly fill) binds
+at `C = 30`. The runner raises it to `4 × 6e7` rather than charging the same
+`gemv` less work — the count is a resource policy, and the action really does
+touch `n²` entries.
 
 Note the tail is a norm of the *action* outside `P_C`; it need not reach zero as
-the window grows, and it is still `0.08` at `C = 32` because `H` moves the seed
-to labels the window does not contain. The tail falls by only `0.32 → 0.08`
-from `C = 20` to `C = 32` while the cell cost grows `2.7 s → 54.7 s`. That cost
-is now the Arnoldi steps themselves, not the window and no longer the least
+the window grows, and it is still `0.049` at `C = 36` because `H` moves the seed
+to labels the window does not contain. The tail falls by only `0.32 → 0.049`
+from `C = 20` to `C = 36` while the cell cost grows `2.7 s → 130 s`. That cost is
+now the Arnoldi steps themselves, not the window and no longer the least
 squares: of the `C = 28` cell the exact reference is `3.5 s` and the Krylov
 solve `16.7 s` (§5.11), and the per-step least-squares stage is below the
-profile's `10 ms` print resolution.
+profile's `10 ms` print resolution. Within the solve it is now the projected
+`gemv` — `62 %` of the `C = 32` solve (§5.12) — that a wider window charges.
 
 Rank sweep on the fixed `C = 8` window (`N = 3m + 2`, `h = 3`):
 
@@ -264,6 +276,8 @@ Method contrast at fixed rank 4 over the cutoff sweep:
 | 28 | `2.86e-3` | `1.83e-4` | `[278, 286, 284, 286]` |
 | 30 | `2.88e-3` | `1.84e-4` | `[310, 318, 320, 322]` |
 | 32 | `2.88e-3` | `1.84e-4` | `[350, 359, 361, 358]` |
+| 34 | `2.88e-3` | `1.84e-4` | `[385, 396, 399, 400]` |
+| 36 | `2.88e-3` | `1.84e-4` | `[419, 432, 433, 435]` |
 
 Two readings, both from the same table. The plan's Hashimoto §3.1 claim
 reproduces as **growth with the window** (≈ 10³× from `C = 4` to `C = 12`,
@@ -271,15 +285,16 @@ reproduces as **growth with the window** (≈ 10³× from `C = 4` to `C = 12`,
 rank-for-rank deficit: on these bounded windows the shifted polynomial flow is
 the *more* accurate of the two. And the *inside-window* error of the primary
 solver is flat — `8.0e-4, 3.07e-3, 2.43e-3, 2.73e-3, 2.99e-3, 2.90e-3,
-2.85e-3, 2.84e-3, 2.86e-3, 2.88e-3, 2.88e-3` — i.e. once the window covers the
-seed's support (from `C = 8` on) the remaining error is set by the rank, not by
-`C`, while the tail keeps shrinking. The `C = 20 … 32` entry is a shallow
-plateau with no monotone trend: `2.99e-3, 2.90e-3, 2.85e-3, 2.84e-3, 2.86e-3,
-2.88e-3, 2.88e-3` differs in the third digit (`1.05×` end to end), which is the
-`solve_policy` tolerance's neighbourhood, so those seven cells are read as
-equal, not as a decaying sequence. Growing `C` past 12 therefore buys tail, not
-accuracy, at a rising cost (0.54 s → 1.5 s → 4.3 s → 7.4 s → 12.6 s → 20.9 s →
-34.9 s → 58.7 s → 95.6 s per `m = 4` cell).
+2.85e-3, 2.84e-3, 2.86e-3, 2.88e-3, 2.88e-3, 2.88e-3, 2.88e-3` — i.e. once the
+window covers the seed's support (from `C = 8` on) the remaining error is set by
+the rank, not by `C`, while the tail keeps shrinking. The `C = 20 … 36` entry is
+a shallow plateau with no monotone trend: `2.99e-3, 2.90e-3, 2.85e-3, 2.84e-3,
+2.86e-3, 2.88e-3, 2.88e-3, 2.884e-3, 2.882e-3` differs in the third digit
+(`1.05×` end to end), which is the `solve_policy` tolerance's neighbourhood, so
+those nine cells are read as equal, not as a decaying sequence. Growing `C` past
+12 therefore buys tail, not accuracy, at a rising cost (0.54 s → 1.5 s → 4.3 s →
+7.4 s → 12.6 s → 20.9 s → 34.9 s → 58.7 s → 95.6 s → 159 s → 242 s per `m = 4`
+cell).
 That is exactly why it stays a labeled diagnostic. At `m = 2` the contrast is
 not yet visible (`1.9e-3, 1.3e-3, 1.3e-3`), so the m = 2 sweep is used for the
 plan-literal tail measurement and the contrast is recorded at `m = 4`.
@@ -849,6 +864,78 @@ defined as bounded-resolvent counts, which were `[278, 286, 284, 286]` and still
 are. The row now shows the resolvent counts, and the shift counts are in the
 record under `shift_solve_iterations`.
 
+### 5.12 The projected `gemv` is now the solve, and two more cutoffs
+
+§5.11 left the least-squares stage below print resolution, so the next question
+is what a `C = 32` solve actually spends its `44.9 s` on. `PHI4_PROFILE=1` at
+`C = 32` (`PROBE_CUTOFF=32`, budget `2.5e7`), four shift solves, `1328` Arnoldi
+steps in total:
+
+| phase | 266 | 350 | 352 | 360 | total | share of `44.9 s` |
+|---|---|---|---|---|---|---|
+| action `gemv` | `5.60 s` | `7.33 s` | `7.36 s` | `7.51 s` | `27.80 s` | **`61.9 %`** |
+| MGS `axpy` | `1.43 s` | `2.61 s` | `2.64 s` | `2.77 s` | `9.45 s` | `21.0 %` |
+| — the inner product inside it | `1.05 s` | `1.93 s` | `1.96 s` | `2.05 s` | `6.99 s` | `15.6 %` |
+| Givens least squares | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.03 %` |
+
+The four phases account for `44.24 s`; the remaining `0.7 s` (`1.5 %`) is the
+`coords`/`from_coords` round-trip at the two ends of each solve. The `gemv` is
+`20.9 ms` per step by construction: `H_proj` is `4845²` complex entries,
+`375.6 MB`, streamed once per Arnoldi step. That is `18.0 GB/s`, so it is
+bandwidth-bound, not arithmetic-bound — the flop count (`~9.4e7` per step) would
+finish an order of magnitude sooner.
+
+**What removing it would cost, measured.** There is exactly one way to keep the
+window solve and not multiply by `n²` per step, and it is to go back to the
+sparse nested action: the same probe times one `d_gamma` on the same dense
+window state at `169.6 ms`, **`8.1×`** the `gemv`. Substituted into the same
+`1328` steps that is `~225 s` of action instead of `27.8 s`, i.e. a `~242 s`
+solve and a `~252 s` cell instead of the probe's own `44.9 s` and `54.8 s`. That
+is a floor, not an estimate in the other direction: the map route also pays a
+reserialisation per step (`map_clone_ms = 1.06` here) that the coordinate loop does not. So the
+`gemv` is not a tax on the solve — it is the *cheap* action, already `8×` below
+the sparse one, and it only reaches `62 %` because §5.11 made everything else
+free. Removing the remaining `15.6 %` inner products and `21 %` axpys, even to
+zero, would leave a `17.1 s` solve — the `gemv` is where a wider window pays.
+
+Three other removals were considered and are reported as *not* done. Storing
+`H_proj` in `f32` halves the stream to `188 MB` (`~10.5 ms` per step, a `~31 s`
+solve), but `f32` rounding is `~1e-7` relative against a `1e-10` solve target,
+so the recorded residual would stop describing the arithmetic. A device-resident
+`gemv` is not measured: the loop's `axpy`s, inner products and vectors would all
+have to move with the matrix, and `fock_sirk`'s Krylov loop is CPU `nalgebra`
+today, so no claim is made that it would win. And there is no sparsity to
+exploit: `H_proj = W† H_raw W` is dense in a `4845`-dimensional window basis by
+construction; dropping the projection *is* the map walk, i.e. the `8.1×` above.
+
+**Two more cutoffs.** With the per-step cost known, the sweep now runs `C = 34`
+and `C = 36` (`SWEEP_CUTOFFS`, `SWEEP_COMPONENT_BUDGET = 6e7`):
+
+| `C` | labels | tail | Arnoldi steps (`m = 2`) | `m = 2` cell | `m = 4` cell |
+|---|---|---|---|---|---|
+| 32 | 4845 | `0.0802` | `[266, 350]` | `55.0 s` | `94.0 s` |
+| 34 | 5985 | `0.0625` | `[289, 385]` | `85.5 s` | `159 s` |
+| 36 | 7315 | `0.0495` | `[315, 420]` | `130 s` | `242 s` |
+
+The tail keeps shrinking (`0.0802 → 0.0625 → 0.0495`, `0.78×` and `0.79×`), the
+rank-4 inside-window error stays flat (`2.884e-3, 2.882e-3`) and the
+window-exact probability stays inside the same `8.0e-7` band
+(`9.66678739861e-1, 9.66678514261e-1`), so the two rows again buy tail, not
+accuracy. The component budget had to rise from `2.5e7` to `6e7` because the
+`C = 36` window is `5.37e7` components; `ActionLimits::max_work` is `4 × 6e7`
+for the same reason as before.
+
+**The regeneration is a clean one.** Unlike the §5.11 re-record, nothing moved:
+comparing the new fixture with the previous one leaf by leaf, the only
+differences among the `22` shared cells are their `runtime_ms` (the box was
+running the `C = 34/36` cells in the same process). Every probability, tail,
+step count, residual, defect and bound is byte-identical. The record is `13`
+cutoffs × `2` ranks in `16.5 min` (`990 s`, previous `375 s`) and `1.19 GB` peak
+RSS (previous `0.60 GB`), the memory being the `C = 36` cache of `5.37e7`
+components; summed rank-2 window labels rise `19137 → 32437` (`+70 %`) for
+`+164 %` wall clock, because a step now costs `n²` entries and there are more
+steps in a wider window.
+
 ## 6. Limitations — read this before quoting a number
 
 1. **How the defect estimates changed.**
@@ -907,13 +994,15 @@ record under `shift_solve_iterations`.
 2. **The outside-window tail is reported separately** and is first order in
    neither `t` nor the rank; it must be shrunk by raising `C`
    (`1.79 → 1.40 → 0.89 → 0.51 → 0.32 → 0.26 → 0.21 → 0.17 → 0.13 → 0.10 →
-   0.08` for `C = 4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32`). It does not reach
-   zero, and the last rows cost 1.0 s, 2.7 s, 4.5 s, 7.7 s, 12.3 s, 20.2 s,
-   34.6 s and 54.7 s per `m = 2` cell, so the window cannot be pushed much
-   further by brute force — and, as §5.5–§5.6 measure, neither by parallelising
-   the action matvec nor by parallelising the Krylov arithmetic. The remaining
-   cost is the Arnoldi steps themselves (§5.11); the per-step least squares is
-   no longer measurable.
+   0.08 → 0.063 → 0.049` for `C = 4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34,
+   36`). It does not reach zero, and the last rows cost 0.98 s, 2.7 s, 4.4 s,
+   7.5 s, 12.3 s, 20.1 s, 34.5 s, 55.0 s, 85.5 s and 130 s per `m = 2` cell, so
+   the window cannot be pushed much further by brute force — and, as §5.5–§5.6
+   measure, neither by parallelising the action matvec nor by parallelising the
+   Krylov arithmetic. The remaining cost is the Arnoldi steps themselves, of
+   which the projected `gemv` is now `62 %` (§5.12); the per-step least squares
+   is unmeasurable (§5.11). Removing that `gemv` in favour of the sparse action
+   costs `8.1×`, measured, so the step is already the cheap one.
 3. **`ForwardProducts` is not worse here** at equal rank (see §5.2). Do not
    quote the plan's "Arnoldi deteriorates" as a rank comparison on bounded
    windows; the observable degradation is growth with `C`.
@@ -923,13 +1012,14 @@ record under `shift_solve_iterations`.
    `function_solve_iterations` (one per bounded-resolvent solve), with the
    `max_*` / `total_solve_iterations` accessors. The response cells need
    `[12, 13, 14, 15]` basis steps and `[15, 15, 15, 15]` resolvent steps   under the `64`-step cap at `1e-13`; the cutoff sweep climbs to `[163, 212]` at
-   `C = 24`, `[190, 242]` at `C = 26` and `[266, 350]` at `C = 32`
-   (`[209, 211, 214, 216]` and `[239, 242, 245, 247]` at rank 4) and needs the
-   looser `1e-10`/1024 policy described in §5.2 (528 total steps at `C = 20`,
-   800 at `C = 24`, 918 at `C = 26`, 1328 at `C = 32`). Every count is in the
-   record — no `null` stands in for a measurement. These counts carry about one
-   step of rounding sensitivity to the least-squares path (§5.11); they are
-   diagnostics, not the contract — the contract is the full-action residual.
+   `C = 24`, `[190, 242]` at `C = 26`, `[266, 350]` at `C = 32` and `[315, 420]`
+   at `C = 36` (`[209, 211, 214, 216]`, `[239, 242, 245, 247]` and
+   `[419, 432, 433, 435]` at rank 4) and needs the looser `1e-10`/1024 policy
+   described in §5.2 (528 total steps at `C = 20`, 800 at `C = 24`, 918 at
+   `C = 26`, 1328 at `C = 32`, 1590 at `C = 36`). Every count is in the record —
+   no `null` stands in for a measurement. These counts carry about one step of
+   rounding sensitivity to the least-squares path (§5.11); they are diagnostics,
+   not the contract — the contract is the full-action residual.
 5. **`cadabra2-cli` and a C compiler are Nix-only on this host**; the CDB gate
    needs `PYTHONHOME` from the Cadabra2 closure to avoid
    `ModuleNotFoundError: _struct`.
@@ -1008,6 +1098,24 @@ record under `shift_solve_iterations`.
   is where `ActionLimits::max_work` (default `1e7`) first bound — the runner
   raises the limit with the window instead of charging the same `gemv` less
   work. The record is `11 × 2` cells in `6.3 min` and `0.60 GB` (§5.11).
+* Measured, and the reason the sweep stops here: at `C = 32` the projected
+  `gemv` is `61.9 %` of the `44.9 s` solve (`27.80 s` of `1328` steps, `20.9 ms`
+  per step, `18.0 GB/s` on a `375.6 MB` matrix), against `21.0 %` axpy, `15.6 %`
+  inner products and `< 0.03 %` least squares. Removing it is only possible by
+  going back to the sparse nested action, measured at `169.6 ms` per step
+  (`8.1×` the `gemv`, a `~252 s` cell instead of the probe's `54.8 s`), so the
+  removal is a regression, not a saving. `f32` storage and a GPU `gemv` are reported as
+  considered and not done — the first contradicts the recorded `1e-10`
+  residual, the second is unmeasured (§5.12).
+* Measured and adopted: the sweep now runs `C = 34` and `C = 36` as well
+  (`5985` and `7315` labels, `3.59e7` and `5.37e7` components). The tail keeps
+  shrinking (`0.0802 → 0.0625 → 0.0495`, `0.78×` / `0.79×`), the rank-4
+  inside-window error stays flat (`2.884e-3, 2.882e-3`) and the window-exact
+  probability stays in the same `8.0e-7` band, so again more window buys tail
+  and not accuracy. The regeneration moved no shared number: against the
+  previous fixture, the only differences in the `22` cells both records share
+  are `runtime_ms`. The record is `13 × 2` cells in `16.5 min` and `1.19 GB`
+  peak RSS (previous `6.3 min`, `0.60 GB`) (§5.12).
 * Corrected: the rank-4 `C = 28` step row of §5.2 had been quoting that cell's
   shift-solve counts under a bounded-resolvent heading. It now shows the
   resolvent counts; no measurement changed, the label was wrong (§5.11).

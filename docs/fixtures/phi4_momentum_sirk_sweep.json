@@ -39,7 +39,7 @@
         "hermite_cutoff": 4,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9673024240041677,
-        "runtime_ms": 33,
+        "runtime_ms": 35,
         "shift_invert": {
           "error": 0.0008017726890898746,
           "return_probability": 0.9681041966932575,
@@ -128,7 +128,7 @@
         "hermite_cutoff": 8,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 163,
+        "runtime_ms": 166,
         "shift_invert": {
           "error": 0.0030742020154712613,
           "return_probability": 0.9698107083302441,
@@ -217,7 +217,7 @@
         "hermite_cutoff": 12,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9667225765802239,
-        "runtime_ms": 541,
+        "runtime_ms": 553,
         "shift_invert": {
           "error": 0.002429654089038613,
           "return_probability": 0.9691522306692625,
@@ -306,7 +306,7 @@
         "hermite_cutoff": 16,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666887372381503,
-        "runtime_ms": 1514,
+        "runtime_ms": 1542,
         "shift_invert": {
           "error": 0.0027333609351414268,
           "return_probability": 0.9694220981732917,
@@ -395,7 +395,7 @@
         "hermite_cutoff": 20,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666764094895333,
-        "runtime_ms": 4297,
+        "runtime_ms": 4332,
         "shift_invert": {
           "error": 0.0029888798240963466,
           "return_probability": 0.9696652893136296,
@@ -484,7 +484,7 @@
         "hermite_cutoff": 22,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666809073553623,
-        "runtime_ms": 7366,
+        "runtime_ms": 7400,
         "shift_invert": {
           "error": 0.0028994061486975475,
           "return_probability": 0.9695803135040598,
@@ -573,7 +573,7 @@
         "hermite_cutoff": 24,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666775439926599,
-        "runtime_ms": 12633,
+        "runtime_ms": 12640,
         "shift_invert": {
           "error": 0.002847765066678276,
           "return_probability": 0.9695253090593382,
@@ -662,7 +662,7 @@
         "hermite_cutoff": 26,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666785003538712,
-        "runtime_ms": 20912,
+        "runtime_ms": 21120,
         "shift_invert": {
           "error": 0.0028423241009422062,
           "return_probability": 0.9695208244548134,
@@ -751,7 +751,7 @@
         "hermite_cutoff": 28,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666790886415794,
-        "runtime_ms": 34869,
+        "runtime_ms": 34996,
         "shift_invert": {
           "error": 0.0028602675806195244,
           "return_probability": 0.9695393562221989,
@@ -840,7 +840,7 @@
         "hermite_cutoff": 30,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666782885362749,
-        "runtime_ms": 58680,
+        "runtime_ms": 58808,
         "shift_invert": {
           "error": 0.002877896401996871,
           "return_probability": 0.9695561849382718,
@@ -929,7 +929,7 @@
         "hermite_cutoff": 32,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666785798155083,
-        "runtime_ms": 95646,
+        "runtime_ms": 94047,
         "shift_invert": {
           "error": 0.0028846386256735634,
           "return_probability": 0.9695632184411819,
@@ -979,10 +979,188 @@
         },
         "status": "measured",
         "window_labels": 4845
+      },
+      {
+        "attained_rank": 4,
+        "forward_products_diagnostic": {
+          "error": 0.00018367340137948052,
+          "label": "diagnostic only, not the primary solver",
+          "return_probability": 0.966862413262548,
+          "solver": {
+            "cached_components": 35938044,
+            "function_solve_error_bounds": {
+              "count": 0,
+              "max": 0.0
+            },
+            "function_solve_iterations": {
+              "count": 0,
+              "max": 0,
+              "values": []
+            },
+            "gmres_iterations_cap": 64,
+            "gmres_iterations_max": 0,
+            "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
+            "gmres_iterations_total": 0,
+            "gmres_relative_tolerance": 1e-13,
+            "hermiticity_defect": 3.3666310567303395e-16,
+            "orthogonality_defect": 1.9984014443252818e-15,
+            "shift_solve_iterations": {
+              "count": 0,
+              "max": 0,
+              "values": []
+            },
+            "shift_solve_residuals": {
+              "count": 0,
+              "max": 0.0
+            }
+          }
+        },
+        "hermite_cutoff": 34,
+        "requested_rank": 4,
+        "return_probability_window_exact": 0.9666787398611685,
+        "runtime_ms": 158722,
+        "shift_invert": {
+          "error": 0.0028842390109117266,
+          "return_probability": 0.9695629788720802,
+          "solver": {
+            "cached_components": 35938044,
+            "function_solve_error_bounds": {
+              "count": 4,
+              "max": 0.20643862441657398
+            },
+            "function_solve_iterations": {
+              "count": 4,
+              "max": 400,
+              "values": [
+                385,
+                396,
+                399,
+                400
+              ]
+            },
+            "gmres_iterations_cap": 64,
+            "gmres_iterations_max": 378,
+            "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
+            "gmres_iterations_total": 2705,
+            "gmres_relative_tolerance": 1e-13,
+            "hermiticity_defect": 4.042478129230352e-15,
+            "orthogonality_defect": 1.021405182655144e-14,
+            "shift_solve_iterations": {
+              "count": 4,
+              "max": 378,
+              "values": [
+                207,
+                246,
+                294,
+                378
+              ]
+            },
+            "shift_solve_residuals": {
+              "count": 4,
+              "max": 0.03597371768623088
+            }
+          }
+        },
+        "solve_policy": {
+          "max_iterations": 1024,
+          "method": "shift_invert",
+          "relative_tolerance": 1e-10
+        },
+        "status": "measured",
+        "window_labels": 5985
+      },
+      {
+        "attained_rank": 4,
+        "forward_products_diagnostic": {
+          "error": 0.00018389900199267117,
+          "label": "diagnostic only, not the primary solver",
+          "return_probability": 0.966862413262548,
+          "solver": {
+            "cached_components": 53654290,
+            "function_solve_error_bounds": {
+              "count": 0,
+              "max": 0.0
+            },
+            "function_solve_iterations": {
+              "count": 0,
+              "max": 0,
+              "values": []
+            },
+            "gmres_iterations_cap": 64,
+            "gmres_iterations_max": 0,
+            "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
+            "gmres_iterations_total": 0,
+            "gmres_relative_tolerance": 1e-13,
+            "hermiticity_defect": 3.3666310567303395e-16,
+            "orthogonality_defect": 1.9984014443252818e-15,
+            "shift_solve_iterations": {
+              "count": 0,
+              "max": 0,
+              "values": []
+            },
+            "shift_solve_residuals": {
+              "count": 0,
+              "max": 0.0
+            }
+          }
+        },
+        "hermite_cutoff": 36,
+        "requested_rank": 4,
+        "return_probability_window_exact": 0.9666785142605553,
+        "runtime_ms": 242321,
+        "shift_invert": {
+          "error": 0.0028817753089326326,
+          "return_probability": 0.9695602895694879,
+          "solver": {
+            "cached_components": 53654290,
+            "function_solve_error_bounds": {
+              "count": 4,
+              "max": 0.1750872569207615
+            },
+            "function_solve_iterations": {
+              "count": 4,
+              "max": 435,
+              "values": [
+                419,
+                432,
+                433,
+                435
+              ]
+            },
+            "gmres_iterations_cap": 64,
+            "gmres_iterations_max": 413,
+            "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
+            "gmres_iterations_total": 2939,
+            "gmres_relative_tolerance": 1e-13,
+            "hermiticity_defect": 4.321689759805855e-15,
+            "orthogonality_defect": 1.9206858326015208e-14,
+            "shift_solve_iterations": {
+              "count": 4,
+              "max": 413,
+              "values": [
+                224,
+                265,
+                318,
+                413
+              ]
+            },
+            "shift_solve_residuals": {
+              "count": 4,
+              "max": 0.028583184778235984
+            }
+          }
+        },
+        "solve_policy": {
+          "max_iterations": 1024,
+          "method": "shift_invert",
+          "relative_tolerance": 1e-10
+        },
+        "status": "measured",
+        "window_labels": 7315
       }
     ],
     "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; C = 22 ... 28 extend it further to measure the tail's slow decay. Every C >= 16 cell solves to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
-    "runtime_ms": 375084,
+    "runtime_ms": 990260,
     "status": "measured",
     "tail_sweep_fixed_rank_2": [
       {
@@ -1002,7 +1180,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9811577855463368,
         "return_probability_window_exact": 0.9673024240041677,
-        "runtime_ms": 22,
+        "runtime_ms": 21,
         "shifts": [
           {
             "im": 5.0,
@@ -1073,7 +1251,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 114,
+        "runtime_ms": 109,
         "shifts": [
           {
             "im": 5.0,
@@ -1144,7 +1322,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9792785784868769,
         "return_probability_window_exact": 0.9667225765802239,
-        "runtime_ms": 385,
+        "runtime_ms": 367,
         "shifts": [
           {
             "im": 5.0,
@@ -1215,7 +1393,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9800548839088508,
         "return_probability_window_exact": 0.9666887372381503,
-        "runtime_ms": 1027,
+        "runtime_ms": 981,
         "shifts": [
           {
             "im": 5.0,
@@ -1286,7 +1464,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9800015102784485,
         "return_probability_window_exact": 0.9666764094895333,
-        "runtime_ms": 2690,
+        "runtime_ms": 2656,
         "shifts": [
           {
             "im": 5.0,
@@ -1357,7 +1535,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.979971827826711,
         "return_probability_window_exact": 0.9666809073553623,
-        "runtime_ms": 4476,
+        "runtime_ms": 4446,
         "shifts": [
           {
             "im": 5.0,
@@ -1428,7 +1606,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799700889651217,
         "return_probability_window_exact": 0.9666775439926599,
-        "runtime_ms": 7736,
+        "runtime_ms": 7483,
         "shifts": [
           {
             "im": 5.0,
@@ -1499,7 +1677,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799797928325096,
         "return_probability_window_exact": 0.9666785003538712,
-        "runtime_ms": 12323,
+        "runtime_ms": 12261,
         "shifts": [
           {
             "im": 5.0,
@@ -1570,7 +1748,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799888054065607,
         "return_probability_window_exact": 0.9666790886415794,
-        "runtime_ms": 20187,
+        "runtime_ms": 20080,
         "shifts": [
           {
             "im": 5.0,
@@ -1641,7 +1819,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799934319873848,
         "return_probability_window_exact": 0.9666782885362749,
-        "runtime_ms": 34605,
+        "runtime_ms": 34537,
         "shifts": [
           {
             "im": 5.0,
@@ -1712,7 +1890,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799946133407087,
         "return_probability_window_exact": 0.9666785798155083,
-        "runtime_ms": 54728,
+        "runtime_ms": 54951,
         "shifts": [
           {
             "im": 5.0,
@@ -1765,6 +1943,148 @@
         "status": "measured",
         "window_labels": 4845,
         "window_tail_norm_max": 0.08017007880954587
+      },
+      {
+        "attained_rank": 2,
+        "hashimoto": {
+          "N": 8.0,
+          "h": 3.0,
+          "m": 2,
+          "t": 0.05
+        },
+        "hermite_cutoff": 34,
+        "inside_window_error": 0.013315523375540317,
+        "projected_action_tail_norms": [
+          0.0,
+          0.06252869257758777
+        ],
+        "requested_rank": 2,
+        "return_probability_sirk": 0.9799942632367088,
+        "return_probability_window_exact": 0.9666787398611685,
+        "runtime_ms": 85524,
+        "shifts": [
+          {
+            "im": 5.0,
+            "re": 0.0
+          },
+          {
+            "im": 1.9999999999999996,
+            "re": 0.0
+          }
+        ],
+        "solve_policy": {
+          "max_iterations": 1024,
+          "method": "shift_invert",
+          "relative_tolerance": 1e-10
+        },
+        "solver": {
+          "cached_components": 35938044,
+          "function_solve_error_bounds": {
+            "count": 2,
+            "max": 0.0441321254951659
+          },
+          "function_solve_iterations": {
+            "count": 2,
+            "max": 397,
+            "values": [
+              388,
+              397
+            ]
+          },
+          "gmres_iterations_cap": 64,
+          "gmres_iterations_max": 385,
+          "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
+          "gmres_iterations_total": 1459,
+          "gmres_relative_tolerance": 1e-13,
+          "hermiticity_defect": 1.2167140120533194e-15,
+          "orthogonality_defect": 2.886579864025407e-15,
+          "shift_solve_iterations": {
+            "count": 2,
+            "max": 385,
+            "values": [
+              289,
+              385
+            ]
+          },
+          "shift_solve_residuals": {
+            "count": 2,
+            "max": 0.022899319222996522
+          }
+        },
+        "status": "measured",
+        "window_labels": 5985,
+        "window_tail_norm_max": 0.06252869257758777
+      },
+      {
+        "attained_rank": 2,
+        "hashimoto": {
+          "N": 8.0,
+          "h": 3.0,
+          "m": 2,
+          "t": 0.05
+        },
+        "hermite_cutoff": 36,
+        "inside_window_error": 0.01331515400139549,
+        "projected_action_tail_norms": [
+          0.0,
+          0.049484277685910995
+        ],
+        "requested_rank": 2,
+        "return_probability_sirk": 0.9799936682619508,
+        "return_probability_window_exact": 0.9666785142605553,
+        "runtime_ms": 129928,
+        "shifts": [
+          {
+            "im": 5.0,
+            "re": 0.0
+          },
+          {
+            "im": 1.9999999999999996,
+            "re": 0.0
+          }
+        ],
+        "solve_policy": {
+          "max_iterations": 1024,
+          "method": "shift_invert",
+          "relative_tolerance": 1e-10
+        },
+        "solver": {
+          "cached_components": 53654290,
+          "function_solve_error_bounds": {
+            "count": 2,
+            "max": 0.034672162164351004
+          },
+          "function_solve_iterations": {
+            "count": 2,
+            "max": 432,
+            "values": [
+              423,
+              432
+            ]
+          },
+          "gmres_iterations_cap": 64,
+          "gmres_iterations_max": 420,
+          "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
+          "gmres_iterations_total": 1590,
+          "gmres_relative_tolerance": 1e-13,
+          "hermiticity_defect": 2.5279937743124304e-15,
+          "orthogonality_defect": 2.3314683517128287e-14,
+          "shift_solve_iterations": {
+            "count": 2,
+            "max": 420,
+            "values": [
+              315,
+              420
+            ]
+          },
+          "shift_solve_residuals": {
+            "count": 2,
+            "max": 0.017534174028710416
+          }
+        },
+        "status": "measured",
+        "window_labels": 7315,
+        "window_tail_norm_max": 0.049484277685910995
       }
     ]
   },
@@ -1930,7 +2250,7 @@
         "window_labels": 35
       }
     },
-    "runtime_ms": 137,
+    "runtime_ms": 141,
     "static_jet": {
       "he2_k2_coupling": 0.0,
       "mean": 2.125,
@@ -1944,7 +2264,7 @@
       "variance": 21.06250000000001
     }
   },
-  "peak_rss_kb": 604652,
+  "peak_rss_kb": 1193184,
   "rank_sweep": {
     "cells": [
       {
@@ -1959,7 +2279,7 @@
         "inside_window_error": 0.013219412751014792,
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
-        "runtime_ms": 104,
+        "runtime_ms": 108,
         "shifts": [
           {
             "im": 5.0,
@@ -2019,7 +2339,7 @@
         "inside_window_error": 0.0030742020154712613,
         "requested_rank": 4,
         "return_probability_sirk": 0.9698107083302441,
-        "runtime_ms": 108,
+        "runtime_ms": 112,
         "shifts": [
           {
             "im": 11.0,
@@ -2091,7 +2411,7 @@
         "inside_window_error": 0.0002525224603960874,
         "requested_rank": 6,
         "return_probability_sirk": 0.9664839838543767,
-        "runtime_ms": 115,
+        "runtime_ms": 119,
         "shifts": [
           {
             "im": 17.0,
@@ -2166,7 +2486,7 @@
     ],
     "hermite_cutoff": 8,
     "return_probability_window_exact": 0.9667365063147728,
-    "runtime_ms": 384,
+    "runtime_ms": 400,
     "status": "measured",
     "window_labels": 70
   },
@@ -2200,7 +2520,7 @@
     "return_probability_converged_window": 0.9982986001322911,
     "return_probability_sirk": 0.9978594340244482,
     "return_probability_window_exact": 0.998724351896546,
-    "runtime_ms": 90,
+    "runtime_ms": 84,
     "seed": "outer vacuum with one inner Gaussian, He_0(phi) label",
     "shifts": [
       {
@@ -2314,7 +2634,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9667497780305155,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 522,
+        "runtime_ms": 559,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 0.000013271715742724233
@@ -2433,7 +2753,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.965119884382991,
         "return_probability_window_exact": 0.9651233600098685,
-        "runtime_ms": 915,
+        "runtime_ms": 1036,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 3.4756268775248955e-6
@@ -2552,7 +2872,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9667497780305155,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 526,
+        "runtime_ms": 523,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 0.000013271715742724233
@@ -2671,7 +2991,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9099657261011672,
         "return_probability_window_exact": 0.910575997445444,
-        "runtime_ms": 1705,
+        "runtime_ms": 1928,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 0.0006102713442768248
@@ -2837,15 +3157,15 @@
         "sharp_charge": 0.000026543431485448465
       }
     },
-    "runtime_ms": 3671,
+    "runtime_ms": 4049,
     "status": "measured",
     "time": 0.05
   },
-  "runtime_ms": 379421,
+  "runtime_ms": 994978,
   "schema": "phi4-momentum-sirk-sweep/v1",
   "source_revision": {
     "crate": "fock_sirk",
-    "git_head": "f7da0aff7badde373b24f899cbcf9d0d2f59b55c",
+    "git_head": "4a7846b6338a1e739d4f8c2d6f2d91024691ef6e",
     "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
     "version": "0.1.0"
   }

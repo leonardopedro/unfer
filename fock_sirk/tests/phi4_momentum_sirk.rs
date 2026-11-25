@@ -934,8 +934,8 @@ fn rational(text: &str) -> f64 {
 }
 
 /// The evidence record's cutoff sweep must stay consistent with the live
-/// operator. `C <= 12` is recomputed here; the `C = 16 … 28` rows (which need a
-/// `1.2e7` component budget and the looser `1e-10` solve policy, and cost
+/// operator. `C <= 12` is recomputed here; the `C = 16 … 36` rows (which need up
+/// to a `5.4e7` component budget and the looser `1e-10` solve policy, and cost
 /// seconds to minutes per cell) are checked for the trend they are quoted for:
 /// the tail keeps shrinking, the inside-window error stays flat, the
 /// `ForwardProducts` diagnostic keeps growing, and every Arnoldi step count is
@@ -959,7 +959,7 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .collect();
     assert_eq!(
         cutoffs,
-        vec![4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32],
+        vec![4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36],
         "sweep cutoffs"
     );
     let sizes: Vec<u64> = tails
@@ -968,7 +968,9 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .collect();
     assert_eq!(
         sizes,
-        vec![15, 70, 210, 495, 1001, 1365, 1820, 2380, 3060, 3876, 4845],
+        vec![
+            15, 70, 210, 495, 1001, 1365, 1820, 2380, 3060, 3876, 4845, 5985, 7315
+        ],
         "window sizes"
     );
     let tail_values: Vec<f64> = tails
@@ -983,27 +985,18 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         tail_values[4] < 0.5 * tail_values[0],
         "the tail must be meaningfully reduced by C = 20: {tail_values:?}"
     );
-    let last = tail_values.len() - 1;
     assert!(
         tail_values[6] < 0.7 * tail_values[4],
         "pushing to C = 24 must keep shrinking the tail: {tail_values:?}"
     );
-    assert!(
-        tail_values[last - 3] < 0.85 * tail_values[last - 4],
-        "pushing to C = 26 must keep shrinking the tail: {tail_values:?}"
-    );
-    assert!(
-        tail_values[last - 2] < 0.85 * tail_values[last - 3],
-        "pushing to C = 28 must keep shrinking the tail: {tail_values:?}"
-    );
-    assert!(
-        tail_values[last - 1] < 0.85 * tail_values[last - 2],
-        "pushing to C = 30 must keep shrinking the tail: {tail_values:?}"
-    );
-    assert!(
-        tail_values[last] < 0.85 * tail_values[last - 1],
-        "pushing to C = 32 must keep shrinking the tail: {tail_values:?}"
-    );
+    // Indices 7..=12 are C = 26, 28, 30, 32, 34 and 36: every further two steps
+    // of cutoff must still cut the tail by at least 15 %.
+    for (pushed, window) in [(7, 26), (8, 28), (9, 30), (10, 32), (11, 34), (12, 36)] {
+        assert!(
+            tail_values[pushed] < 0.85 * tail_values[pushed - 1],
+            "pushing to C = {window} must keep shrinking the tail: {tail_values:?}"
+        );
+    }
     let tail_steps: Vec<u64> = tails
         .iter()
         .map(|c| {
