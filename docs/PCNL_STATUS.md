@@ -7617,6 +7617,38 @@ each) — the same kernel **passes**: acceptance `2553/5953`, `2456/5941`,
 coverage `0.1583` (38/240), predictive coverage `0.5917` (142/240).  HMC
 reaches the same gate with 750 draws per chain, about 6× fewer.
 
+#### Why the readout-conditional 90% coverage is `0.158` (2026-11-25)
+
+That number is not a sampler or ESS artifact and it is not the posterior's
+calibration: it is the held-out **generalisation** error of the pointed
+backbone showing through a coverage metric. Four things pin it down.
+
+1. **It is sampler-independent.** `readout-exact.log` (HMC, exact mass, leapfrog
+   4, 1,000 steps, 750 draws) reports the *identical* `38/240` and `141/240`;
+   CN at 4,500 and at 9,000 draws both report `38/240` (`141/240` and
+   `142/240`). Four samplers, two kernels, two chain lengths, one count.
+2. **The bands are tight because the backbone memorised the train split.**
+   `adam_fit` trains the whole model, so `train_rmse=0.000286` — far under the
+   `0.05` noise — while `test_rmse=0.099276` is ~2× the noise. Freezing that
+   backbone and sampling the 34 readout coordinates against an exact
+   likelihood with `σ=0.05` (whose fit is essentially perfect on train) gives a
+   posterior prediction band of sd ≈ `0.013`, i.e. half-width ≈ `0.021`.
+3. **The observations sit outside it.** With band half-width `0.021` and
+   held-out residual sd ≈ `0.099`, a Gaussian residual model predicts parameter
+   coverage `15.8%` — the measured value.
+4. **The predictive line closes the loop.** Adding only `σ=0.05` in quadrature
+   gives half-width `√(0.013² + 0.05²)·1.645 = 0.085`, which against the same
+   residuals predicts `59%` (measured `58.75%`). Solving both coverages
+   jointly for the residual sd gives `0.1035` against the logged `test_rmse`
+   `0.0993` — a 4% mismatch.
+
+So `param_interval90_coverage` here compares a held-out observation against the
+credible band of the *predicted mean*; it inherits the backbone's held-out
+error and is a misspecification/generalisation diagnostic. The row's own
+`limitations:` line already declines a calibration claim; a real calibration
+check would need the band evaluated against the split the posterior was
+conditioned on, or a noise scale estimated rather than declared.
+
 ### CN dimension-sweep scaling (2026-11-23)
 
 `examples/cn_dimension_sweep.rs` runs the production prior-referenced CN

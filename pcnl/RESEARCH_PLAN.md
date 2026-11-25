@@ -375,7 +375,11 @@ about 3,600 post-burn draws per chain are needed for bulk ESS `400`.
 thin 1, 4,500 draws each) accepted `2553/5953`, `2456/5941`, `2467/5935` and
 `2316/5938`, giving rank R̂ max **1.00616**, minimum bulk ESS **620.9** (tail
 201.3) and `gate=true`; draw-mean test RMSE `0.105528`, parameter coverage
-`0.1583` (38/240), predictive `0.5917` (142/240).  So both kernels pass: CN
+`0.1583` (38/240), predictive `0.5917` (142/240) — the low parameter coverage
+is held-out generalisation, not sampler behaviour: HMC's exact-mass run gives
+the same `38/240`, the train split is memorised (`train_rmse` `0.000286`
+against `test_rmse` `0.099276`), and a `0.013` prediction-band sd against
+`0.099` residuals predicts exactly that coverage.  So both kernels pass: CN
 needs ~4,500 post-burn draws per chain, HMC needs ~750, which is the practical
 reason to prefer HMC here.
 

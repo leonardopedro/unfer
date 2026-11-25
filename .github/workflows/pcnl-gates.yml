@@ -46,7 +46,13 @@ jobs:
   gates:
     name: re-run every committed R13 gate log
     runs-on: ubuntu-latest
-    timeout-minutes: 240 # ~1.5 h of gates on 12 cores; runners are slower
+    # Measured on the 12-core reference machine (2026-11-24, `--all`): 13 rows,
+    # 6,645 s of gate time, ~1 h 55 m wall. `ubuntu-latest` gives 2 cores, so
+    # expect a multiple of that; 350 min is the headroom before the 6 h hosted
+    # cap, and a timed-out run still uploads nothing useful -- if this lane
+    # starts hitting the timeout, dispatch it with `quick: true` and read the
+    # `unselected by --skip-slow` list rather than trimming rows silently.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
 
