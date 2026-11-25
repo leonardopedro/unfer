@@ -14,6 +14,28 @@ Its resolution is independent of both cutoffs.
 [Symbolic reference to produce](SM_HAMILTONIAN_AUDIT.md#continuous-momentum-cadabra2-work-order) ·
 [Lean work order](../../timepiece/SM_ESA_COMPLETION_PLAN.md)
 
+**Executed 2026-11-24 (scoped first deliverable):**
+`nested_fock_algebra/src/sm_momentum.rs` implements the declared Fourier
+conventions, Gaussian momentum packets, the nonabelian magnetic cross term (with
+`su3_structure`), the gauge–Higgs cross term (with `higgs_real_generator`), the
+Yukawa/transfer kernel and the retained `λv⁴/4` constant. The fixture
+`docs/fixtures/sm_momentum_kernel.json` records a **nonzero mixed element
+between two distinct packets**, five mutation controls, and one finite
+packet-basis one-outer-particle evolution cell; `fock_sirk/tests/sm_momentum_validation.rs`
+binds the fixture to the live module (8 tests; the module carries 13). Measured:
+magnetic `3.5448i`, gauge–Higgs `−3.3056i`, Yukawa `5.0767+1.4505i`, transfer
+`7.2525`; the reversed/`2π`/sign/cross/adjoint mutations all change or zero the
+entries as required. Independent checks: the free Dirac/chiral symbol (left is
+the exact negative of right and both vanish at `k=0`), the transverse curl
+projector (exactly zero on a longitudinal polarization), the scalar-gradient
+`½|k|²`, the outer-shift lift `dΓ(cI): 0,c,2c` on 0/1/2 quanta, and
+`dΓ(B²) ≠ dΓ(B)²` on a two-quantum state. The evolution cell reports a full-vs-compressed return gap
+`0.1215` against a measured first-order diagnostic `2.9603`; it is a measured
+diagnostic, not an enclosure. **Still open:** the complete inner operator and
+its `joint_sirk` evolution, the cadabra2 reference (engine absent), continuum
+and physical-gauge reduction, and smearing removal. See the ledger in
+[SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#continuous-momentum-sm-kernel-2026-11-24-execution-record).
+
 1. **Bind an operator and a seed.** Keep the current `sm_full` generator, signed color
    and electroweak coefficients, chiral spin frame, four Higgs components, complex
    Yukawa matrices and ordered CAR words as dictionary references. Identify continuous

@@ -10,6 +10,27 @@ tables for comparison. Its 1,241 expressions have no incoming/outgoing momentum
 routing. The following calculation and its SM fixture are proposed.
 [Manuscript](../../timepiece/book.tex) · [Scalar Cadabra2 calculation](phi4_momentum_nested.cdb)
 
+**Executed 2026-11-24 (numerical half, scoped):** the Rust kernel in
+`nested_fock_algebra/src/sm_momentum.rs` implements items 1–3 for the declared
+packet family: the `2π i K` derivative symbol, the convolution measure, the
+nonabelian magnetic cross term built from `su3_structure`, the gauge–Higgs
+cross term from `higgs_real_generator`, and the ordered Yukawa `k−l` transfer.
+The versioned fixture `docs/fixtures/sm_momentum_kernel.json` and
+`fock_sirk/tests/sm_momentum_validation.rs` supply item 4's checks: nonzero
+mixed entries on distinct packets, adjoints, the abelian/zero-coupling limit,
+and detect reversing the transfer, omitting `2π`, flipping the nonabelian sign,
+removing the Higgs cross, dropping the Yukawa adjoint, and dropping `λv⁴/4`.
+The spatial/Dirac checks are present too: the free Dirac symbol in the manuscript
+spin frame (left-handed is the exact negative of right-handed, both vanish at
+`k=0`), the transverse curl projector (zero on a longitudinal polarization), and
+the scalar-gradient `½|k|²`. The outer lift is checked on 0/1/2 quanta
+(`dΓ(cI): 0, c, 2c`) and `dΓ(B²) ≠ dΓ(B)²` on a two-quantum state.
+The independent numerical check is a 3D/convolution quadrature, not a
+coordinate-space integral of the full action. **Not delivered:** the cadabra2 module and its
+strict-verifier registration (`cadabra2-cli` is absent on this host), the full
+1,241-expression momentum routing, and the complete-operator/gauge-reduction
+work. No symbolic pass is claimed.
+
 1. **Declare conventions in the module.** Write the new calculation alongside
    `sm_full_nested.cdb`. Use $\hat f(k)=\int e^{-2\pi i k\cdot x}f(x)\,d^3x$,
    $\widehat{\partial_i f}(k)=2\pi i k_i\hat f(k)$ and

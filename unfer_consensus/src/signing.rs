@@ -96,6 +96,11 @@ pub fn canonical_frame(tx: &ConsensusTransaction) -> Vec<u8> {
             o.signature = [0u8; 64];
             serde_json::to_vec(&ConsensusTransaction::AttributionOp(o)).unwrap()
         }
+        ConsensusTransaction::JobOp(op) => {
+            let mut o = op.clone();
+            o.signature = [0u8; 64];
+            serde_json::to_vec(&ConsensusTransaction::JobOp(o)).unwrap()
+        }
     }
 }
 
@@ -171,6 +176,7 @@ fn set_signature(tx: &mut ConsensusTransaction, sig: [u8; 64]) {
         ConsensusTransaction::MathBondOp(op) => op.signature = sig,
         ConsensusTransaction::MarketOp(op) => op.signature = sig,
         ConsensusTransaction::AttributionOp(op) => op.signature = sig,
+        ConsensusTransaction::JobOp(op) => op.signature = sig,
     }
 }
 

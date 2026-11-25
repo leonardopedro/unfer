@@ -7,8 +7,8 @@ use unfer_protocol::submission::{
     Watermark,
 };
 use unfer_protocol::{
-    AgentRequest, Code, ConsensusTransaction, ContentRef, Diagnostic, MarketOpKind, MathBondState,
-    ModelSpec, Severity,
+    AgentRequest, Code, ConsensusTransaction, ContentRef, Diagnostic, JobFence, JobOp, JobOpKind,
+    MarketOpKind, MathBondState, ModelSpec, Severity,
 };
 
 use crate::auction::AuctionLedger;
@@ -915,6 +915,49 @@ impl ConsensusNode {
                 let key = crate::idempotency::attribution_key(op);
                 self.idempotency
                     .once(&key, seq, || self.attribution.apply_op(&actor, &kind, seq))?;
+            }
+            ConsensusTransaction::JobOp(op) => {
+                // D14: the fence is issued by this replay, in committed order.
+                // There is no per-node FenceRecord to install: a restart that
+                // replays the log reconstructs exactly the same claim, and a
+                // committed claim cannot be refused against itself.
+                self.apply_job_op(op)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply one signed job-lifecycle command.
+    ///
+    /// `expected` is a compare-and-swap precondition only: it must equal the
+    /// fence the committed state already holds, and the state refuses the
+    /// command otherwise. A claim carries no expected fence because the state
+    /// issues it; the submitter cannot choose its own epoch or generation.
+    fn apply_job_op(&mut self, op: &JobOp) -> Result<(), Diagnostic> {
+        let expected = |fence: &JobFence| {
+            Fence::new(
+                op.deployment.clone(),
+                op.job.clone(),
+                fence.epoch,
+                fence.generation,
+            )
+        };
+        match &op.kind {
+            JobOpKind::Register => self.jobs.enqueue(&op.job),
+            JobOpKind::Claim { holder } => {
+                self.jobs.claim_in(&op.deployment, &op.job, holder)?;
+            }
+            JobOpKind::Renew { expected: fence } => {
+                self.jobs.renew_at(&op.job, &expected(fence))?;
+            }
+            JobOpKind::Release { expected: fence } => {
+                self.jobs.unclaim_at(&op.job, &expected(fence))?;
+            }
+            JobOpKind::Fire { expected: fence } => {
+                self.jobs.mark_fired_at(&op.job, &expected(fence))?;
+            }
+            JobOpKind::Disable { expected: fence } => {
+                self.jobs.disable_at(&op.job, &expected(fence))?;
             }
         }
         Ok(())

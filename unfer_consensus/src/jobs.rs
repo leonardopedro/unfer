@@ -40,10 +40,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
 use unfer_protocol::{Code, Diagnostic, Severity};
 
 /// Lifecycle of a scheduled job.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum JobState {
     /// Scheduled, awaiting a slot claim.
     Queued,
@@ -96,7 +98,7 @@ impl ClaimState {
 /// `deployment` and `resource` say *what* is protected; `(epoch, generation)`
 /// say *which* claim, and are the only fields that move. The fence is issued by
 /// the committed state, never by the worker that receives it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Fence {
     pub deployment: String,
     pub resource: String,
@@ -126,6 +128,11 @@ impl Fence {
     /// how the table stores them.
     pub fn is_older_than(&self, other: &Fence) -> bool {
         (self.epoch, self.generation) < (other.epoch, other.generation)
+    }
+
+    /// Whether this fence strictly supersedes `other` for the same resource.
+    pub fn supersedes(&self, other: &Fence) -> bool {
+        self.resource == other.resource && other.is_older_than(self)
     }
 
     /// The fence one transition after this one, or `None` when the fence space
@@ -163,7 +170,7 @@ fn next_position(epoch: u64, generation: u64) -> Option<(u64, u64)> {
 /// This is deterministic state — the same transitions in the same order produce
 /// the same table — so a node rebuilds it by replaying its journal rather than
 /// by asking a peer.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FenceTable {
     current: HashMap<String, Fence>,
     holders: HashMap<String, String>,
@@ -345,10 +352,22 @@ impl FenceTable {
 }
 
 /// A claim token for one job slot: the job plus the fence that authorizes it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct JobClaim {
     job: String,
     fence: Fence,
+}
+
+#[cfg(test)]
+impl JobClaim {
+    /// Construct a claim the queue never issued, for a sibling module's
+    /// "present a stale fence" test.
+    pub(crate) fn for_test(job: &str, fence: Fence) -> Self {
+        Self {
+            job: job.to_string(),
+            fence,
+        }
+    }
 }
 
 impl JobClaim {
@@ -359,6 +378,33 @@ impl JobClaim {
     pub fn fence(&self) -> &Fence {
         &self.fence
     }
+}
+
+/// D14: the schema an ordered job command is read under. Distinct from the
+/// ledger transaction schema, so the apply path can dispatch by schema instead
+/// of guessing from the payload.
+pub const JOB_COMMAND_SCHEMA: u16 = 2;
+
+/// An ordered job command: the unit the deployment agrees on.
+///
+/// Every replica applies the same commands in the same order to its own
+/// [`JobQueue`], so they converge on the same current fence. A command that is
+/// refused (stale fence, wrong holder, not queued) is a deterministic no-op on
+/// every replica — the verdict is stable, so a caller may ignore the error and
+/// the state is unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JobCommand {
+    Claim { resource: String, holder: String },
+    TakeOver {
+        resource: String,
+        epoch: u64,
+        holder: String,
+    },
+    Renew { claim: JobClaim },
+    Release { claim: JobClaim },
+    Reclaim { resource: String, holder: String },
+    Settle { claim: JobClaim },
+    Disable { claim: JobClaim },
 }
 
 /// The enforcement interface for a protected external effect (D14 step 2).
@@ -420,10 +466,17 @@ impl FencedSink for OrderedMockSink {
 }
 
 /// Deterministic scheduler for consensus/auction work.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// Serialized into the ledger snapshot (D14 step 5), so the committed state —
+/// not a worker — owns which fence is current and a restart re-admits exactly
+/// the fences the cluster decided.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobQueue {
+    #[serde(default)]
     jobs: HashMap<String, JobState>,
+    #[serde(default)]
     fences: FenceTable,
+    #[serde(default)]
     deployment: String,
 }
 
@@ -443,6 +496,22 @@ impl JobQueue {
 
     pub fn deployment(&self) -> &str {
         &self.deployment
+    }
+
+    /// Set the deployment name on a queue loaded from a snapshot that predates
+    /// it. A renamed deployment invalidates every outstanding fence: those
+    /// fences were ordered under the old name.
+    pub fn set_deployment(&mut self, deployment: impl Into<String>) {
+        let deployment = deployment.into();
+        if self.deployment != deployment {
+            self.fences = FenceTable::new();
+            self.deployment = deployment;
+        }
+    }
+
+    /// The current fence the committed state owns for `resource`.
+    pub fn current_fence(&self, resource: &str) -> Option<&Fence> {
+        self.fences.current(resource)
     }
 
     pub fn fences(&self) -> &FenceTable {
@@ -469,6 +538,19 @@ impl JobQueue {
     /// unknown), and when the fence space for the job is exhausted — a claim
     /// that cannot be ordered is not issued.
     pub fn claim(&mut self, job: &str, holder: &str) -> Result<JobClaim, Diagnostic> {
+        let deployment = self.deployment.clone();
+        self.claim_in(&deployment, job, holder)
+    }
+
+    /// Claim under an explicit deployment (the replicated path, where the
+    /// deployment travels with the signed command rather than living in one
+    /// node's constructor).
+    pub fn claim_in(
+        &mut self,
+        deployment: &str,
+        job: &str,
+        holder: &str,
+    ) -> Result<JobClaim, Diagnostic> {
         // The fence is asked first: for a job someone already holds, the honest
         // answer is "that resource is held", not "this job is not queued" — the
         // second reads like the caller is late, and the first tells it who owns
@@ -476,7 +558,7 @@ impl JobQueue {
         // check below, and the issued fence is rolled back so nothing is
         // published that no job backs.
         let before = self.fences.clone();
-        let fence = self.fences.claim(&self.deployment, job, holder)?;
+        let fence = self.fences.claim(deployment, job, holder)?;
         if self.jobs.get(job) != Some(&JobState::Queued) {
             self.fences = before;
             return Err(stale(
@@ -489,6 +571,66 @@ impl JobQueue {
             job: job.to_string(),
             fence,
         })
+    }
+
+    /// Re-arm the claim named by `job` and `fence`, constructing the claim
+    /// token from the replicated command rather than from a caller's local
+    /// value. The named fence must be exactly current.
+    pub fn renew_at(&mut self, job: &str, fence: &Fence) -> Result<JobClaim, Diagnostic> {
+        let claim = JobClaim {
+            job: job.to_string(),
+            fence: fence.clone(),
+        };
+        if !self.valid_claim(&claim) {
+            return Err(self.stale_claim(&claim, "renew"));
+        }
+        let next = self.fences.renew(fence)?;
+        Ok(JobClaim {
+            job: claim.job,
+            fence: next,
+        })
+    }
+
+    /// Release the claim named by `job` and `fence` and re-queue the job.
+    pub fn unclaim_at(&mut self, job: &str, fence: &Fence) -> Result<(), Diagnostic> {
+        let claim = JobClaim {
+            job: job.to_string(),
+            fence: fence.clone(),
+        };
+        if !self.valid_claim(&claim) {
+            return Err(self.stale_claim(&claim, "unclaim"));
+        }
+        self.fences.release(fence)?;
+        self.jobs.insert(job.to_string(), JobState::Queued);
+        Ok(())
+    }
+
+    /// Mark the claim named by `job` and `fence` fired.
+    pub fn mark_fired_at(&mut self, job: &str, fence: &Fence) -> Result<(), Diagnostic> {
+        let claim = JobClaim {
+            job: job.to_string(),
+            fence: fence.clone(),
+        };
+        if !self.valid_claim(&claim) {
+            return Err(self.stale_claim(&claim, "mark_fired"));
+        }
+        self.fences.release(fence)?;
+        self.jobs.insert(job.to_string(), JobState::Fired);
+        Ok(())
+    }
+
+    /// Disable the claim named by `job` and `fence`.
+    pub fn disable_at(&mut self, job: &str, fence: &Fence) -> Result<(), Diagnostic> {
+        let claim = JobClaim {
+            job: job.to_string(),
+            fence: fence.clone(),
+        };
+        if !self.valid_claim(&claim) {
+            return Err(self.stale_claim(&claim, "disable"));
+        }
+        self.fences.release(fence)?;
+        self.jobs.insert(job.to_string(), JobState::Disabled);
+        Ok(())
     }
 
     /// Re-arm the claim: a new fence for the same job and holder.
@@ -552,6 +694,107 @@ impl JobQueue {
         self.mark_fired(claim)
     }
 
+    /// Ordered claim at a later leadership incarnation: a worker that believes
+    /// it leads a newer epoch takes the resource over, invalidating the older
+    /// fence even while the old holder is still running. The epoch must advance
+    /// strictly; the new incumbent starts a fresh generation at that epoch.
+    pub fn take_over(
+        &mut self,
+        resource: &str,
+        epoch: u64,
+        holder: &str,
+    ) -> Result<JobClaim, Diagnostic> {
+        match self.jobs.get(resource) {
+            None => {
+                return Err(stale(
+                    "JOB_UNKNOWN",
+                    format!("resource '{resource}' is not registered"),
+                ))
+            }
+            Some(JobState::Fired) | Some(JobState::Disabled) => {
+                return Err(stale(
+                    "JOB_NOT_CLAIMABLE",
+                    format!("resource '{resource}' is not claimable"),
+                ))
+            }
+            Some(JobState::Claimed) | Some(JobState::Queued) => {}
+        }
+        let current_epoch = self.fences.current(resource).map(|fence| fence.epoch).unwrap_or(0);
+        if epoch <= current_epoch {
+            return Err(stale(
+                "STALE_EPOCH",
+                format!("epoch {epoch} does not supersede {current_epoch}"),
+            ));
+        }
+        let fence = Fence::new(self.deployment.clone(), resource, epoch, 1);
+        self.fences
+            .install(fence.clone(), Some(holder.to_string()), false);
+        self.jobs.insert(resource.to_string(), JobState::Claimed);
+        Ok(JobClaim {
+            job: resource.to_string(),
+            fence,
+        })
+    }
+
+    /// Explicit restart takeover: a new process takes over a resource whose
+    /// holder is gone. Unlike [`JobQueue::claim`], this is the deliberate
+    /// recovery transition — the caller must mean it — so a held resource is
+    /// taken with a strictly newer fence rather than refused. An idle or
+    /// released resource takes the normal claim path.
+    pub fn reclaim(&mut self, resource: &str, holder: &str) -> Result<JobClaim, Diagnostic> {
+        match self.jobs.get(resource) {
+            None => {
+                return Err(stale(
+                    "JOB_UNKNOWN",
+                    format!("resource '{resource}' is not registered"),
+                ))
+            }
+            Some(JobState::Fired) | Some(JobState::Disabled) => {
+                return Err(stale(
+                    "JOB_NOT_RECLAIMABLE",
+                    format!("resource '{resource}' cannot be reclaimed"),
+                ))
+            }
+            Some(JobState::Claimed) | Some(JobState::Queued) => {}
+        }
+        let fence = match self.fences.current(resource) {
+            Some(current) if !self.fences.is_released(resource) => current.successor().ok_or_else(|| {
+                stale(
+                    "FENCE_EXHAUSTED",
+                    format!("the fence space for '{resource}' is exhausted"),
+                )
+            })?,
+            _ => self.fences.claim(&self.deployment, resource, holder)?,
+        };
+        self.fences
+            .install(fence.clone(), Some(holder.to_string()), false);
+        self.jobs.insert(resource.to_string(), JobState::Claimed);
+        Ok(JobClaim {
+            job: resource.to_string(),
+            fence,
+        })
+    }
+
+    /// Apply one ordered command. A refused command is side-effect free — the
+    /// queue is exactly as it was — which is what makes the verdict replicable.
+    pub fn apply(&mut self, command: &JobCommand) -> Result<(), Diagnostic> {
+        match command {
+            JobCommand::Claim { resource, holder } => self.claim(resource, holder).map(|_| ()),
+            JobCommand::TakeOver {
+                resource,
+                epoch,
+                holder,
+            } => self.take_over(resource, *epoch, holder).map(|_| ()),
+            JobCommand::Renew { claim } => self.renew(claim).map(|_| ()),
+            JobCommand::Release { claim } => self.unclaim(claim),
+            JobCommand::Reclaim { resource, holder } => {
+                self.reclaim(resource, holder).map(|_| ())
+            }
+            JobCommand::Settle { claim } => self.mark_fired(claim),
+            JobCommand::Disable { claim } => self.disable(claim),
+        }
+    }
+
     fn valid_claim(&self, claim: &JobClaim) -> bool {
         self.jobs.get(&claim.job) == Some(&JobState::Claimed) && self.fences.admits(&claim.fence)
     }
@@ -597,6 +840,49 @@ fn stale(kind: &str, message: String) -> Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replicated_fenced_operations_require_the_current_fence() {
+        let mut q = JobQueue::with_deployment("dep");
+        q.enqueue("job");
+        let claim = q.claim_in("dep", "job", "worker").expect("claim");
+        let stale = Fence::new("dep", "job", 1, 2);
+        assert!(q.renew_at("job", &stale).is_err(), "renew needs current");
+        assert!(q.unclaim_at("job", &stale).is_err(), "release needs current");
+        assert!(
+            q.mark_fired_at("job", &stale).is_err(),
+            "fire needs current"
+        );
+        assert!(
+            q.disable_at("job", &stale).is_err(),
+            "disable needs current"
+        );
+        assert_eq!(q.state("job"), Some(JobState::Claimed));
+
+        let renewed = q.renew_at("job", claim.fence()).expect("renew");
+        assert_eq!(renewed.fence().generation, 2);
+        assert!(
+            q.mark_fired_at("job", claim.fence()).is_err(),
+            "the superseded fence cannot fire"
+        );
+        q.mark_fired_at("job", renewed.fence()).expect("fire");
+        assert_eq!(q.state("job"), Some(JobState::Fired));
+    }
+
+    #[test]
+    fn replicated_release_requeues_for_a_newer_claim() {
+        let mut q = JobQueue::with_deployment("dep");
+        q.enqueue("job");
+        let first = q.claim_in("dep", "job", "worker-a").expect("claim");
+        q.unclaim_at("job", first.fence()).expect("release");
+        assert_eq!(q.state("job"), Some(JobState::Queued));
+        let second = q.claim_in("dep", "job", "worker-b").expect("reclaim");
+        assert_eq!(second.fence().generation, 2);
+        assert!(
+            q.mark_fired_at("job", first.fence()).is_err(),
+            "the stale release does not authorize the old worker"
+        );
+    }
 
     #[test]
     fn claim_fire_mark_fired_roundtrip() {

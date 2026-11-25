@@ -266,6 +266,20 @@ pub fn committed(digest: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// The committed job state, read from a node's durable ledger without taking
+/// its lock (`unfer_node job`).
+pub fn job_report(config: &Path, job: &str) -> String {
+    let (ok, stdout, stderr) = run(&[
+        "job",
+        "--config",
+        config.to_str().unwrap(),
+        "--job",
+        job,
+    ]);
+    assert!(ok, "job report failed: {stderr}");
+    stdout.trim().to_owned()
+}
+
 /// `count:hash`, the form `unfer_node digest` prints.
 pub fn digest(config: &Path) -> String {
     let (ok, stdout, stderr) = run(&["digest", "--config", config.to_str().unwrap()]);
