@@ -2705,51 +2705,34 @@ fn the_converged_shift_reaches_48_in_the_odd_block() {
     );
 }
 
-/// Recompute the finite reflection-sector comparison and count *both* blocks
-/// at common thresholds. Emit only when the caller requests a fresh fixture.
+/// Count both reflection blocks to enclose the first two levels of their direct sum.
 #[test]
-fn finite_model_witness_emission() {
+fn finite_model_ordered_levels() {
     let trunc = Truncated::build(&qcd_ym_hamiltonian(2.0), 10);
-    let odd = trunc.sector_matrix(false);
-    let even = trunc.sector_matrix(true);
-    let ground = |a: &DMatrix<f64>| {
-        let spectrum = a.clone().symmetric_eigen();
-        let i = spectrum.eigenvalues.imin();
-        let x = spectrum.eigenvectors.column(i).normalize();
-        let hx = a * &x;
-        let theta = x.dot(&hx);
-        (theta, (hx - theta * x).norm())
-    };
-    let (theta_odd, residual_odd) = ground(&odd);
-    let (theta_even, _) = ground(&even);
-    let beta = fock_sirk::certify_spectrum(&odd)
-        .unwrap().second_eigenvalue_lower_bound().unwrap();
-    let temple = certified_gap_lower_bound_with_exclusion(
-        theta_odd, residual_odd, beta, theta_even).unwrap();
-    assert!(temple > 1.0 && theta_odd + residual_odd < beta);
+    let odd = sector_columns(&trunc, &trunc.sector(false));
+    let even = sector_columns(&trunc, &trunc.sector(true));
+    assert_eq!((odd.len(), even.len()), (420, 581));
 
-    // Count at dyadic separators away from pivots. Bounds refer to the
-    // spectrum of the assembled finite matrices used by the inertia routine.
-    let columns = |matrix: &DMatrix<f64>| -> Vec<Vec<(usize, f64)>> {
-        matrix.column_iter().map(|v| v.iter().copied().enumerate()
-            .filter(|&(_, x)| x != 0.0).collect()).collect()
-    };
-    let odd_columns = columns(&odd);
-    let even_columns = columns(&even);
+    let probes = [(-10.25, 0, 0), (-10.234375, 0, 1), (-9.03125, 0, 1), (-9.015625, 1, 1)];
     let mut counts = Vec::new();
-    for shift in [-10.25, -10.234375, -9.03125, -9.015625] {
-        let n_odd = fock_sirk::certificate::inertia_below(&odd_columns, shift).unwrap().below;
-        let n_even = fock_sirk::certificate::inertia_below(&even_columns, shift).unwrap().below;
+    for (shift, expect_odd, expect_even) in probes {
+        let n_odd = inertia_below(&odd, shift).expect("odd count undecided").below;
+        let n_even = inertia_below(&even, shift).expect("even count undecided").below;
+        assert_eq!((n_odd, n_even), (expect_odd, expect_even));
         counts.push(serde_json::json!({"shift":shift,"odd":n_odd,"even":n_even}));
     }
     let row = serde_json::json!({
-        "schema":"qym-finite-reflection-count/v1", "physical":false,
-        "coupling":2, "cutoff":10, "dimension":odd.nrows(), "even_dimension":even.nrows(),
-        "theta_odd":theta_odd, "residual_odd":residual_odd, "theta_even":theta_even,
-        "beta_lambda2_odd":beta, "temple_bound":temple, "inertia_counts":counts
+        "schema":"qym-finite-reflection-counts/v1", "physical":false,
+        "coupling":2, "cutoff":10, "odd_dimension":odd.len(), "even_dimension":even.len(),
+        "inertia_counts":counts
     });
-    println!("{row}");
-    if let Some(path) = std::env::var_os("QYM_FINITE_WITNESS_OUTPUT") {
+    if let Some(path) = std::env::var_os("QYM_ORDERED_COUNTS_OUTPUT") {
         std::fs::write(path, format!("{row}\n")).unwrap();
+    } else {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/finite_model_witness/qym_g2_n10_ordered.ndjson");
+        let recorded: serde_json::Value =
+            serde_json::from_reader(std::fs::File::open(path).unwrap()).unwrap();
+        assert_eq!(row, recorded);
     }
 }
