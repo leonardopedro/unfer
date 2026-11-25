@@ -95,7 +95,7 @@ fn main() {
             "note": "per-mode 3D kernel (field insertions, spatial derivative on the ket); validated against its own coordinate route, and its derivative terms against the collective kernel",
         },
         "q_bearing_quadrature": {
-            "subset": "the first four q-bearing entries of every family",
+            "subset": "every q-bearing term of the dictionary",
             "nodes": 400,
             "terms": q_bearing.terms,
             "routing_sensitive_terms": q_bearing.routing_sensitive_terms,

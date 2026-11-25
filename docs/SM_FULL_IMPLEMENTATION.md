@@ -744,7 +744,7 @@ identity under `matrix_skew_proof` (`H_hermitian`, `A_skew`). Its
 | `fock_sirk/lean/SmDefectSkew.lean` | `acc3dfc49fad2760020f33617e2ff72e3d74b999a4643046ae6efd2d149afc53` | N8 finite fixture: `H` Hermitian, `A = iH` skew-adjoint (Mathlib) |
 | `docs/fixtures/sm_defect_analytic_proof.ndjson.gz` | `ccddf3b7c83edfed0d44aa6d9b9ae81080bff7fc04b04ded4829f65028f96445` | gzip nanoda payload; raw sha256 `83e3571e…14ed31`; 38,336 declarations |
 | `docs/fixtures/sm_defect_skew_proof.ndjson.gz` | `eeb92d5b0fc588851ee4600b692c092a3d8e0a982b509b1947c38bc32c7dd9aa` | gzip nanoda payload; raw sha256 `498ae454…db528cc`; 7,540 declarations |
-| `docs/fixtures/sm_defect_bridge.json` | `bde3f770ef0ed8ffae28c680e08f09872883059a61e60fdba7bc20f9910a64bd` | bridge file with the kernel-verified `matrix_skew_proof` and its parsed-source provenance check; record digest `77dec777…1816ca`. Carries both `evolution_bound=1.0109852165754634` (sampled) and `frobenius_product_bound=1.060938397590336` (the value this table's older digest recorded as `evolution_bound`) |
+| `docs/fixtures/sm_defect_bridge.json` | `af7e105ab19c432c49611e5f446477b64644f0ef1a29bf43220bbc2a313d4dd7` | bridge file with the kernel-verified `matrix_skew_proof` and its parsed-source provenance check; record digest `f1224414…fcf7d51d`. Carries both `evolution_bound=1.01098521658` (sampled) and `frobenius_product_bound=1.06093839759` (the value this table's older digest recorded as `evolution_bound`); the measured certificate fields are reported at twelve significant digits, the directed `interval_terms` endpoints are not rounded |
 | `fock_sirk/src/sm_brst_fock.rs` | `a6535958139893f16600cf74555caa28f0be6b4c2abb441f20df5022af12b07b` | matter and jet-inclusive finite BRST windows; block-graded harmonic quotients (the `H^1` fingerprint is the canonical augmented-RREF left nullspace, not raw singular vectors) |
 | `docs/fixtures/sm_constraints_bridge.json` | `0dd581b134e64df8ecd117355a7e694ad709281d7b8e5452adf3a523af175999` | N10 finite constraint + finite CE + finite Fock BRST bridge, including the jet record; record digest `05d08915…d60ee2a6`; residuals reported to twelve significant digits |
 | `docs/fixtures/sm_brst_jet_window.json` | `7288181b9cd70c77174428f61a5621c3bbb78b6ae12eaaaed5e4e5c9ca65fab5` | measured jet-inclusive window: 36,207 states, cohomology `[1,19,35,689]` |
@@ -951,15 +951,21 @@ terms are deliberately not compared this way: `q` is a coordinate
 multiplication in the collective kernel and a field insertion with momentum
 transfer in the 3D kernel, so they are different operators.
 
-`q`-bearing rows are therefore cross-checked inside each route, over the first
-four `q`-bearing entries of every family (94 terms, all `p`-free so the
-comparison is routing-sensitive). Each closed-form value is compared with a
-trapezoid evaluation of its own integrand, and for these terms the integrand is
-rebuilt from the term and the packet layout rather than from the closed-form
-polynomial — so a wrong mode, axis or weight would disagree. Measured: worst
-collective gap `1.3e-16` (`wall`), worst 3D gap `3.1e-15` (`magW02`), recorded as
-`q_bearing_quadrature` in the fixture. This is an integration cross-check of the
-insertion, not an equality between the two kernels.
+`q`-bearing rows are therefore cross-checked inside each route, over **every**
+q-bearing term of the dictionary (3,394 terms; no term mixes `q` and `p`, so each
+one is compared against an integrand rebuilt from the term and the packet layout
+rather than from the closed-form polynomial — a wrong mode, axis or weight
+disagrees). Each closed-form value is compared with a trapezoid evaluation of its
+own integrand. Measured: worst collective gap `1.3e-16` (`wall`), worst 3D gap
+`3.2e-15` (`magG31`), recorded as `q_bearing_quadrature` in the fixture. This is
+an integration cross-check of the insertion, not an equality between the two
+kernels.
+
+A mutation test (`a_mutated_field_axis_map_is_caught_by_the_q_bearing_check`)
+permutes which packet coordinate feeds which spatial axis and requires the check
+to reject every one of the 376 mutated evaluations (4 permutations x the 94-term
+per-family subset) with a gap above `1e-6`, so the sensitivity claimed above is
+measured rather than asserted.
 
 The symbolic companion `docs/sm_momentum_nested.cdb` (8 CHECK rows, in
 `scripts/check-sm-symbolic`) pins the conventions and the rigged constants

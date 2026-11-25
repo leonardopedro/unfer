@@ -19,15 +19,15 @@
         "the finite exponential is approximate; Padé/rounding are not enclosed here"
       ],
       "fields": {
-        "defect_action_envelope": 1.538871850838601,
-        "defect_frobenius": 1.9551214796017153,
-        "evolution_bound": 1.0109852165754634,
-        "flow_growth": 1.2867388901951293,
-        "frobenius_product_bound": 1.060938397590336,
-        "initial_leakage": 0.7032108464077431,
-        "reduced_growth": 1.2605551275463989,
-        "seed_norm": 0.7109813678954643,
-        "state_weighted_bound": 1.0109852165754634,
+        "defect_action_envelope": 1.53887185084,
+        "defect_frobenius": 1.9551214796,
+        "evolution_bound": 1.01098521658,
+        "flow_growth": 1.2867388902,
+        "frobenius_product_bound": 1.06093839759,
+        "initial_leakage": 0.703210846408,
+        "reduced_growth": 1.26055512755,
+        "seed_norm": 0.710981367895,
+        "state_weighted_bound": 1.01098521658,
         "time": 0.2
       },
       "hashes": {
@@ -201,7 +201,7 @@
         "lo": 0.2
       }
     },
-    "measured_map_error": 0.7546019867800926,
+    "measured_map_error": 0.75460198678,
     "measured_within_interval_hi": true,
     "rounding": {
       "directed": true,
@@ -216,7 +216,7 @@
     },
     "time": 0.2
   },
-  "artifact_sha256": "77dec7770fbaaa29856061807114cdb6289014151d57ae47724cab5ade1816ca",
+  "artifact_sha256": "f1224414dadfb742dc5bd44f8e3887ba7624339182eb4ac98acaf21fbcf7d51d",
   "claim_id": "n8_finite_map_defect",
   "endpoint": "N8-finite-map",
   "finite_endpoint_proof": {

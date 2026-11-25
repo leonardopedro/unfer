@@ -17408,13 +17408,13 @@
   "q_bearing_quadrature": {
     "nodes": 400,
     "note": "q is a coordinate multiplication in the collective kernel and a 3D profile insertions in the per-mode kernel, so the two routes are not equal there; each closed form is checked term by term against an independent trapezoid evaluation of its own integrand, built from the term and the packet layout",
-    "routing_sensitive_terms": 94,
-    "subset": "the first four q-bearing entries of every family",
-    "terms": 94,
+    "routing_sensitive_terms": 3394,
+    "subset": "every q-bearing term of the dictionary",
+    "terms": 3394,
     "worst_collective_gap": 1.3240277517523222e-16,
     "worst_collective_row": "wall",
-    "worst_three_d_gap": 3.0698348567928102e-15,
-    "worst_three_d_row": "magW02"
+    "worst_three_d_gap": 3.2295040528339246e-15,
+    "worst_three_d_row": "magG31"
   },
   "rows": 1241,
   "schema": "sm-dictionary-kernel/v1",

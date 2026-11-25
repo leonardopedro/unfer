@@ -1053,9 +1053,8 @@ pub struct QBearingQuadrature {
     pub worst_three_d_row: String,
 }
 
-/// Cross-check every `q`-bearing term of a deterministic subset — the first four
-/// `q`-bearing entries of each [`Family`] — against the quadrature evaluation, in
-/// both routes.
+/// Cross-check **every** `q`-bearing term of the dictionary against the
+/// quadrature evaluation, in both routes.
 pub fn q_bearing_quadrature(packets: &DictionaryPackets, nodes: usize) -> QBearingQuadrature {
     let mut report = QBearingQuadrature {
         terms: 0,
@@ -1065,18 +1064,11 @@ pub fn q_bearing_quadrature(packets: &DictionaryPackets, nodes: usize) -> QBeari
         worst_three_d_gap: 0.0,
         worst_three_d_row: String::new(),
     };
-    let mut per_family: BTreeMap<Family, usize> = BTreeMap::new();
     for entry in dictionary() {
-        let seen = per_family.entry(entry.family).or_insert(0);
-        if *seen >= 4 {
-            continue;
-        }
-        let mut used = false;
         for term in &entry.terms {
             if term.q_degree() == 0 {
                 continue;
             }
-            used = true;
             let p_free = term.p_degree() == 0;
             let collective_quad = if p_free {
                 coordinate_term_q_only_quadrature(term, packets, nodes)
@@ -1102,9 +1094,6 @@ pub fn q_bearing_quadrature(packets: &DictionaryPackets, nodes: usize) -> QBeari
             }
             report.terms += 1;
             report.routing_sensitive_terms += usize::from(p_free);
-        }
-        if used {
-            *seen += 1;
         }
     }
     report
@@ -1788,6 +1777,77 @@ mod tests {
             "worst 3D row {} gap {:e}",
             report.worst_three_d_row,
             report.worst_three_d_gap
+        );
+        // No dictionary term mixes `q` and `p`, so every q-bearing term is
+        // compared with an integrand rebuilt from the term and the layout.
+        assert_eq!(
+            report.routing_sensitive_terms, report.terms,
+            "every q-bearing term should be routing-sensitive"
+        );
+    }
+
+    #[test]
+    fn a_mutated_field_axis_map_is_caught_by_the_q_bearing_check() {
+        // The check reads each field's profile from the packet layout along the
+        // spatial axes. Permuting which packet coordinate feeds which axis must
+        // therefore show up as a large gap against the true layout: if the
+        // check were insensitive to the axis assignment, a wrong field routing
+        // could pass unnoticed.
+        let packets = DictionaryPackets::declared();
+        let mut per_family: BTreeMap<Family, usize> = BTreeMap::new();
+        let mut checked = 0usize;
+        let mut caught = 0usize;
+        let mut weakest = (f64::INFINITY, String::new());
+        for permutation in [[1usize, 0, 2], [2, 1, 0], [1, 2, 0], [2, 0, 1]] {
+            let mut mutated = packets.clone();
+            for field in &mut mutated.fields {
+                // 163 = 54*3 + 1, so the last block is ragged: an axis whose
+                // permuted partner does not exist keeps its own coordinate.
+                let permuted: Vec<f64> = (0..field.center.len())
+                    .map(|axis| {
+                        let base = axis - axis % 3;
+                        let shifted = base + permutation[axis % 3];
+                        if shifted < field.center.len() {
+                            field.center[shifted]
+                        } else {
+                            field.center[axis]
+                        }
+                    })
+                    .collect();
+                field.center = permuted;
+            }
+            per_family.clear();
+            for entry in dictionary() {
+                let seen = per_family.entry(entry.family).or_insert(0);
+                if *seen >= 4 {
+                    continue;
+                }
+                let mut used = false;
+                for term in &entry.terms {
+                    if term.q_degree() == 0 {
+                        continue;
+                    }
+                    used = true;
+                    let truth = coordinate_term_3d(term, &packets);
+                    let mutated_value = coordinate_term_3d(term, &mutated);
+                    let gap = (mutated_value - truth).norm() / (1.0 + truth.norm());
+                    checked += 1;
+                    if gap > 1e-6 {
+                        caught += 1;
+                    } else if gap < weakest.0 {
+                        weakest = (gap, format!("{:?} {}", permutation, entry.label));
+                    }
+                }
+                if used {
+                    *seen += 1;
+                }
+            }
+        }
+        assert!(checked >= 80, "only {checked} mutated terms checked");
+        assert_eq!(
+            caught, checked,
+            "the q-bearing check missed a permuted axis map (weakest {} gap {:e})",
+            weakest.1, weakest.0
         );
     }
 

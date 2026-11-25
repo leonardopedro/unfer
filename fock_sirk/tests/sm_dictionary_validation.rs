@@ -175,11 +175,13 @@ fn fixture_binds_the_q_bearing_quadrature_cross_check() {
     let block = &doc["q_bearing_quadrature"];
     assert_eq!(block["nodes"], 400);
     let terms = block["terms"].as_u64().unwrap();
-    assert!(terms >= 20, "fixture binds only {terms} q-bearing terms");
     assert!(
-        block["routing_sensitive_terms"].as_u64().unwrap() >= 8,
-        "fixture binds too few routing-sensitive terms"
+        terms >= 3000,
+        "fixture binds only {terms} q-bearing terms; the sweep should cover every one"
     );
+    // No dictionary term mixes `q` and `p`, so every q-bearing term is compared
+    // with an integrand rebuilt from the term and the packet layout.
+    assert_eq!(block["routing_sensitive_terms"].as_u64().unwrap(), terms);
     let recomputed = q_bearing_quadrature(&DictionaryPackets::declared(), 400);
     assert_eq!(recomputed.terms as u64, terms);
     for (key, gap, row) in [
