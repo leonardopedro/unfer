@@ -791,9 +791,9 @@ fn rational(text: &str) -> f64 {
 }
 
 /// The evidence record's cutoff sweep must stay consistent with the live
-/// operator. `C <= 12` is recomputed here; the `C = 16 … 26` rows (which cost
-/// 5.7 s to 406 s per cell and need an `8e6` component budget with a looser
-/// `1e-10` solve policy) are checked for the trend they are quoted for:
+/// operator. `C <= 12` is recomputed here; the `C = 16 … 28` rows (which need a
+/// `1.2e7` component budget and the looser `1e-10` solve policy, and cost
+/// seconds to minutes per cell) are checked for the trend they are quoted for:
 /// the tail keeps shrinking, the inside-window error stays flat, the
 /// `ForwardProducts` diagnostic keeps growing, and every Arnoldi step count is
 /// recorded rather than `null`.
@@ -814,14 +814,18 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .iter()
         .map(|c| c["hermite_cutoff"].as_u64().unwrap())
         .collect();
-    assert_eq!(cutoffs, vec![4, 8, 12, 16, 20, 22, 24, 26], "sweep cutoffs");
+    assert_eq!(
+        cutoffs,
+        vec![4, 8, 12, 16, 20, 22, 24, 26, 28],
+        "sweep cutoffs"
+    );
     let sizes: Vec<u64> = tails
         .iter()
         .map(|c| c["window_labels"].as_u64().unwrap())
         .collect();
     assert_eq!(
         sizes,
-        vec![15, 70, 210, 495, 1001, 1365, 1820, 2380],
+        vec![15, 70, 210, 495, 1001, 1365, 1820, 2380, 3060],
         "window sizes"
     );
     let tail_values: Vec<f64> = tails
@@ -836,13 +840,18 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         tail_values[4] < 0.5 * tail_values[0],
         "the tail must be meaningfully reduced by C = 20: {tail_values:?}"
     );
+    let last = tail_values.len() - 1;
     assert!(
         tail_values[6] < 0.7 * tail_values[4],
         "pushing to C = 24 must keep shrinking the tail: {tail_values:?}"
     );
     assert!(
-        tail_values[7] < 0.85 * tail_values[6],
+        tail_values[last - 1] < 0.85 * tail_values[6],
         "pushing to C = 26 must keep shrinking the tail: {tail_values:?}"
+    );
+    assert!(
+        tail_values[last] < 0.95 * tail_values[last - 1],
+        "pushing to C = 28 must keep shrinking the tail: {tail_values:?}"
     );
     let tail_steps: Vec<u64> = tails
         .iter()
@@ -894,7 +903,7 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .iter()
         .map(|c| c["forward_products_diagnostic"]["error"].as_f64().unwrap())
         .collect();
-    assert_eq!(sirk.len(), 8);
+    assert_eq!(sirk.len(), cutoffs.len());
     assert!(
         sirk.iter().all(|e| *e < 1e-2),
         "the primary solver must stay bounded across the sweep: {sirk:?}"
@@ -915,7 +924,7 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
     );
     // Past C = 20 the diagnostic saturates instead of growing: the window has
     // long covered the seed's support, so the omitted directions are the same
-    // ones. Read the four largest cells as equal within 10%.
+    // ones. Read every cell past C = 20 as equal within 10%.
     assert!(
         forward[4..].iter().all(|e| *e > 0.9 * forward[4]),
         "the forward diagnostic must plateau past C = 20: {forward:?}"

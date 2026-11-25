@@ -282,41 +282,73 @@ pub fn joint_axpy(
             limit: limits.max_work,
         });
     }
-    for (basis, amplitude) in b {
-        // Update through `get_mut` on the borrowed label: the overwhelmingly
-        // common case in a Krylov loop is a label already present in `a`, and
-        // re-inserting it meant cloning a `JointOuterBasis` (several
-        // allocations) plus a fresh node split for every entry. The arithmetic
-        // is unchanged -- `0 + scale * amplitude` for a fresh label, the same
-        // `C` addition in the same order otherwise -- so this is bit-identical.
-        let mut drop_entry = false;
-        if let Some(slot) = a.get_mut(basis) {
-            let value = *slot + scale * amplitude;
-            if !value.re.is_finite() || !value.im.is_finite() {
-                return Err(ActionError::NonFiniteAmplitude);
-            }
-            if value == C::new(0.0, 0.0) {
-                drop_entry = true;
-            } else {
-                *slot = value;
-            }
-        } else {
-            let value = scale * amplitude;
-            if !value.re.is_finite() || !value.im.is_finite() {
-                return Err(ActionError::NonFiniteAmplitude);
-            }
-            if value != C::new(0.0, 0.0) {
-                if a.len() >= limits.max_components {
-                    return Err(ActionError::ComponentLimit {
-                        limit: limits.max_components,
-                    });
+    // Both maps are ordered by the same label order, so one ordered walk visits
+    // every touched entry with a single comparison, instead of a tree descent
+    // (about a dozen deep `JointOuterBasis` comparisons) per entry of `b`. That
+    // descent was 87 % of the `C = 26` shift solve (`docs/VERIFY_PHI4_MOMENTUM.md`
+    // §5.6): the map operation, not the arithmetic, was the cost.
+    //
+    // The arithmetic is unchanged per label -- `scale * amplitude` for a fresh
+    // label, `*slot + scale * amplitude` otherwise, and the same zero-deletion
+    // rule -- and no label's value depends on any other, so this is
+    // bit-identical to the search version (`tests/joint_map_ops.rs` pins that).
+    // Insertions and removals are collected and applied after the walk, since
+    // the map cannot be restructured while it is borrowed mutably.
+    let mut incoming = b.iter();
+    let mut next = incoming.next();
+    let mut fresh: Vec<(&JointOuterBasis, C)> = Vec::new();
+    let mut vanishing: Vec<JointOuterBasis> = Vec::new();
+    for (label, slot) in a.iter_mut() {
+        while let Some((basis, amplitude)) = next {
+            match basis.cmp(label) {
+                std::cmp::Ordering::Less => {
+                    let value = scale * amplitude;
+                    if !value.re.is_finite() || !value.im.is_finite() {
+                        return Err(ActionError::NonFiniteAmplitude);
+                    }
+                    if value != C::new(0.0, 0.0) {
+                        fresh.push((basis, value));
+                    }
+                    next = incoming.next();
                 }
-                a.insert(basis.clone(), value);
+                std::cmp::Ordering::Greater => break,
+                std::cmp::Ordering::Equal => {
+                    let value = *slot + scale * amplitude;
+                    if !value.re.is_finite() || !value.im.is_finite() {
+                        return Err(ActionError::NonFiniteAmplitude);
+                    }
+                    if value == C::new(0.0, 0.0) {
+                        vanishing.push(label.clone());
+                    } else {
+                        *slot = value;
+                    }
+                    next = incoming.next();
+                    break;
+                }
             }
         }
-        if drop_entry {
-            a.remove(basis);
+    }
+    // `b` can outrun `a` once `a` is exhausted.
+    while let Some((basis, amplitude)) = next {
+        let value = scale * amplitude;
+        if !value.re.is_finite() || !value.im.is_finite() {
+            return Err(ActionError::NonFiniteAmplitude);
         }
+        if value != C::new(0.0, 0.0) {
+            fresh.push((basis, value));
+        }
+        next = incoming.next();
+    }
+    for (basis, value) in fresh {
+        if a.len() >= limits.max_components {
+            return Err(ActionError::ComponentLimit {
+                limit: limits.max_components,
+            });
+        }
+        a.insert(basis.clone(), value);
+    }
+    for label in vanishing {
+        a.remove(&label);
     }
     Ok(())
 }

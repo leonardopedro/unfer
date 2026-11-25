@@ -62,10 +62,11 @@ fn shift_invert() -> JointKrylovMethod {
 
 /// Cutoffs of the outside-window sweep. C = 16 and 20 are the extension past
 /// the window at which the seed's support is fully covered; they need a looser
-/// solve policy (see `sweep_method`) and a larger component budget. C = 22, 24
-/// and 26 push past 20 to show that the tail keeps shrinking while the SIRK
-/// error stays flat (rank-limited, not window-limited).
-const SWEEP_CUTOFFS: [u32; 8] = [4, 8, 12, 16, 20, 22, 24, 26];
+/// solve policy (see `sweep_method`) and a larger component budget. C = 22, 24,
+/// 26 and 28 push past 20 to show that the tail keeps shrinking while the SIRK
+/// error stays flat (rank-limited, not window-limited). C = 28 is the largest
+/// window the component budget allows (see `SWEEP_COMPONENT_BUDGET`).
+const SWEEP_CUTOFFS: [u32; 9] = [4, 8, 12, 16, 20, 22, 24, 26, 28];
 
 /// Solve policy per cutoff. The `1e-13` relative residual is affordable while
 /// the window is small, but at C = 20 the smallest scheduled shift
@@ -87,9 +88,9 @@ fn sweep_method(cutoff: u32) -> JointKrylovMethod {
 /// The window dictionary charges one component per (outer label, inner state)
 /// pair, so C = 20 (1001 labels) exceeds the default 1e6 budget during span
 /// registration, C = 24 (1820 labels, 3.35e6 components) needs more than
-/// C = 20's 4e6, and C = 26 (2380 labels, 5.71e6 components) needs more than
-/// 4e6 too.
-const SWEEP_COMPONENT_BUDGET: usize = 8_000_000;
+/// C = 20's 4e6, C = 26 (2380 labels, 5.71e6) needs more than 4e6 too, and
+/// C = 28 (3060 labels, 9.36e6) needs more than C = 26's 8e6.
+const SWEEP_COMPONENT_BUDGET: usize = 12_000_000;
 
 fn solve(
     h: &InnerExpr,
@@ -359,7 +360,7 @@ fn cutoff_sweep() -> Value {
 
     json!({
         "status": "measured",
-        "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; they solve to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
+        "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; C = 22 ... 28 extend it further to measure the tail's slow decay. Every C >= 16 cell solves to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
         "tail_sweep_fixed_rank_2": tail_cells,
         "method_contrast_fixed_rank_4": method_cells,
         "runtime_ms": started.elapsed().as_millis() as u64,

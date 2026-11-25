@@ -39,7 +39,7 @@
         "hermite_cutoff": 4,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9673024240041677,
-        "runtime_ms": 36,
+        "runtime_ms": 34,
         "shift_invert": {
           "error": 0.0008017726890894306,
           "return_probability": 0.9681041966932571,
@@ -128,7 +128,7 @@
         "hermite_cutoff": 8,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 202,
+        "runtime_ms": 180,
         "shift_invert": {
           "error": 0.0030742020154721494,
           "return_probability": 0.969810708330245,
@@ -217,7 +217,7 @@
         "hermite_cutoff": 12,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9667225765802239,
-        "runtime_ms": 1179,
+        "runtime_ms": 790,
         "shift_invert": {
           "error": 0.0024296540890390572,
           "return_probability": 0.9691522306692629,
@@ -306,7 +306,7 @@
         "hermite_cutoff": 16,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666887372381503,
-        "runtime_ms": 8281,
+        "runtime_ms": 4286,
         "shift_invert": {
           "error": 0.0027333609351456456,
           "return_probability": 0.9694220981732959,
@@ -395,7 +395,7 @@
         "hermite_cutoff": 20,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666764094895333,
-        "runtime_ms": 46104,
+        "runtime_ms": 25628,
         "shift_invert": {
           "error": 0.0029888798241072267,
           "return_probability": 0.9696652893136405,
@@ -484,7 +484,7 @@
         "hermite_cutoff": 22,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666809073553623,
-        "runtime_ms": 99483,
+        "runtime_ms": 56768,
         "shift_invert": {
           "error": 0.0028994061486972145,
           "return_probability": 0.9695803135040595,
@@ -573,7 +573,7 @@
         "hermite_cutoff": 24,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666775439926599,
-        "runtime_ms": 199737,
+        "runtime_ms": 107324,
         "shift_invert": {
           "error": 0.002847765066681829,
           "return_probability": 0.9695253090593418,
@@ -662,7 +662,7 @@
         "hermite_cutoff": 26,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666785003538712,
-        "runtime_ms": 355388,
+        "runtime_ms": 187542,
         "shift_invert": {
           "error": 0.00284232410092522,
           "return_probability": 0.9695208244547964,
@@ -712,10 +712,99 @@
         },
         "status": "measured",
         "window_labels": 2380
+      },
+      {
+        "attained_rank": 4,
+        "forward_products_diagnostic": {
+          "error": 0.0001833246209685946,
+          "label": "diagnostic only, not the primary solver",
+          "return_probability": 0.966862413262548,
+          "solver": {
+            "cached_components": 9422220,
+            "function_solve_error_bounds": {
+              "count": 0,
+              "max": 0.0
+            },
+            "function_solve_iterations": {
+              "count": 0,
+              "max": 0,
+              "values": []
+            },
+            "gmres_iterations_cap": 64,
+            "gmres_iterations_max": 0,
+            "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
+            "gmres_iterations_total": 0,
+            "gmres_relative_tolerance": 1e-13,
+            "hermiticity_defect": 3.3666310567303395e-16,
+            "orthogonality_defect": 1.9984014443252818e-15,
+            "shift_solve_iterations": {
+              "count": 0,
+              "max": 0,
+              "values": []
+            },
+            "shift_solve_residuals": {
+              "count": 0,
+              "max": 0.0
+            }
+          }
+        },
+        "hermite_cutoff": 28,
+        "requested_rank": 4,
+        "return_probability_window_exact": 0.9666790886415794,
+        "runtime_ms": 334730,
+        "shift_invert": {
+          "error": 0.0028602675805967648,
+          "return_probability": 0.9695393562221761,
+          "solver": {
+            "cached_components": 9422220,
+            "function_solve_error_bounds": {
+              "count": 4,
+              "max": 0.33892931812289984
+            },
+            "function_solve_iterations": {
+              "count": 4,
+              "max": 286,
+              "values": [
+                278,
+                286,
+                284,
+                286
+              ]
+            },
+            "gmres_iterations_cap": 64,
+            "gmres_iterations_max": 276,
+            "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
+            "gmres_iterations_total": 1976,
+            "gmres_relative_tolerance": 1e-13,
+            "hermiticity_defect": 1.789312314738283e-15,
+            "orthogonality_defect": 6.439293542825908e-15,
+            "shift_solve_iterations": {
+              "count": 4,
+              "max": 276,
+              "values": [
+                156,
+                190,
+                220,
+                276
+              ]
+            },
+            "shift_solve_residuals": {
+              "count": 4,
+              "max": 0.06298492468409836
+            }
+          }
+        },
+        "solve_policy": {
+          "max_iterations": 1024,
+          "method": "shift_invert",
+          "relative_tolerance": 1e-10
+        },
+        "status": "measured",
+        "window_labels": 3060
       }
     ],
-    "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; they solve to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
-    "runtime_ms": 1106227,
+    "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; C = 22 ... 28 extend it further to measure the tail's slow decay. Every C >= 16 cell solves to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
+    "runtime_ms": 1116699,
     "status": "measured",
     "tail_sweep_fixed_rank_2": [
       {
@@ -806,7 +895,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 128,
+        "runtime_ms": 118,
         "shifts": [
           {
             "im": 5.0,
@@ -877,7 +966,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9792785784868768,
         "return_probability_window_exact": 0.9667225765802239,
-        "runtime_ms": 680,
+        "runtime_ms": 493,
         "shifts": [
           {
             "im": 5.0,
@@ -948,7 +1037,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9800548839088506,
         "return_probability_window_exact": 0.9666887372381503,
-        "runtime_ms": 4444,
+        "runtime_ms": 2493,
         "shifts": [
           {
             "im": 5.0,
@@ -1019,7 +1108,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9800015102784486,
         "return_probability_window_exact": 0.9666764094895333,
-        "runtime_ms": 25171,
+        "runtime_ms": 13965,
         "shifts": [
           {
             "im": 5.0,
@@ -1090,7 +1179,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799718278267168,
         "return_probability_window_exact": 0.9666809073553623,
-        "runtime_ms": 55408,
+        "runtime_ms": 29932,
         "shifts": [
           {
             "im": 5.0,
@@ -1161,7 +1250,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799700889651135,
         "return_probability_window_exact": 0.9666775439926599,
-        "runtime_ms": 112302,
+        "runtime_ms": 58848,
         "shifts": [
           {
             "im": 5.0,
@@ -1232,7 +1321,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799797928325029,
         "return_probability_window_exact": 0.9666785003538712,
-        "runtime_ms": 197604,
+        "runtime_ms": 104791,
         "shifts": [
           {
             "im": 5.0,
@@ -1285,6 +1374,77 @@
         "status": "measured",
         "window_labels": 2380,
         "window_tail_norm_max": 0.17032660831261817
+      },
+      {
+        "attained_rank": 2,
+        "hashimoto": {
+          "N": 8.0,
+          "h": 3.0,
+          "m": 2,
+          "t": 0.05
+        },
+        "hermite_cutoff": 28,
+        "inside_window_error": 0.013309716764975832,
+        "projected_action_tail_norms": [
+          0.0,
+          0.1337123742146443
+        ],
+        "requested_rank": 2,
+        "return_probability_sirk": 0.9799888054065552,
+        "return_probability_window_exact": 0.9666790886415794,
+        "runtime_ms": 188670,
+        "shifts": [
+          {
+            "im": 5.0,
+            "re": 0.0
+          },
+          {
+            "im": 1.9999999999999996,
+            "re": 0.0
+          }
+        ],
+        "solve_policy": {
+          "max_iterations": 1024,
+          "method": "shift_invert",
+          "relative_tolerance": 1e-10
+        },
+        "solver": {
+          "cached_components": 9422220,
+          "function_solve_error_bounds": {
+            "count": 2,
+            "max": 0.08032169311500013
+          },
+          "function_solve_iterations": {
+            "count": 2,
+            "max": 286,
+            "values": [
+              280,
+              286
+            ]
+          },
+          "gmres_iterations_cap": 64,
+          "gmres_iterations_max": 281,
+          "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
+          "gmres_iterations_total": 1060,
+          "gmres_relative_tolerance": 1e-13,
+          "hermiticity_defect": 7.945918450165891e-16,
+          "orthogonality_defect": 3.552713678800501e-15,
+          "shift_solve_iterations": {
+            "count": 2,
+            "max": 281,
+            "values": [
+              213,
+              281
+            ]
+          },
+          "shift_solve_residuals": {
+            "count": 2,
+            "max": 0.045668945047571366
+          }
+        },
+        "status": "measured",
+        "window_labels": 3060,
+        "window_tail_norm_max": 0.1337123742146443
       }
     ]
   },
@@ -1450,7 +1610,7 @@
         "window_labels": 35
       }
     },
-    "runtime_ms": 168,
+    "runtime_ms": 151,
     "static_jet": {
       "he2_k2_coupling": 0.0,
       "mean": 2.125,
@@ -1464,7 +1624,7 @@
       "variance": 21.06250000000001
     }
   },
-  "peak_rss_kb": 690852,
+  "peak_rss_kb": 1012332,
   "rank_sweep": {
     "cells": [
       {
@@ -1479,7 +1639,7 @@
         "inside_window_error": 0.013219412751014792,
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
-        "runtime_ms": 123,
+        "runtime_ms": 112,
         "shifts": [
           {
             "im": 5.0,
@@ -1539,7 +1699,7 @@
         "inside_window_error": 0.0030742020154721494,
         "requested_rank": 4,
         "return_probability_sirk": 0.969810708330245,
-        "runtime_ms": 149,
+        "runtime_ms": 125,
         "shifts": [
           {
             "im": 11.0,
@@ -1611,7 +1771,7 @@
         "inside_window_error": 0.0002525224603955323,
         "requested_rank": 6,
         "return_probability_sirk": 0.9664839838543773,
-        "runtime_ms": 177,
+        "runtime_ms": 141,
         "shifts": [
           {
             "im": 17.0,
@@ -1686,7 +1846,7 @@
     ],
     "hermite_cutoff": 8,
     "return_probability_window_exact": 0.9667365063147728,
-    "runtime_ms": 508,
+    "runtime_ms": 437,
     "status": "measured",
     "window_labels": 70
   },
@@ -1834,7 +1994,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9667497780305179,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 548,
+        "runtime_ms": 542,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 0.000013271715745055701
@@ -1953,7 +2113,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9651198843829879,
         "return_probability_window_exact": 0.9651233600098685,
-        "runtime_ms": 940,
+        "runtime_ms": 953,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 3.47562688063352e-6
@@ -2072,7 +2232,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9667497780305179,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 549,
+        "runtime_ms": 540,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 0.000013271715745055701
@@ -2191,7 +2351,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9099657261011699,
         "return_probability_window_exact": 0.910575997445444,
-        "runtime_ms": 1738,
+        "runtime_ms": 1766,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 0.0006102713442741603
@@ -2357,15 +2517,15 @@
         "sharp_charge": 0.000026543431490111402
       }
     },
-    "runtime_ms": 3778,
+    "runtime_ms": 3805,
     "status": "measured",
     "time": 0.05
   },
-  "runtime_ms": 1110806,
+  "runtime_ms": 1121366,
   "schema": "phi4-momentum-sirk-sweep/v1",
   "source_revision": {
     "crate": "fock_sirk",
-    "git_head": "7da9838471c1bba0c8ff2c7bfe0dafa15df44d81",
+    "git_head": "3faccd6b14bec90657a8e421a0403aeb82eb3add",
     "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
     "version": "0.1.0"
   }

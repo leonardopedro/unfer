@@ -40,14 +40,14 @@ The operator keeps the full nonnegative square including `λv⁴/4`, forms the
 
 * Cadabra2 `2.5.15 private` (`nix shell nixpkgs#cadabra2`)
 * `rustc 1.99.0 (b940084d7 2026-09-28)`
-* repository `HEAD = 7da9838` when the record was regenerated, with the
-  seed-column reference of §5.8 (and its `window_reference` module) uncommitted
+* repository `HEAD = 3faccd6` when the record was regenerated, with the
+  ordered-walk `joint_axpy` of §5.9 and the `C = 28` sweep row uncommitted
 
 | file | SHA-256 |
 |---|---|
 | `docs/phi4_momentum_nested.cdb` | `669510d3c55d334b065b0d94c6f7a4d402cdf29408865856178c3b475fb8d709` |
 | `docs/fixtures/phi4_momentum_mehler.json` | `9b1e9c15ccbb53c876a4818f8d2898d8faec5f26c54d0664406cbcc9912d15bb` |
-| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `cc21379f5c060ac279bf1f08989ec4de4f984734103ee4f3403d714e0fb69bdb` |
+| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `f8d819279cab1d1df96a2588ae444dd74cf01e850fddf859c228d4da854ffb0f` |
 
 ## 3. Replay
 
@@ -63,10 +63,10 @@ cargo test -p nested_fock_algebra phi4_momentum
 # the P12 suite (needs a C compiler, e.g. via `nix shell nixpkgs#gcc`)
 cargo test -p fock_sirk --test phi4_momentum_sirk   # 6 tests; ~5 s release
 
-# regenerate the evidence record (~19 min in release: the eight cutoff cells
-# cost 21 ms, 0.13 s, 0.68 s, 4.4 s, 25.2 s, 55.4 s, 112.3 s and 197.6 s at
-# m = 2 and 36 ms, 0.2 s, 1.2 s, 8.3 s, 46.1 s, 99.5 s, 199.7 s and 355.4 s
-# at m = 4; the debug build is impractical for them)
+# regenerate the evidence record (~19 min in release: the nine cutoff cells
+# cost 21 ms, 0.12 s, 0.49 s, 2.5 s, 14.0 s, 29.9 s, 58.8 s, 104.8 s and
+# 188.7 s at m = 2 and 34 ms, 0.2 s, 0.8 s, 4.3 s, 25.6 s, 56.8 s, 107.3 s,
+# 187.5 s and 334.7 s at m = 4; the debug build is impractical for them)
 cargo run -p fock_sirk --release --example phi4_momentum_sirk
 
 # the measurements of section 5.5 (serial, then default workers), plus the
@@ -77,13 +77,13 @@ cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
 PHI4_PROFILE=1 \
   cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
 
-# the section 5.7/5.8 profile: same probe at C = 26 (~3.5 min: 196 s solve,
-# then a 3 s seed-column window reference; PROBE_COMPONENT_BUDGET defaults to
-# the sweep's 8e6 because C = 26 needs 5.71e6 components)
+# the section 5.7/5.8/5.9 profile: same probe at C = 26 (~2 min: 104 s solve
+# after section 5.9, then a 2.4 s seed-column window reference;
+# PROBE_COMPONENT_BUDGET defaults to 8e6 because C = 26 needs 5.71e6)
 PROBE_CUTOFF=26 PHI4_PROFILE=1 \
   cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
 
-# the section 5.8 C = 28 cell (~6 min, budget 12e6 because C = 28 needs
+# the section 5.8 C = 28 cell (~3.5 min, budget 12e6 because C = 28 needs
 # 9,363,600 components; the old dense reference made the same run 12 min)
 PROBE_CUTOFF=28 PROBE_COMPONENT_BUDGET=12000000 PHI4_PROFILE=1 \
   cargo run -q -p fock_sirk --release --example phi4_momentum_parallel_probe
@@ -194,21 +194,22 @@ instead of pretending rank 2 reproduces the full-action number.
 
 ### 5.2 Cutoff and rank sweeps, `t = 0.05`
 
-Rank-2 tail sweep (`N = 8, h = 3`), `max_k ‖(I − P_C) H V_k‖`. The `C = 16 … 26`
+Rank-2 tail sweep (`N = 8, h = 3`), `max_k ‖(I − P_C) H V_k‖`. The `C = 16 … 28`
 rows extend the plan's `C ≤ 12` range past 20: the tail keeps falling, but the
 Arnoldi steps the smallest scheduled shift (`γ = 40`) needs grow with the
 window, and the runtime grows faster than the label count.
 
 | `C` | labels | tail | Arnoldi steps | cell runtime |
 |---|---|---|---|---|
-| 4 | 15 | `1.7866` | `[6, 6]` | `22 ms` |
-| 8 | 70 | `1.4001` | `[17, 18]` | `0.13 s` |
-| 12 | 210 | `0.8946` | `[38, 43]` | `0.68 s` |
-| 16 | 495 | `0.5067` | `[70, 82]` | `4.4 s` |
-| 20 | 1001 | `0.3189` | `[112, 138]` | `25.5 s` |
-| 22 | 1365 | `0.2615` | `[137, 174]` | `55.8 s` |
-| 24 | 1820 | `0.2129` | `[163, 212]` | `112.3 s` |
-| 26 | 2380 | `0.1703` | `[190, 242]` | `197.6 s` |
+| 4 | 15 | `1.7866` | `[6, 6]` | `21 ms` |
+| 8 | 70 | `1.4001` | `[17, 18]` | `0.12 s` |
+| 12 | 210 | `0.8946` | `[38, 43]` | `0.49 s` |
+| 16 | 495 | `0.5067` | `[70, 82]` | `2.5 s` |
+| 20 | 1001 | `0.3189` | `[112, 138]` | `14.0 s` |
+| 22 | 1365 | `0.2615` | `[137, 174]` | `29.9 s` |
+| 24 | 1820 | `0.2129` | `[163, 212]` | `58.8 s` |
+| 26 | 2380 | `0.1703` | `[190, 242]` | `104.8 s` |
+| 28 | 3060 | `0.1337` | `[213, 281]` | `188.7 s` |
 
 The `C ≥ 16` cells solve to a `1e-10` relative residual with a 1024-step cap:
 at `C = 20` the `1e-13` target stalls at `2.3e-13` and exhausts even 512 steps.
@@ -216,17 +217,18 @@ The looser target is six orders below the `1e-3`-scale inside-window error
 being measured, and every cell records its policy (`solve_policy`,
 `relative_tolerance`, `max_iterations`, and the realised step counts) so the
 numbers are never silently mixed. `C ≥ 20` also needs a larger component
-budget: the window alone is 1001 labels at `C = 20`, 1820 at `C = 24` and 2380
-at `C = 26` (`5.71e6` components), and the dictionary charges one component per
-(outer label, inner state) pair, so the default `1e6` limit (and `C = 20`'s
-`4e6`) is hit during span registration; the runner now uses `8e6`. Note the tail
-is a norm of the *action* outside `P_C`; it need not reach zero as the window
-grows, and it is still `0.17` at `C = 26` because `H` moves the seed to labels
-the window does not contain. The tail falls by only `0.32 → 0.17` from `C = 20`
-to `C = 26` while the cell cost grows `25.2 s → 197.6 s` (§5.5–§5.7: the
-nested-vector arithmetic dominates the solve; the exact window reference, which
-was half of the `C = 26` cell under the dense Padé factorisation, is now `2.7 s`
-of it — §5.8).
+budget: the window alone is 1001 labels at `C = 20`, 1820 at `C = 24`, 2380 at
+`C = 26` (`5.71e6` components) and 3060 at `C = 28` (`9.36e6`), and the
+dictionary charges one component per (outer label, inner state) pair, so the
+default `1e6` limit (and `C = 20`'s `4e6`) is hit during span registration; the
+runner now uses `1.2e7`. Note the tail is a norm of the *action* outside `P_C`;
+it need not reach zero as the window grows, and it is still `0.13` at `C = 28`
+because `H` moves the seed to labels the window does not contain. The tail falls
+by only `0.32 → 0.13` from `C = 20` to `C = 28` while the cell cost grows
+`14.0 s → 188.7 s` (§5.5–§5.7: the nested-vector arithmetic dominates the solve;
+the exact window reference, which was half of the `C = 26` cell under the dense
+Padé factorisation, is now `2.4 s` of it — §5.8 — and §5.9 removed the rest of
+what was left of the map-operation cost).
 
 Rank sweep on the fixed `C = 8` window (`N = 3m + 2`, `h = 3`):
 
@@ -248,6 +250,7 @@ Method contrast at fixed rank 4 over the cutoff sweep:
 | 22 | `2.90e-3` | `1.82e-4` | `[171, 173, 175, 176]` |
 | 24 | `2.85e-3` | `1.85e-4` | `[209, 212, 214, 216]` |
 | 26 | `2.84e-3` | `1.84e-4` | `[239, 242, 245, 247]` |
+| 28 | `2.86e-3` | `1.83e-4` | `[156, 190, 220, 276]` |
 
 Two readings, both from the same table. The plan's Hashimoto §3.1 claim
 reproduces as **growth with the window** (≈ 10³× from `C = 4` to `C = 12`,
@@ -255,14 +258,14 @@ reproduces as **growth with the window** (≈ 10³× from `C = 4` to `C = 12`,
 rank-for-rank deficit: on these bounded windows the shifted polynomial flow is
 the *more* accurate of the two. And the *inside-window* error of the primary
 solver is flat — `8.0e-4, 3.07e-3, 2.43e-3, 2.73e-3, 2.99e-3, 2.90e-3,
-2.85e-3, 2.84e-3` — i.e. once the window covers the seed's support (from
-`C = 8` on) the remaining error is set by the rank, not by `C`, while the tail
-keeps shrinking. The `C = 20 … 26` entry is a shallow plateau with no monotone
-trend: `2.99e-3, 2.90e-3, 2.85e-3, 2.84e-3` differs in the third digit, which
-is the `solve_policy` tolerance's neighbourhood, so those four cells are read as
-equal, not as a decaying sequence. Growing `C` past 12 therefore buys tail, not
-accuracy, at a steeply rising cost (1.2 s → 8.3 s → 46.1 s → 99.5 s →
-199.7 s → 355.4 s per `m = 4` cell).
+2.85e-3, 2.84e-3, 2.86e-3` — i.e. once the window covers the seed's support
+(from `C = 8` on) the remaining error is set by the rank, not by `C`, while the
+tail keeps shrinking. The `C = 20 … 28` entry is a shallow plateau with no
+monotone trend: `2.99e-3, 2.90e-3, 2.85e-3, 2.84e-3, 2.86e-3` differs in the
+third digit, which is the `solve_policy` tolerance's neighbourhood, so those
+five cells are read as equal, not as a decaying sequence. Growing `C` past 12
+therefore buys tail, not accuracy, at a rising cost (0.79 s → 4.3 s → 25.6 s →
+56.8 s → 107.3 s → 187.5 s → 334.7 s per `m = 4` cell).
 That is exactly why it stays a labeled diagnostic. At `m = 2` the contrast is
 not yet visible (`1.9e-3, 1.3e-3, 1.3e-3`), so the m = 2 sweep is used for the
 plan-literal tail measurement and the contrast is recorded at `m = 4`.
@@ -472,7 +475,9 @@ PHI4_PROFILE=1` on 2380 labels, `m = 2`, four shift solves, 918 steps total:
 Solve wall clock `196.0 s` (`918` Arnoldi steps, probability
 `9.79979792832502916e-1`, which is the record's `C = 26` value). A second run,
 with compilation on the same machine, reproduced the shares within `3 %` and the
-wall clock at `202.1 s`.
+wall clock at `202.1 s`. (This profile is the *before* picture of §5.9; the same
+probe on the shipped code measures `104.0 s` for the same steps and the same
+probability.)
 
 The per-call cost grew roughly with the label count, not faster: `axpy`
 `0.76–0.81 ms` against `0.26–0.29 ms` at `C = 20`, `dot` `0.25–0.26 ms` against
@@ -482,7 +487,7 @@ vectors are dense in the inner sector while the probe's pair is not — quote th
 `PROFILE` shares for cost, the probe numbers for the operations in isolation.
 
 **What changed is not the solver but the cell.** The recorded `C = 26` cell is
-`406.4 s` then (the record now carries `197.6 s` after §5.8), and the probe now
+`406.4 s` then (the record now carries `104.8 s`, after §5.8 and §5.9), and the probe now
 times the other half of it — the exact dense window
 reference (`WindowOperator::build` plus the Padé `exp`) that the sweep evaluates
 beside every solve:
@@ -569,14 +574,78 @@ field by field against the previous record. Every `return_probability_window_exa
 entry moved by at most `7.1e-14` absolute (at `C = 16`; most are `≤ 1e-14`), and
 nothing else changed except the timings and the source revision. The record now
 carries `reference_tier` saying which implementation produced the column. The
-cells came down with it — the `m = 2` cells are `21 ms, 0.13 s, 0.68 s, 4.4 s,
-25.2 s, 55.4 s, 112.3 s, 197.6 s` (the `C = 26` cell was `406.4 s`), the `m = 4`
-cells `36 ms … 355.4 s` (was `46 ms … 534.3 s`), peak RSS `0.69 GB` (was
-`2.1 GB`), and the full run `18.5 min` (was `30.4 min`).
+cells came down with it — the `m = 2` cells are `21 ms, 0.12 s, 0.49 s, 2.5 s,
+14.0 s, 29.9 s, 58.8 s, 104.8 s` (the `C = 26` cell was `406.4 s`) and the `m = 4`
+cells `34 ms … 187.5 s` (was `46 ms … 534.3 s`), peak RSS `0.69 GB` (was
+`2.1 GB`), and the full run `18.5 min` (was `30.4 min`). §5.9 then halves those
+cells again and adds `C = 28` to the sweep itself, so the `C = 28` figures in the
+tables above are the *probe* measurement of a cell the record now contains as a
+row: `188.7 s` at `m = 2`, `334.7 s` at `m = 4`.
 
 The dense implementation is still in `fock_sirk/tests/phi4_momentum_sirk.rs` on
 the `C ≤ 12` windows, where it costs milliseconds, as an independent oracle for
 the seed-column tier.
+
+### 5.9 The solve was the map walk, not the arithmetic
+
+§5.7 left a lopsided cell: the reference was `3.5 s` and the solve was
+`104–196 s`, with `87 %` of the solve inside `joint_axpy`. That number is worth
+reading twice, because `axpy` is one complex multiply-add per label. The cost
+was not the arithmetic: `joint_axpy` found each label with `get_mut`, i.e. a
+fresh `BTreeMap` descent — about a dozen comparisons into a key that is itself a
+nested dictionary — *per entry of the source vector*. Synchronising the two
+vectors' zeros at `C = 26` cost `196 s`.
+
+Both maps are ordered by that same comparison, so the descent is redundant:
+`joint_axpy` now walks `a` in order with a forward cursor over `b`, matching as it
+goes (one comparison per visited entry), collecting fresh labels and recording
+exact cancellations to apply after the walk (the map cannot be restructured
+while it is borrowed). Each label's value still gets exactly the arithmetic it
+got before, and no label's value depends on another, so the operation is
+bit-identical — `tests/joint_map_ops.rs`, which keeps the previous
+implementations as the oracle and compares every amplitude on `to_bits()`, still
+passes unchanged.
+
+| labels | per-entry search | ordered walk |
+|---|---|---|
+| 210 | `0.075 ms` | `0.005 ms` (**15.9×**) |
+| 715 | `0.313 ms` | `0.015 ms` (**20.8×**) |
+| 1365 | `0.675 ms` | `0.032 ms` (**21.4×**, `23 ns`/entry) |
+
+End to end, with the same step counts and bit-identical probabilities:
+
+| cell | solve before | solve after | probability (both) |
+|---|---|---|---|
+| `C = 20`, `m = 2` | `24.1 s` | `12.9 s` | `9.80001510278448618e-1` |
+| `C = 26`, `m = 2` | `196.0 s` | `104.0 s` | `9.79979792832502916e-1` |
+| `C = 28`, `m = 2` (recorded row) | — | `188.7 s` cell | `9.79988805406555197e-1` |
+
+The strongest check is not the spot comparison: the record regenerated after the
+rewrite has **exactly** the same `return_probability_sirk` and the same Arnoldi
+step counts as the record regenerated before it, in all eight cells that both
+contain — so §5.8's numbers stay quotable and only timings move.
+
+The `C = 26` split after the change (`PROBE_CUTOFF=26 PHI4_PROFILE=1`, 918 steps,
+four shift solves):
+
+| phase | before §5.9 | after §5.9 | share of the `104.0 s` solve |
+|---|---|---|---|
+| action matvec | `6.63 s` | `6.63 s` | `6.4 %` |
+| `joint_axpy` inside MGS | `170.62 s` | `79.37 s` | `76.3 %` |
+| — the `joint_inner_product` inside it | `54.88 s` | `54.60 s` | `52.5 %` |
+| per-step basis SVD | `12.74 s` | `12.73 s` | `12.2 %` |
+
+So the rewrite moved the bottleneck rather than removing it. What is left is one
+deep label comparison per entry in the inner product (`0.25 ms` per call at 2380
+labels, `≈ 40 ns`/entry) plus a real complex multiply-add — and that is already
+minimal for this representation. The next factor of 5–10 is a *representation*
+change, not an algorithmic one: inside a declared window the label set is fixed,
+so `(labels, Vec<C>)` would make every dot and `axpy` a `2–5 ns`/entry memory
+sweep, and the action is already a cached dense matrix on the same labels
+(`FiniteWindowAction::matrix`). It would also put a second arithmetic path into a
+solver the SM certificates share, so it is deliberately left as a separate
+change with its own `to_bits()` pin — this section reports `1.88×` measured, not
+a projection of what it might have been.
 
 ## 6. Limitations — read this before quoting a number
 
@@ -681,19 +750,33 @@ the seed-column tier.
   the recorded cells, which is what made `C = 26` affordable (§5.6). Bit-identity
   is pinned by `fock_sirk/tests/joint_map_ops.rs`, which keeps the previous
   implementations as the oracle and compares every amplitude on `to_bits()`.
-* Measured and *not* extrapolated: at `C = 26` the map operations still dominate
-  the solve (`87 %` axpy including a `28 %` dot, `3.4 %` matvec, `6.5 %` SVD),
-  and in the cell as recorded then it was only half of it — `177 s` of `406.4 s`
-  was the dense Padé reference, whose `n³` growth set the cost of the next
-  cutoff (`723 s` for a `C = 28` cell); the reference is now the seed column.
-  The parallel variants lose by more than at `C = 20`, and the chunked dot's
-  association error rose to `3.5e-15` (§5.7).
+* Measured and *not* extrapolated: before §5.9 the map operations dominated the
+  solve (`87 %` axpy including a `28 %` dot, `3.4 %` matvec, `6.5 %` SVD at
+  `C = 26`), and in the cell as recorded then they were only half of it — `177 s`
+  of `406.4 s` was the dense Padé reference, whose `n³` growth set the cost of
+  the next cutoff (`723 s` for a `C = 28` cell); the reference is now the seed
+  column. The parallel variants lose by more than at `C = 20`, and the chunked
+  dot's association error rose to `3.5e-15` (§5.7).
+* Measured and adopted: `joint_axpy` is now one ordered walk over the two maps
+  instead of a tree descent per entry. **20.8×** per call at 715 labels and
+  **21.4×** at 1365, which is **1.88×** end to end (`C = 26`: `196.0 s →
+  104.0 s`; `C = 20`: `24.1 s → 12.9 s`) with *bit-identical* probabilities and
+  step counts — the eight previously recorded cells are unchanged to the last
+  bit, which is how the record regenerated after the change stays comparable
+  (§5.9).
+* Measured and *not* claimed: the rewrite moved the bottleneck rather than
+  removing it — the inner product inside the same orthogonalisation pass is now
+  >`50 %` of the solve, at about one deep label comparison per entry. A further
+  factor of 5–10 would require dense window coefficients instead of nested maps;
+  that is a second arithmetic path in a solver the SM certificates also use, and
+  it has not been done (§5.9).
 * Measured and adopted: the reference tier is now the seed column of
   `exp(-i t H_window)` (Hermitian Lanczos, `1e-13` on the column), not the dense
   `n³` Padé exponential. At `C = 28` the reference falls from `366.9 s` to
   `3.47 s` for a probability that moves by `4.4e-15`, taking the cell from
-  `723 s` to `365 s` — after which the solve, not the reference, is again what a
-  wider window costs (§5.8).
+  `723 s` to `360 s` — after which the solve, not the reference, is again what a
+  wider window costs (§5.8). §5.9 then halves the solve, and the same cell is a
+  recorded row at `188.7 s`.
 * On the base cell the probability charge fell from about `0.394` (state)
   to `0.000763` (amplitude). The paired amplitude charge is `0.001786` for
   coupling and `0.01266` for momentum spread. Rigorous response signs for
