@@ -335,21 +335,82 @@ fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize
 /// A deterministic hash of the left nullspace of `Q_2` (the harmonic `H^1`
 /// representatives). `Q_1` vanishes on this window, so `ker Q_2^*` is the
 /// harmonic space.
+///
+/// The basis is read off the augmented reduced row-echelon form `[Q_2 | I]`,
+/// not from the trailing left singular vectors: inside a degenerate nullspace
+/// the singular vectors are defined only up to a rotation, so hashing them pins
+/// an arbitrary basis that does not reproduce across toolchains or platforms.
+/// The zero rows of the reduced left block carry the row combinations that
+/// annihilate the row space, and the augmented RREF is unique, so the basis (and
+/// hence the hash) is a property of the matrix alone. Tracking the transform
+/// keeps the work on the small `rows x rows` factor instead of eliminating over
+/// the adjoint.
 fn left_nullspace(matrix: &DMatrix<C>) -> (usize, String) {
-    let svd = SVD::new(matrix.clone(), true, false);
-    let rank = svd
-        .singular_values
-        .iter()
-        .filter(|value| **value > TOLERANCE)
-        .count();
-    let rows = matrix.nrows();
-    let dimension = rows.saturating_sub(rank);
-    let u = svd.u.expect("left singular vectors requested");
+    let mut reduced = matrix.clone();
+    let rows = reduced.nrows();
+    let columns = reduced.ncols();
+    let mut transform = DMatrix::<C>::identity(rows, rows);
+    let mut pivot_row = 0;
+    for column in 0..columns {
+        if pivot_row >= rows {
+            break;
+        }
+        let mut best = pivot_row;
+        let mut best_norm = 0.0_f64;
+        for row in pivot_row..rows {
+            let norm = reduced[(row, column)].norm();
+            if norm > best_norm {
+                best_norm = norm;
+                best = row;
+            }
+        }
+        if best_norm <= TOLERANCE {
+            continue;
+        }
+        if best != pivot_row {
+            reduced.swap_rows(best, pivot_row);
+            transform.swap_rows(best, pivot_row);
+        }
+        let pivot = reduced[(pivot_row, column)];
+        for c in column..columns {
+            reduced[(pivot_row, c)] /= pivot;
+        }
+        for c in 0..rows {
+            transform[(pivot_row, c)] /= pivot;
+        }
+        for row in 0..rows {
+            if row == pivot_row {
+                continue;
+            }
+            let factor = reduced[(row, column)];
+            if factor.norm() <= TOLERANCE {
+                reduced[(row, column)] = C::new(0.0, 0.0);
+                continue;
+            }
+            for c in column..columns {
+                let pivot_value = reduced[(pivot_row, c)];
+                reduced[(row, c)] -= factor * pivot_value;
+            }
+            for c in 0..rows {
+                let pivot_value = transform[(pivot_row, c)];
+                transform[(row, c)] -= factor * pivot_value;
+            }
+            reduced[(row, column)] = C::new(0.0, 0.0);
+        }
+        pivot_row += 1;
+    }
+
+    let dimension = rows - pivot_row;
     let mut vectors = Vec::with_capacity(dimension);
-    for column in rank..rows {
+    for row in pivot_row..rows {
+        let scale = (0..rows)
+            .map(|c| transform[(row, c)].norm_sqr())
+            .sum::<f64>()
+            .sqrt();
+        let scale = if scale > 0.0 { scale } else { 1.0 };
         let vector: Vec<[f64; 2]> = (0..rows)
-            .map(|row| {
-                let value = u[(row, column)];
+            .map(|c| {
+                let value = transform[(row, c)] / scale;
                 [round12(value.re), round12(value.im)]
             })
             .collect();

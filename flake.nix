@@ -252,6 +252,24 @@
         '';
       };
 
+      # Symbolic-CAS shell: Cadabra2 and nothing else. The default shell drags
+      # in the CUDA 12.6 closure (~10 GiB of store) for tasks that only run a
+      # `.cdb` module; `nix develop .#symbolic -c cadabra2-cli file.cdb` gets
+      # the same pinned Cadabra2 the default shell provides (S30), plus the
+      # GCC-15 libstdc++ that cadabra2 2.5.x needs at runtime (GLIBCXX_3.4.32).
+      devShells.x86_64-linux.symbolic = pkgsUnstable.mkShell {
+        name = "unfer-symbolic";
+        packages = with pkgsUnstable; [
+          cadabra2
+          python3
+          gcc.cc.lib
+        ];
+        shellHook = ''
+          export LD_LIBRARY_PATH="${pkgsUnstable.gcc.cc.lib}/lib:$LD_LIBRARY_PATH"
+          echo "[unfer-symbolic] $(command -v cadabra2-cli)"
+        '';
+      };
+
       devShells.x86_64-linux.default = pkgs.mkShell {
         name = "unfer-cuda-12.6";
 

@@ -1,0 +1,129 @@
+# SM momentum kernel: the symbolic half of the full-dictionary cross-check.
+#
+# Symbolic checks do not discharge the numerical Plancherel test, the operator
+# domain, or BRST/ESA. They certify the conventions and weights the numerical
+# kernel *assumes*; the 1,241-row measurement lives in
+# fock_sirk/tests/sm_dictionary_validation.rs and the fixture
+# docs/fixtures/sm_dictionary_kernel.json.
+#
+# =====================================================================
+# MODULE DOCUMENTATION (2026-11-25)
+#
+# Purpose: pin the Fourier/operator conventions of the E1 full-dictionary
+#   kernel (nested_fock_algebra/src/sm_dictionary.rs) and the dictionary's
+#   constant structure, symbolically. The kernel evaluates each of the 1,241
+#   exported component expressions in two representations:
+#
+#     coordinate:  P(q, -i d/dq)      on the ket packet, then <bra|.>
+#     momentum:    P((i/2pi) d/dk, 2 pi k)
+#
+#   and requires the two to agree (Plancherel). This module certifies:
+#     1-2  the two Fourier maps carry the signs used by the kernel: the
+#          canonical p = -i d/dq has the REAL symbol 2 pi k, and the
+#          coordinate q has the symbol (i/2pi) d/dk (i.e. -x on a plane wave),
+#     3    the maps are inverse to each other in the commutator sense:
+#          [(i/2pi) d/dk, 2 pi k] = i,
+#     4    the second-derivative product rule. This row exists because the
+#          kernel's first implementation dropped the k x^{k-1} term, which
+#          only shows up on the quadratic rows; `wall` is the row that caught
+#          it (relative gap 1.4e-6 before the fix, 1.3e-13 after),
+#     5    the retained Higgs constant: the dictionary's `wall` is
+#          lambda/4 (sum_a phi_a^2 - vev^2)^2 INCLUDING its fixed constant,
+#          so its value at the minimum is exactly zero,
+#     6    the constant term of `wall` is lambda vev^4/4 (never stripped),
+#     7    the equivalent form lambda vev^4/4 = mu^4/(4 lambda) at
+#          mu^2 = lambda vev^2, which is the comparison-model identity and
+#          not a replacement for the retained constant,
+#     8    the magnetic weight: for antisymmetric F the dictionary's
+#          (1/2) sum_{ab} F_ab F_ab equals sum_{a<b} F_ab^2, which is what
+#          the `magG`/`magW`/`magB` rows encode with weight 1/2.
+# Role in the program: the symbolic companion of the numerical dictionary
+#   kernel. It does NOT evaluate the 1,241 rows and does not certify the
+#   packet integrals.
+# Certified content: rows 1-8 (all `(0 = ok)`).
+# Improvement notes: the module deliberately contains no `diff`/`\partial`
+#   calls -- `simplify` cannot reduce an unevaluated derivative node
+#   (`Can't calculate derivative wrt k**3`), which aborts the run. Every
+#   derivative identity is therefore written out on both sides (row 4). All
+#   symbols here commute, so `simplify` is safe; no non-commuting operator is
+#   simplified anywhere in this module.
+# Naming notes (cf. docs/CADABRA2_GOTCHAS.md): names carry no digits beyond
+#   the m/o/p index spelling (fmo = F_{-1,0}), handles are inlined with
+#   @(...), no `:=` line carries a trailing comment, and there are no size
+#   captures in this module (the pinned sizes live in the Rust fixture).
+# =====================================================================
+
+# ===========================================================================
+# declarations
+# ===========================================================================
+{k, x, pp, lam, vev, mu}::Symbol.
+{qm, qo, qp}::Symbol.
+{fmo, fmp, fop, fom, fpo, fpm}::Symbol.
+i::ImaginaryI.
+
+# ===========================================================================
+# 1-3: the two Fourier maps and their commutator
+# ===========================================================================
+# Row 1. p = -i d/dq acts on e^{2 pi i k q} as 2 pi k (real, NOT imaginary).
+sm_p := (-i)*(2*pp*i*k) - 2*pp*k.
+simplify(sm_p)
+print("CHECK sm1 SM-MOM p symbol is the real 2 pi k (0 = ok):", sm_p)
+
+# Row 2. q = (i/2 pi) d/dk: on e^{2 pi i k q} the derivative is 2 pi i q, so
+# the map returns -q. The kernel uses this map for every q_n insertion.
+sm_q := (i/(2*pp))*(2*pp*i*x) + x.
+simplify(sm_q)
+print("CHECK sm2 SM-MOM q symbol is (i/2 pi) d/dk (0 = ok):", sm_q)
+
+# Row 3. Applied in sequence the two maps compose to i times the identity,
+# i.e. [q, p] = i in the kernel's convention (both routes build on it).
+sm_c := (i/(2*pp))*(2*pp) - i.
+simplify(sm_c)
+print("CHECK sm3 SM-MOM commutator of the two maps is i (0 = ok):", sm_c)
+
+# ===========================================================================
+# 4: second-derivative product rule (the `wall` regression)
+# ===========================================================================
+# d^2/dx^2 (x^2 f) = 2 f + 4 x f' + x^2 f''. With f = x^3 the left side is
+# d^2/dx^2 (x^5) = 20 x^3 and the right side is 2 x^3 + 12 x^3 + 6 x^3.
+# The "2 f" term is the one a naive (d/dx)^2 = (-M x + b)^2 implementation
+# loses; it is nonzero exactly when the monomial already carries that axis.
+sm_rule := 20*x**3 - (2*x**3 + 4*x*(3*x**2) + x**2*(6*x)).
+simplify(sm_rule)
+print("CHECK sm4 SM-MOM second-derivative product rule, wall row (0 = ok):", sm_rule)
+
+# ===========================================================================
+# 5-7: the retained Higgs constant (`wall`)
+# ===========================================================================
+# Row 5. wall = lambda/4 (s - vev^2)^2 with s = sum_a phi_a^2. At the
+# minimum s = vev^2 the value is zero -- the constant is retained, not
+# dropped, and there is no residual shift.
+s := qm**2 + qo**2 + qp**2.
+sm_wall := (lam/4)*(@(s) - vev**2)**2.
+substitute(sm_wall, $@(s) -> vev**2$)
+simplify(sm_wall)
+print("CHECK sm5 SM-MOM wall vanishes at s = vev^2 (0 = ok):", sm_wall)
+
+# Row 6. The constant term of wall at s = 0 is lambda vev^4/4.
+sm_const := (lam/4)*(vev**2)**2 - (lam/4)*vev**4.
+simplify(sm_const)
+print("CHECK sm6 SM-MOM wall constant is lambda vev^4/4 (0 = ok):", sm_const)
+
+# Row 7. The comparison-model form at mu^2 = lambda vev^2. This is an
+# identity about the constant, not permission to strip it.
+sm_mu := (lam/4)*vev**4 - mu**4/(4*lam).
+substitute(sm_mu, $mu**4 -> (lam*vev**2)**2$)
+simplify(sm_mu)
+print("CHECK sm7 SM-MOM lambda vev^4/4 = mu^4/(4 lambda) (0 = ok):", sm_mu)
+
+# ===========================================================================
+# 8: the magnetic weight with antisymmetry
+# ===========================================================================
+# For F_ab = -F_ba the dictionary writes (1/2) sum_{ab} F_ab F_ab, which is
+# sum_{a<b} F_ab^2. The six ordered components are written out, the
+# antisymmetry is substituted, and the two sides are compared.
+sm_mag := fmo**2 + fom**2 + fmp**2 + fpm**2 + fop**2 + fpo**2
+        - 2*(fmo**2 + fmp**2 + fop**2).
+substitute(sm_mag, $fom -> -fmo, fpm -> -fmp, fpo -> -fop$)
+simplify(sm_mag)
+print("CHECK sm8 SM-MOM magnetic weight 1/2 sum F^2 = sum_{a<b} F^2 (0 = ok):", sm_mag)

@@ -117,7 +117,7 @@ cargo test --locked --offline --release -p fock_sirk \
     --test sm_named_dictionary --test sm_car_bridge --test sm_defect \
     --test sm_defect_bridge --test sm_constraints --test sm_joint_constraints \
     --test sm_constraints_bridge --test sm_brst_jet_window \
-    --test sm_momentum_validation \
+    --test sm_momentum_validation --test sm_dictionary_validation \
     -- --test-threads=1
 
 step "N13 CAR proof: pinned lean4export payload replayed by nanoda"

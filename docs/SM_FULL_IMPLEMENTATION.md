@@ -743,9 +743,9 @@ identity under `matrix_skew_proof` (`H_hermitian`, `A_skew`). Its
 | `docs/fixtures/sm_defect_analytic_proof.ndjson.gz` | `ccddf3b7c83edfed0d44aa6d9b9ae81080bff7fc04b04ded4829f65028f96445` | gzip nanoda payload; raw sha256 `83e3571e…14ed31`; 38,336 declarations |
 | `docs/fixtures/sm_defect_skew_proof.ndjson.gz` | `eeb92d5b0fc588851ee4600b692c092a3d8e0a982b509b1947c38bc32c7dd9aa` | gzip nanoda payload; raw sha256 `498ae454…db528cc`; 7,540 declarations |
 | `docs/fixtures/sm_defect_bridge.json` | `bde3f770ef0ed8ffae28c680e08f09872883059a61e60fdba7bc20f9910a64bd` | bridge file with the kernel-verified `matrix_skew_proof` and its parsed-source provenance check; record digest `77dec777…1816ca`. Carries both `evolution_bound=1.0109852165754634` (sampled) and `frobenius_product_bound=1.060938397590336` (the value this table's older digest recorded as `evolution_bound`) |
-| `fock_sirk/src/sm_brst_fock.rs` | `9651f9a92451d1399b7945849bb9736554e03e9a6e3c4ad1ce109f09d4500dee` | matter and jet-inclusive finite BRST windows; block-graded harmonic quotients |
-| `docs/fixtures/sm_constraints_bridge.json` | `5b5030dbf007f6083f057d3ec58afd7b4725f2ef50ff5957ffb8278f7b278c68` | N10 finite constraint + finite CE + finite Fock BRST bridge, including the jet record; record digest `977bfca9…2e231cb` |
-| `docs/fixtures/sm_brst_jet_window.json` | `b9da23547f6046b04d10ebc37c64c3f764b10f8463ec261fedab04a090425052` | measured jet-inclusive window: 36,207 states, cohomology `[1,19,35,689]` |
+| `fock_sirk/src/sm_brst_fock.rs` | `db65e7e21e9d56946315b045186cb3f0f5cd78e6854d16131f79bb758e0da8e0` | matter and jet-inclusive finite BRST windows; block-graded harmonic quotients (the `H^1` fingerprint is the canonical augmented-RREF left nullspace, not raw singular vectors) |
+| `docs/fixtures/sm_constraints_bridge.json` | `5dc9a7a15dc8c260768f4df4e7ada08e383120dc61da0b95d10e7c2ceb3fe309` | N10 finite constraint + finite CE + finite Fock BRST bridge, including the jet record; record digest `adfd7064…f834a16` |
+| `docs/fixtures/sm_brst_jet_window.json` | `7288181b9cd70c77174428f61a5621c3bbb78b6ae12eaaaed5e4e5c9ca65fab5` | measured jet-inclusive window: 36,207 states, cohomology `[1,19,35,689]` |
 | `fock_sirk/tests/sm_brst_jet_window.rs` | `92c923d12f70ed07f81e25170c4f87e8785ab8bcdcfedc8958f0ff9233b9e704` | pins the jet fixture and its verified payload |
 | `../timepiece/BookProof/Sm/ChapterSmBrstQuotient.lean` | `bff21dc424b11e32b6425759d0cfa866060820aa717d3ec785b6491abb169165` | finite-window dimensions plus the jet block-matrix `Q² = 0` identity |
 | `docs/fixtures/sm_brst_finite_window_proof.ndjson.gz` | `e25d796a16b99689a23bb756324ec261ba08f3ccbf8a6026d7de814b810d7ffa` | gzip nanoda payload; raw sha256 `bedf7935…a881664a`; 20,241 declarations |
@@ -906,6 +906,56 @@ coordinates. The spatial derivative here acts at fixed collective coordinates;
 NS/QG momentum-convolution elimination is not applied to redefine this operator.
 A total-jet derivative interpretation would require its separate representation
 map and extra terms; it is not silently substituted for E1.
+
+### Full-dictionary kernel and its cross-check
+
+`nested_fock_algebra/src/sm_dictionary.rs` parses every `SM_LATEX` row of the
+export and evaluates all **1,241** component expressions as kernels on smeared
+packet states, in two separate representations of the same E1 operator:
+
+```text
+coordinate:  <bra| P(q, -i d/dq) |ket>      with q-hat multiplication
+momentum:    <bra| P((i/2 pi) d/dk, 2 pi k) |ket>   with p-hat = 2 pi k
+```
+
+Both are exact closed-form Gaussian moments (degree <= 2), so their agreement
+is a roundoff-level Plancherel check of the parser, the coefficient algebra
+(full complex 3x3 Yukawa matrices), the `q`/`p` routing and the Fourier
+constants. No term in the dictionary mixes `q` and `p`, so normal ordering is
+never ambiguous. The measured fixture is
+`docs/fixtures/sm_dictionary_kernel.json` (regenerate with
+`cargo run -p fock_sirk --example sm_dictionary_kernel`) and the acceptance
+test is `fock_sirk/tests/sm_dictionary_validation.rs`: 1,241/1,241 rows,
+worst relative gap 1.3e-13 on `wall`, and a mutated `2 pi` changes exactly the
+232 rows that carry a jet momentum.
+
+### Per-mode 3D kernel and its relation to the collective one
+
+`three_d_kernel` / `three_d_coordinate_kernel` evaluate every row as a **3D
+field-mode** kernel instead (the routing of `sm_momentum.rs`): `q_n` inserts a
+3D packet and product terms transfer momentum `k−l`, while `p_m` acts as
+`−i∂_{axis(m)}` on the ket. The axis is the named layout's own — `m mod 3` for
+`x`, `G`/`dG`, `W`/`dW`, `B`/`dB` (every block base is divisible by three), and
+the declared profile axis `m mod 3` for the four scalar Higgs momenta.
+
+That kernel is cross-checked two ways. It is Plancherel-consistent with its own
+coordinate route on all 1,241 rows (worst relative gap 8.9e-15), and its
+**derivative terms** — the 40 kinetic rows plus every `p` term of the 232
+p-bearing rows — are related to the collective kernel by an exact identity:
+because each packet's per-axis parameters depend on the axis only through
+`a mod 3`, `collective = three_d · O_0^54 · O_1^53 · O_2^53` with `O_j` the
+term's one-axis overlap on residue `j` (the derivative factor cancels). `q`-bearing
+terms are deliberately not compared this way: `q` is a coordinate
+multiplication in the collective kernel and a field insertion with momentum
+transfer in the 3D kernel, so they are different operators.
+
+The symbolic companion `docs/sm_momentum_nested.cdb` (8 CHECK rows, in
+`scripts/check-sm-symbolic`) pins the conventions and the rigged constants
+rather than the integrals: the real `2 pi k` symbol, the `(i/2 pi) d/dk` map and
+their commutator, the second-derivative product rule, `V(s=vev^2)=0` with the
+retained `lambda vev^4/4`, and the antisymmetric magnetic weight. Because this
+kernel is the collective-coordinate operator, it does not replace the per-mode
+convolution checks in `fock_sirk/tests/sm_momentum_validation.rs`.
 
 With `D=d+i g T A`, commutation gives the manuscript's
 `F=dA-dA-g f A A`. The strong constants are derived from the actual Gell-Mann

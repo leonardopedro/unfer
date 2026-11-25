@@ -136,7 +136,7 @@
             "dimension": 1
           },
           "degree_1": {
-            "basis_sha256": "8e170239ab65b509c796695eff44207a6e5e960ff567c59a0b9a58d4fcdbc453",
+            "basis_sha256": "4b7ebfd8a7d4ab490b4255c38d5df1970818463d97da34a916e8b03870b21cde",
             "dimension": 19
           },
           "degree_2": {
@@ -441,7 +441,7 @@
           "field_level": true,
           "finite_quotient": true,
           "kind": "jet- and matter-block-graded finite harmonic representatives (ker Q_n intersect ker Q_{n+1}*)",
-          "representative_basis_sha256": "995e0ffae3a3cebad0a1aa23175110c3507be19ee5a8904294438eac926b80b2"
+          "representative_basis_sha256": "314192e63380f8a2696033c02f81d4d65a2fa2933c8f1f569aee16b0f36dcafe"
         },
         "state_basis_sha256": "afd802d6c3ff0549b299dd95d0d0ad0fe8601f45b564304f3003bf8133014538",
         "state_count": 36207,
@@ -529,7 +529,7 @@
             "dimension": 1
           },
           "degree_1": {
-            "basis_sha256": "f5ad1fa173dadae35d086490a7a9bdd482c53de9df847eaaa70109b113768367",
+            "basis_sha256": "9f2fcb71a2f225ca249ea6681cac2a9b2303aa7b1f525e4a8d721b569141eb59",
             "dimension": 10
           },
           "degree_2": {
@@ -712,7 +712,7 @@
           "field_level": true,
           "finite_quotient": true,
           "kind": "finite harmonic representatives (ker Q_n intersect ker Q_{n+1}*)",
-          "representative_basis_sha256": "b87d7e7d282e4d4fc84de5f3c138753c413caf3f1e703ec79bacf5a3610c3a06"
+          "representative_basis_sha256": "ae6dd35c916d230d1fb69fbd0e2dace03ad20797825a1d98960f8a549c1b192a"
         },
         "state_basis_sha256": "5d8a65c66d826832b48da3aa3c23c44d9781c08d1251ecc15fe0a12c3c046e71",
         "state_count": 11067,
@@ -775,12 +775,12 @@
     "hamiltonian_gauss_commutator": {
       "images": 24,
       "tolerance": 2e-9,
-      "worst_residual": 1.4669222755248563e-13
+      "worst_residual": 1.4669222755248606e-13
     },
     "quotient_map": null,
     "quotient_note": "The finite adjoint Chevalley-Eilenberg quotient and the finite field-level occupation windows, including their harmonic representatives, are bound separately under finite_ce_quotient, finite_fock_brst_window and the jet-inclusive N10 record; the top-level quotient_map stays null because no continuum physical quotient is constructed, and the remaining entries are finite-image residual checks only."
   },
-  "artifact_sha256": "977bfca9cef5e13d416ea5816e38a28888503476e232abbfe44382abe2e231cb",
+  "artifact_sha256": "adfd7064cb8f4fc459b3912d8c0ffe1c2b94e4dd7ced5f1ce5f82a522f834a16",
   "claim_id": "n10_finite_constraint_dictionary",
   "endpoint": "N10-finite-dictionary",
   "hypotheses": [

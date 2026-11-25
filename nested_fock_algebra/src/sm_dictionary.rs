@@ -1,4 +1,4 @@
-//! Full Standard-Model momentum kernel over the **1,241-expression dictionary**.
+//! Full Standard-Model kernel over the **1,241-expression dictionary**.
 //!
 //! `docs/sm_full_nested.cdb` exports the complete independent-jet component
 //! dictionary as `docs/fixtures/sm_full_cadabra.latex`:
@@ -13,44 +13,93 @@
 //! | Higgs potential | 1 | `wall` |
 //! | matter matrix | 1152 | `matterRxC` |
 //!
-//! This module lifts **every** exported expression to a momentum kernel and
-//! cross-checks it against an independent coordinate-space packet integral.
-//! The two routes are:
+//! Every row is lifted to a kernel on smeared packet states and evaluated by
+//! **two independent routes** whose agreement is Plancherel's theorem term by
+//! term:
 //!
 //! ```text
-//! momentum:    Σ_terms c · (2π)^{|p|} ∫∫ φ̂_bra(k) φ̂_ket(l) l^p
-//!                                            ∏_n (Φ̂_n^{⋆a_n})(k − l) d³k d³l
-//! coordinate:  Σ_terms c · ∫ φ_bra*(x) φ_ket(x) (−i∂)^p ∏_n Φ_n(x)^{a_n} d³x
+//! coordinate:  ⟨φ_b| P(q̂, p̂) |φ_k⟩ = ∫ φ_b*(q) P(q, −i∂_q) φ_k(q) d^163q
+//! momentum:    ∫ φ̂_b*(k) P((i/2π)∂_k, 2πk) φ̂_k(k) d^163k
 //! ```
 //!
-//! with the audit's conventions `f̂(k)=∫e^{-2πik·x}f(x)d³x`, `∂ᵢf → 2πikᵢf̂`,
-//! `(a⋆b)(K)=∫a(q)b(K−q)d³q`. The canonical momentum `p = −i∂` therefore has
-//! the **real** Fourier symbol `2πk` (matching [`sm_momentum::dirac_symbol`]),
-//! while `q_n` insertions carry the transferred momentum `k − l` between the
-//! CAR legs, exactly as in `docs/SM_HAMILTONIAN_AUDIT.md` item 3.
+//! ## What `q` and `p` mean here
 //!
-//! The equality of the two routes is Plancherel's theorem term by term. It is a
-//! genuine check of the routing (insertion transfer, repeated-`q` convolution,
-//! derivative symbol and the packet normalisations), not a re-derivation of the
-//! classical dictionary: the polynomial itself is taken from the Cadabra export.
+//! This is the **E1 collective-coordinate operator**, not a 3D field kernel.
+//! `sm_full.rs` defines 163 independent bosonic collective coordinates
+//! (`x; G,dG; W,dW; B,dB; phi,dphi`) and treats `p_m` as the conjugate momentum
+//! of coordinate `m`, so `p̂_m = −i∂/∂q_m` and `q̂_n` is multiplication. The
+//! dictionary is at most quadratic in `q` and linear in `p`, and **no term mixes
+//! `q` and `p`** (verified over the fixture), so normal ordering is never
+//! ambiguous. `p_0..p_150` are exactly the momenta of the active coordinates;
+//! the twelve `dphi` jets have none, matching `sm_full`'s `1/2 Σ_active p²`.
+//!
+//! This deliberately does *not* reuse the 3D packet/convolution routing of
+//! [`crate::sm_momentum`]. That module kernels the hand-written SM matter and
+//! gauge entries, where `p_j` is literally the spatial Dirac momentum; here the
+//! dictionary's `p_m` is the canonical momentum of a named collective
+//! coordinate, which is a spatial derivative only for `m < 3`. `SM_HAMILTONIAN_AUDIT.md`
+//! states the same boundary: "spatial Dirac derivatives act at fixed independent
+//! collective coordinates; NS/QG jet elimination is not used to change this SM
+//! realization."
+//!
+//! ## Per-mode 3D kernel
+//!
+//! [`three_d_kernel`] evaluates the same expressions as a **3D field-mode**
+//! kernel (the routing of [`crate::sm_momentum`]): every `q_n` inserts a 3D
+//! packet and products transfer momentum `k − l`, while `p_m` acts as the
+//! spatial derivative `−i∂_{axis(m)}` on the ket. The axis is the named
+//! layout's own: for `x`, `G`, `W`, `B` and their jets the block index is
+//! `m mod 3` (true for every block base `0, 27, 99, 108, 135, 138`), and the
+//! four Higgs momenta `p_147..150` — scalars, which have no spatial axis — get
+//! the declared profile axis `m mod 3`. So `axis_of(m) = m mod 3` throughout.
+//!
+//! The two kernels are the **same operator only on the derivative terms**. A
+//! `q`-free term is `p_m` acting on the ket in both, so with `O_j` the term's
+//! one-axis overlap on residue `j` (no derivative factor) the two values are
+//! related exactly, because every packet is separable and its per-axis
+//! parameters depend on the axis only through `a mod 3` and the derivative
+//! factor is the same on `m` and `m mod 3`:
+//!
+//! ```text
+//! collective = three_d · O_0^54 · O_1^53 · O_2^53     (axes 3..162 contribute
+//!                                                     54/53/53 spectators)
+//! ```
+//!
+//! That is checked term by term over the 232 p-bearing rows, so the 3D axis map
+//! and derivative routing are validated against the collective kernel, not
+//! against a re-typed formula. A `q`-bearing term is **not** comparable: `q` is
+//! a coordinate multiplication in the collective kernel and a field insertion
+//! with momentum transfer in the 3D kernel (a different operator). Those rows
+//! are validated by the 3D kernel's own Plancherel pair instead.
+//!
+//! ## Packets
+//!
+//! Momentum packets are L²-normalised Gaussians in `D = 163` dimensions,
+//!
+//! ```text
+//! φ̂_n(k) = (π w_n²)^{−D/4} exp(−|k − c_n|²/(2 w_n²)),
+//! ```
+//!
+//! and their exact inverse transforms are used on the coordinate side,
+//!
+//! ```text
+//! φ_n(q) = (4π w_n²)^{D/4} exp(−2π² w_n² |q|²) e^{2πi c_n·q}.
+//! ```
+//!
+//! Both routes are evaluated in closed form: a Gaussian times a polynomial of
+//! degree ≤ 2 is integrated exactly from its moments, so there is no quadrature
+//! error and the tolerance below measures floating-point roundoff only.
 //!
 //! ## Scope
 //!
-//! The dictionary is a polynomial of degree ≤ 4 in the 163 collective
-//! coordinates, linear in the 151 independent jet momenta, with symbolic
-//! couplings/Yukawa entries. Nothing here claims the full ESA/BRST program; the
-//! 1,241 routes are packet entries of the declared dictionary at fixed
-//! collective coordinates.
-//!
-//! Packet profiles (all smeared, no lattice):
-//!
-//! ```text
-//! φ̂(k)  = exp(−|k−c|²/(2w²))
-//! φ(x)  = (√(2π)w)³ exp(−2π²w²|x|²) e^{2πic·x}      (exact inverse transform)
-//! ```
+//! This certifies that all 1,241 exported expressions parse, that their
+//! coefficients and monomial structure evaluate identically in the position and
+//! momentum representations, and that the `p`/`q` routing and Fourier constants
+//! are consistent. It does not re-derive the classical dictionary (that is the
+//! Cadabra module's job) and it does not certify ESA or BRST.
 
 use crate::sm_full::SmParameters;
-use crate::sm_momentum::{Conventions, MomentumPacket, TWO_PI};
+use crate::sm_momentum::{Conventions, TWO_PI};
 use num_complex::Complex64 as C;
 use std::sync::OnceLock;
 
@@ -65,7 +114,7 @@ pub const Q_COORDINATES: usize = 163;
 pub const P_MOMENTA: usize = 151;
 
 /// Dictionary family, derived from the Cadabra label.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Family {
     Kinetic,
     MagneticStrong,
@@ -110,6 +159,10 @@ pub enum Factor {
     Vev,
     InvSqrt2,
     InvSqrt3,
+    /// Reciprocal of [`Factor::InvSqrt2`]; produced by `{rttwo}^{-1}`.
+    Sqrt2,
+    /// Reciprocal of [`Factor::InvSqrt3`]; produced by `{rtthree}^{-1}`.
+    Sqrt3,
     Yukawa {
         conj: bool,
         kind: YukawaKind,
@@ -145,34 +198,60 @@ pub struct DictionaryEntry {
     pub terms: Vec<Term>,
 }
 
+/// A centred, isotropic Gaussian packet in `D` collective dimensions.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Packet {
+    pub center: Vec<f64>,
+    pub width: f64,
+}
+
 /// Packet assignment for the dictionary cross-check: one packet per collective
-/// coordinate plus the external matter bra/ket packets.
+/// coordinate plus the external bra/ket packets.
 #[derive(Clone, Debug)]
 pub struct DictionaryPackets {
-    pub bra: MomentumPacket,
-    pub ket: MomentumPacket,
-    pub fields: Vec<MomentumPacket>,
+    pub bra: Packet,
+    pub ket: Packet,
+    pub fields: Vec<Packet>,
 }
 
 impl DictionaryPackets {
-    /// Deterministic, non-degenerate packet assignment used by the fixture and
-    /// the tests. Every coordinate gets a distinct center/width so mixed
-    /// monomials cannot collapse to a symmetric special case.
+    /// Deterministic packet assignment used by the fixture and the tests.
+    ///
+    /// Centres are kept within a few tenths of a unit on every axis so that the
+    /// 163-dimensional overlaps stay O(1) instead of underflowing, while still
+    /// giving every coordinate a distinct centre and one of five widths.
     pub fn declared() -> Self {
-        let fields = (0..Q_COORDINATES)
-            .map(|n| {
-                let center = [
-                    -0.45 + 0.037 * (n % 17) as f64,
-                    -0.30 + 0.023 * ((n * 7) % 19) as f64,
-                    -0.20 + 0.019 * ((n * 11) % 13) as f64,
-                ];
-                let width = 0.55 + 0.02 * (n % 5) as f64;
-                MomentumPacket::new(center, width)
+        let d = Q_COORDINATES;
+        // Per-axis parameters depend on the axis only through `a mod 3`. That
+        // is what makes the collective kernel an exact product of its three
+        // spatial residues and lets the 3D mode kernel be cross-checked against
+        // it (`collective = three_d * O_0^54 O_1^53 O_2^53`).
+        let fields = (0..d)
+            .map(|n| Packet {
+                center: (0..d)
+                    .map(|a| -0.045 + 0.004 * (((n * 7 + (a % 3) * 11 + 3) % 23) as f64))
+                    .collect(),
+                width: 0.55 + 0.02 * (n % 5) as f64,
             })
             .collect();
+        // The external packets are offset in opposite directions with a small
+        // per-axis jitter. Their width-weighted sum `M_b c_b + M_k c_k` is then
+        // strictly negative on every axis, so no kinetic row can have a zero
+        // momentum expectation by accident (a coincidence that would hide a
+        // wrong Fourier symbol on that row).
         Self {
-            bra: MomentumPacket::new([0.37, -0.21, 0.13], 0.9),
-            ket: MomentumPacket::new([-0.19, 0.28, -0.31], 1.1),
+            bra: Packet {
+                center: (0..d)
+                    .map(|a| -0.0281 + 0.0007 * ((a % 3) as f64))
+                    .collect(),
+                width: 0.9,
+            },
+            ket: Packet {
+                center: (0..d)
+                    .map(|a| 0.0137 - 0.0004 * ((a % 3) as f64))
+                    .collect(),
+                width: 1.1,
+            },
             fields,
         }
     }
@@ -201,6 +280,37 @@ pub fn parse_dictionary(fixture: &str) -> Result<Vec<DictionaryEntry>, String> {
     Ok(entries)
 }
 
+/// Deterministic, **fully populated** coupling/Yukawa set used by the fixture
+/// and the acceptance tests. Every one of the nine entries of each matrix is
+/// nonzero so that no dictionary row is exercised with a vanishing coefficient
+/// by accident.
+pub fn fixture_parameters() -> SmParameters {
+    let mut yu = [[C::new(0.0, 0.0); 3]; 3];
+    let mut yd = [[C::new(0.0, 0.0); 3]; 3];
+    let mut ynu = [[C::new(0.0, 0.0); 3]; 3];
+    let mut ye = [[C::new(0.0, 0.0); 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            let (i, j) = (i as f64, j as f64);
+            yu[i as usize][j as usize] = C::new(0.31 + 0.07 * i + 0.03 * j, 0.05 + 0.01 * (i + j));
+            yd[i as usize][j as usize] = C::new(0.22 + 0.05 * i - 0.02 * j, -0.03 + 0.01 * i * j);
+            ynu[i as usize][j as usize] = C::new(0.15 + 0.04 * j, 0.02 * i);
+            ye[i as usize][j as usize] = C::new(0.18 + 0.03 * i + 0.01 * j, -0.02);
+        }
+    }
+    SmParameters {
+        gs: 1.1,
+        gw: 0.65,
+        gy: 0.36,
+        lambda: 0.13,
+        vev: 246.0,
+        yu,
+        yd,
+        ynu,
+        ye,
+    }
+}
+
 /// The parsed full dictionary, memoized. Panics only if the checked-in fixture
 /// stops matching the parser (the crate tests fail first).
 pub fn dictionary() -> &'static [DictionaryEntry] {
@@ -208,55 +318,76 @@ pub fn dictionary() -> &'static [DictionaryEntry] {
     DICTIONARY.get_or_init(|| parse_dictionary(DICTIONARY_FIXTURE).expect("SM dictionary fixture"))
 }
 
-/// The momentum-space kernel of one dictionary entry on the declared packets.
+/// The momentum-representation kernel of one dictionary entry.
+///
+/// Only [`Conventions::two_pi`] is read: it is the Fourier symbol of `p`.
+/// `transfer_sign`/`nonabelian_sign` belong to the 3D field kernel in
+/// [`crate::sm_momentum`] and have no meaning on collective coordinates.
 pub fn momentum_kernel(
     entry: &DictionaryEntry,
     packets: &DictionaryPackets,
     params: &SmParameters,
     conv: &Conventions,
 ) -> C {
-    let mut total = C::new(0.0, 0.0);
-    for term in &entry.terms {
-        total += coefficient(term, params) * momentum_term(term, packets, conv);
-    }
-    total
+    entry
+        .terms
+        .iter()
+        .map(|term| coefficient(term, params) * momentum_term(term, packets, conv))
+        .sum()
 }
 
-/// The coordinate-space packet integral of the same entry. Its agreement with
+/// The coordinate-representation kernel of the same entry. Its agreement with
 /// [`momentum_kernel`] is the Plancherel cross-check.
 pub fn coordinate_kernel(
     entry: &DictionaryEntry,
     packets: &DictionaryPackets,
     params: &SmParameters,
 ) -> C {
-    let mut total = C::new(0.0, 0.0);
-    for term in &entry.terms {
-        total += coefficient(term, params) * coordinate_term(term, packets);
-    }
-    total
+    entry
+        .terms
+        .iter()
+        .map(|term| coefficient(term, params) * coordinate_term(term, packets))
+        .sum()
 }
 
-/// Maximum `|momentum − coordinate|` over the full dictionary, with the label of
-/// the worst row. Used by the fixture emitter and the acceptance test.
-pub fn worst_gap(
-    packets: &DictionaryPackets,
-    params: &SmParameters,
-) -> (f64, String, C, C) {
+/// The largest relative deviation `|momentum − coordinate| / (1 + |coordinate|)`
+/// over the full dictionary, with the label of the worst row.
+pub fn worst_gap(packets: &DictionaryPackets, params: &SmParameters) -> GapReport {
     let conv = Conventions::canonical();
-    let mut worst = (0.0f64, String::new(), C::new(0.0, 0.0), C::new(0.0, 0.0));
+    let mut report = GapReport {
+        label: String::new(),
+        relative_gap: 0.0,
+        momentum: C::new(0.0, 0.0),
+        coordinate: C::new(0.0, 0.0),
+        rows: 0,
+    };
     for entry in dictionary() {
         let m = momentum_kernel(entry, packets, params, &conv);
         let c = coordinate_kernel(entry, packets, params);
-        let gap = (m - c).norm();
-        if gap > worst.0 {
-            worst = (gap, entry.label.clone(), m, c);
+        let gap = (m - c).norm() / (1.0 + c.norm());
+        report.rows += 1;
+        if gap > report.relative_gap {
+            report.label = entry.label.clone();
+            report.relative_gap = gap;
+            report.momentum = m;
+            report.coordinate = c;
         }
     }
-    worst
+    report
+}
+
+/// Worst-row summary of the dictionary cross-check.
+#[derive(Clone, Debug)]
+pub struct GapReport {
+    pub label: String,
+    pub relative_gap: f64,
+    pub momentum: C,
+    pub coordinate: C,
+    pub rows: usize,
 }
 
 // ---------------------------------------------------------------------------
-// Coefficient evaluation
+// Coefficients
 // ---------------------------------------------------------------------------
 
 fn yukawa_factor(f: &Factor, params: &SmParameters) -> C {
@@ -293,6 +424,8 @@ fn factor_value(f: &Factor, params: &SmParameters) -> C {
         Factor::Vev => C::new(params.vev, 0.0),
         Factor::InvSqrt2 => C::new(1.0 / 2.0f64.sqrt(), 0.0),
         Factor::InvSqrt3 => C::new(1.0 / 3.0f64.sqrt(), 0.0),
+        Factor::Sqrt2 => C::new(2.0f64.sqrt(), 0.0),
+        Factor::Sqrt3 => C::new(3.0f64.sqrt(), 0.0),
         Factor::Yukawa { .. } => yukawa_factor(f, params),
     }
 }
@@ -304,285 +437,495 @@ fn coefficient(term: &Term, params: &SmParameters) -> C {
 }
 
 // ---------------------------------------------------------------------------
-// Gaussian algebra (exact packet integrals)
+// Closed-form Gaussian moments
 // ---------------------------------------------------------------------------
 
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-
-/// `amp · exp(−|x−center|²/(2σ²)) · exp(i phase·x)` in three dimensions.
+/// `exp(log_amp − ½ Σ_i M_i x_i² + Σ_i b_i x_i)` on `R^D`.
 ///
-/// A complex `amp` and the linear phase together cover every factor used by the
-/// two routes: real momentum packets (`phase = 0`) and the exact inverse
-/// transforms `(√(2π)w)³ exp(−2π²w²|x|²) e^{2πic·x}`.
-#[derive(Clone, Copy, Debug)]
-struct PhaseGauss {
-    amp: C,
-    center: [f64; 3],
-    sigma: f64,
-    phase: [f64; 3],
+/// A single complex `b_i` per axis covers both representations: momentum
+/// packets have real `b = c` and zero phase, coordinate packets have
+/// `b = 2πi c`. Keeping the centre implicit in `b` is what makes the product of
+/// a phased packet with its conjugate exact — a real-centre-plus-phase form
+/// would drop the phase-induced shift.
+#[derive(Clone, Debug)]
+struct Gauss {
+    log_amp: C,
+    inv_var: Vec<f64>,
+    b: Vec<C>,
 }
 
-impl PhaseGauss {
-    fn real(amp: C, center: [f64; 3], sigma: f64) -> Self {
-        Self {
-            amp,
-            center,
-            sigma,
-            phase: [0.0; 3],
-        }
-    }
-
+impl Gauss {
     fn i0(&self) -> C {
-        let scale = TWO_PI.sqrt() * self.sigma;
-        let theta = dot(self.phase, self.center)
-            - 0.5 * self.sigma * self.sigma * dot(self.phase, self.phase);
-        self.amp * C::new(scale.powi(3), 0.0) * C::from_polar(1.0, theta)
-    }
-
-    fn i1(&self, m: usize) -> C {
-        let shifted = C::new(self.center[m], 0.0)
-            + C::new(0.0, self.sigma * self.sigma * self.phase[m]);
-        shifted * self.i0()
-    }
-
-    fn i2(&self, m: usize, n: usize) -> C {
-        let s2 = self.sigma * self.sigma;
-        let (cm, cn) = (self.center[m], self.center[n]);
-        let (tm, tn) = (self.phase[m], self.phase[n]);
-        let value = C::new(
-            cm * cn + s2 * s2 * tm * tn - s2 * (if m == n { 1.0 } else { 0.0 }) * -1.0,
-            s2 * (tm * cn + tn * cm),
-        );
-        // Recompute plainly to keep the sign of the σ² δ_mn term explicit:
-        let diagonal = if m == n { s2 } else { 0.0 };
-        let value = C::new(value.re - 2.0 * diagonal, value.im) + C::new(diagonal, 0.0);
-        value * self.i0()
-    }
-
-    fn product(&self, other: &Self) -> Self {
-        let va = 1.0 / (self.sigma * self.sigma);
-        let vb = 1.0 / (other.sigma * other.sigma);
-        let v = va + vb;
-        let center = [
-            (self.center[0] * va + other.center[0] * vb) / v,
-            (self.center[1] * va + other.center[1] * vb) / v,
-            (self.center[2] * va + other.center[2] * vb) / v,
-        ];
-        let d = sub(self.center, other.center);
-        let amp = self.amp
-            * other.amp
-            * C::new(
-                (-dot(d, d) / (2.0 * (self.sigma * self.sigma + other.sigma * other.sigma))).exp(),
-                0.0,
-            );
-        Self {
-            amp,
-            center,
-            sigma: 1.0 / v.sqrt(),
-            phase: add(self.phase, other.phase),
+        let mut log = self.log_amp;
+        for (m, b) in self.inv_var.iter().zip(&self.b) {
+            // ∫exp(−½Mx² + bx)dx = √(2π/M)·exp(b²/(2M)).
+            log += C::new(0.5 * (TWO_PI / m).ln(), 0.0) + *b * *b / C::new(2.0 * m, 0.0);
         }
+        log.exp()
     }
 
-    fn convolve(&self, other: &Self) -> Self {
-        debug_assert_eq!(self.phase, [0.0; 3]);
-        debug_assert_eq!(other.phase, [0.0; 3]);
-        let sigma = (self.sigma * self.sigma + other.sigma * other.sigma).sqrt();
-        let amp = self.amp
-            * other.amp
-            * C::new(
-                TWO_PI.powf(1.5) * (self.sigma * other.sigma / sigma).powi(3),
-                0.0,
-            );
-        Self::real(amp, add(self.center, other.center), sigma)
+    fn moment1(&self, axis: usize) -> C {
+        self.b[axis] / C::new(self.inv_var[axis], 0.0)
     }
 
-    fn conjugate(&self) -> Self {
-        Self {
-            amp: self.amp.conj(),
-            center: self.center,
-            sigma: self.sigma,
-            phase: [-self.phase[0], -self.phase[1], -self.phase[2]],
+    /// Evaluate the function itself (used by the quadrature cross-checks).
+    fn value(&self, x: &[f64]) -> C {
+        let mut log = self.log_amp;
+        for (i, &xi) in x.iter().enumerate() {
+            log += C::new(-0.5 * self.inv_var[i] * xi * xi, 0.0) + self.b[i] * C::new(xi, 0.0);
         }
-    }
-}
-
-/// Unit momentum packet as a [`PhaseGauss`].
-fn momentum_packet_gauss(p: &MomentumPacket) -> PhaseGauss {
-    PhaseGauss::real(C::new(1.0, 0.0), p.center, p.width)
-}
-
-/// Exact inverse transform of a momentum packet:
-/// `(√(2π)w)³ exp(−2π²w²|x|²) e^{2πic·x}`.
-fn coordinate_packet_gauss(p: &MomentumPacket) -> PhaseGauss {
-    let norm = (TWO_PI.sqrt() * p.width).powi(3);
-    PhaseGauss {
-        amp: C::new(norm, 0.0),
-        center: [0.0; 3],
-        sigma: 1.0 / (TWO_PI * p.width),
-        phase: [TWO_PI * p.center[0], TWO_PI * p.center[1], TWO_PI * p.center[2]],
-    }
-}
-
-/// `c0 + c·x + Σ_mn d_mn x_m x_n`.
-#[derive(Clone, Copy, Debug)]
-struct Poly {
-    c0: C,
-    c: [C; 3],
-    d: [[C; 3]; 3],
-}
-
-impl Poly {
-    fn one() -> Self {
-        Self {
-            c0: C::new(1.0, 0.0),
-            c: [C::new(0.0, 0.0); 3],
-            d: [[C::new(0.0, 0.0); 3]; 3],
-        }
+        log.exp()
     }
 
-    /// Multiply by `a0 + a·x`. Terms above quadratic degree are discarded
-    /// (they cannot occur: the dictionary's jet degree is ≤ 1 and the wall is
-    /// quadratic in each coordinate).
-    fn mul_linear(mut self, a0: C, a: [C; 3]) -> Self {
-        let d = self.d;
-        self.c0 *= a0;
-        for m in 0..3 {
-            let mut value = self.c[m] * a0 + self.c0 * a[m] / a0.max(C::new(1.0, 0.0)) * a0;
-            // The line above is intentionally avoided below; recompute cleanly.
-            value = d[m][0]; // silence unused-assignment lint path
-            self.c[m] = value;
-        }
-        // Clean expansion: (c0 + c·x + d:xx)(a0 + a·x).
-        let old_c0 = self.c0 / a0.max(C::new(1.0, 0.0)) * a0;
-        let _ = old_c0;
-        self
-    }
-
-    fn integrate(&self, g: &PhaseGauss) -> C {
-        let mut value = self.c0 * g.i0();
-        for m in 0..3 {
-            value += self.c[m] * g.i1(m);
-            for n in 0..3 {
-                value += self.d[m][n] * g.i2(m, n);
-            }
+    fn moment2(&self, m: usize, n: usize) -> C {
+        let mut value = self.b[m] * self.b[n] / C::new(self.inv_var[m] * self.inv_var[n], 0.0);
+        if m == n {
+            value += C::new(1.0 / self.inv_var[m], 0.0);
         }
         value
     }
+
+    fn product(&self, other: &Self) -> Self {
+        debug_assert_eq!(self.inv_var.len(), other.inv_var.len());
+        Self {
+            log_amp: self.log_amp + other.log_amp,
+            inv_var: self
+                .inv_var
+                .iter()
+                .zip(&other.inv_var)
+                .map(|(a, b)| a + b)
+                .collect(),
+            b: self.b.iter().zip(&other.b).map(|(a, b)| a + b).collect(),
+        }
+    }
+
+    fn conj(&self) -> Self {
+        Self {
+            log_amp: self.log_amp.conj(),
+            inv_var: self.inv_var.clone(),
+            b: self.b.iter().map(|x| x.conj()).collect(),
+        }
+    }
+
+    /// `amp · exp(−|x−center|²/(2σ²))` in `center.len()` dimensions.
+    fn from_center(amp: C, center: &[f64], sigma: f64) -> Self {
+        let m = 1.0 / (sigma * sigma);
+        let shift = 0.5 * m * center.iter().map(|c| c * c).sum::<f64>();
+        Self {
+            log_amp: amp.ln() - C::new(shift, 0.0),
+            inv_var: vec![m; center.len()],
+            b: center.iter().map(|&c| C::new(m * c, 0.0)).collect(),
+        }
+    }
+
+    /// `(f ⋆ g)(K) = ∫ f(q) g(K−q) dq` for real, centre-carrying factors.
+    fn convolve(&self, other: &Self) -> Self {
+        debug_assert_eq!(self.b.len(), other.b.len());
+        let mut log_amp = self.log_amp + other.log_amp;
+        let mut inv_var = Vec::with_capacity(self.b.len());
+        let mut b = Vec::with_capacity(self.b.len());
+        for i in 0..self.b.len() {
+            let ma = self.inv_var[i];
+            let mb = other.inv_var[i];
+            let m = ma * mb / (ma + mb);
+            let ba = self.b[i];
+            let bb = other.b[i];
+            // ∫ f(q)g(K−q)dq in this representation:
+            //   √(2π/M) exp((b_a−b_b)²/(2M)) exp(−½m|K−(c_a+c_b)|²),
+            // with the two centre offsets already carried by b = M·c.
+            let d = ba - bb;
+            log_amp += C::new(0.5 * (TWO_PI / (ma + mb)).ln(), 0.0)
+                + d * d / C::new(2.0 * (ma + mb), 0.0);
+            inv_var.push(m);
+            b.push(m * (ba / ma + bb / mb));
+        }
+        Self {
+            log_amp,
+            inv_var,
+            b,
+        }
+    }
+}
+
+/// L²-normalised momentum packet `(πw²)^{−D/4} exp(−|k−c|²/(2w²))`.
+fn momentum_packet_gauss(p: &Packet) -> Gauss {
+    let d = p.center.len() as f64;
+    let inv_var = 1.0 / (p.width * p.width);
+    // exp(−(k−c)²/(2w²)) = exp(−½Mk² + (Mc)k − ½Mc²), so the canonical linear
+    // coefficient is M·c and the constant is folded into the amplitude.
+    let shift = 0.5 * inv_var * p.center.iter().map(|c| c * c).sum::<f64>();
+    let log_amp = -(d / 4.0) * (std::f64::consts::PI * p.width * p.width).ln() - shift;
+    Gauss {
+        log_amp: C::new(log_amp, 0.0),
+        inv_var: vec![inv_var; p.center.len()],
+        b: p.center
+            .iter()
+            .map(|&c| C::new(inv_var * c, 0.0))
+            .collect(),
+    }
+}
+
+/// Exact inverse transform of [`momentum_packet_gauss`].
+fn coordinate_packet_gauss(p: &Packet) -> Gauss {
+    let d = p.center.len() as f64;
+    // (2π)^{−D/4} w^{−D/2} · (√(2π) w)^D = (4π w²)^{D/4}
+    let log_amp = (d / 4.0) * (4.0 * std::f64::consts::PI * p.width * p.width).ln();
+    Gauss {
+        log_amp: C::new(log_amp, 0.0),
+        inv_var: vec![4.0 * std::f64::consts::PI.powi(2) * p.width * p.width; p.center.len()],
+        b: p.center.iter().map(|&c| C::new(0.0, TWO_PI * c)).collect(),
+    }
+}
+
+/// A Gaussian times a polynomial of degree ≤ 2, kept as a sparse monomial list.
+#[derive(Clone, Debug)]
+struct Poly {
+    g: Gauss,
+    terms: Vec<(Vec<(usize, u32)>, C)>,
+}
+
+impl Poly {
+    fn new(g: Gauss) -> Self {
+        Self {
+            g,
+            terms: vec![(Vec::new(), C::new(1.0, 0.0))],
+        }
+    }
+
+    /// Multiply by `c0 + Σ spikes`.
+    fn mul_linear(&mut self, c0: C, spikes: &[(usize, C)]) {
+        let mut out = Vec::with_capacity(self.terms.len() * (1 + spikes.len()));
+        for (mono, coef) in &self.terms {
+            if c0 != C::new(0.0, 0.0) {
+                out.push((mono.clone(), *coef * c0));
+            }
+            for (axis, c) in spikes {
+                let mut m = mono.clone();
+                match m.iter_mut().find(|(a, _)| a == axis) {
+                    Some(entry) => entry.1 += 1,
+                    None => m.push((*axis, 1)),
+                }
+                out.push((m, *coef * *c));
+            }
+        }
+        self.terms = out;
+    }
+
+    /// Multiply by `scale · ∂_{axis}`. For a [`Gauss`],
+    /// `∂_m f = (−M_m x_m + b_m) f`.
+    fn apply_derivative(&mut self, axis: usize, scale: C) {
+        let m = self.g.inv_var[axis];
+        let b = self.g.b[axis];
+        // ∂_m (x^k f) = k x^{k−1} f + x^k (−M_m x_m + b_m) f. The first term is
+        // what distinguishes a second derivative from squaring: it only appears
+        // for the quadratic rows (`wall`), where it must not be dropped.
+        let mut from_power = Vec::new();
+        for (mono, coef) in &self.terms {
+            if let Some(pos) = mono.iter().position(|(a, _)| *a == axis) {
+                let power = mono[pos].1;
+                let mut reduced = mono.clone();
+                if power == 1 {
+                    reduced.remove(pos);
+                } else {
+                    reduced[pos].1 -= 1;
+                }
+                from_power.push((reduced, *coef * scale * C::new(power as f64, 0.0)));
+            }
+        }
+        self.mul_linear(scale * b, &[(axis, -scale * C::new(m, 0.0))]);
+        self.terms.extend(from_power);
+    }
+
+    fn multiply_by(&mut self, other: &Gauss) {
+        self.g = self.g.product(other);
+    }
+
+    fn integrate(&self) -> C {
+        let i0 = self.g.i0();
+        let mut total = C::new(0.0, 0.0);
+        for (mono, coef) in &self.terms {
+            let mut value = *coef;
+            for &(axis, power) in mono {
+                value *= match power {
+                    1 => self.g.moment1(axis),
+                    2 => self.g.moment2(axis, axis),
+                    other => unreachable!("dictionary monomial power {other} exceeds 2"),
+                };
+            }
+            total += value;
+        }
+        i0 * total
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Momentum route
+// The two routes
 // ---------------------------------------------------------------------------
 
+/// Momentum representation: `q̂ → (i/2π)∂_k`, `p̂ → 2πk`.
+///
+/// The `q` map uses the fixed Fourier constant [`TWO_PI`]; only the `p` symbol
+/// tracks [`Conventions::two_pi`], so mutating it is a real convention error.
 fn momentum_term(term: &Term, packets: &DictionaryPackets, conv: &Conventions) -> C {
-    let derivative = |poly: Poly, m: usize, power: u32| {
-        let mut out = poly;
-        for _ in 0..power {
-            let mut c = [C::new(0.0, 0.0); 3];
-            c[m] = C::new(conv.two_pi, 0.0);
-            out = out.mul_linear(C::new(0.0, 0.0), c);
+    let mut poly = Poly::new(momentum_packet_gauss(&packets.ket));
+    for (n, power) in &term.q {
+        for _ in 0..*power {
+            poly.apply_derivative(*n as usize, C::i() / TWO_PI);
         }
-        out
-    };
-
-    if term.q.is_empty() {
-        let g = momentum_packet_gauss(&packets.bra).product(&momentum_packet_gauss(&packets.ket));
-        let mut poly = Poly::one();
-        for (m, power) in &term.p {
-            poly = derivative(poly, *m as usize, *power);
-        }
-        return poly.integrate(&g);
     }
-
-    let field = field_convolution(&term.q, packets, conv.transfer_sign);
-    let sigma_k = 1.0 / (1.0 / (packets.bra.width * packets.bra.width)
-        + 1.0 / (packets.ket.width * packets.ket.width));
-    // ∫ φ̂_bra(K+l) φ̂_ket(l) dl is a Gaussian of width √(σ_bra²+σ_ket²)
-    // centred at c_bra − c_ket, times (√(2π)σ)³.
-    let sigma_l = sigma_k.sqrt();
-    let base = PhaseGauss::real(
-        C::new((TWO_PI.sqrt() * sigma_l).powi(3), 0.0),
-        sub(packets.bra.center, packets.ket.center),
-        (packets.bra.width * packets.bra.width + packets.ket.width * packets.ket.width).sqrt(),
-    );
-    let mut poly = Poly::one();
     for (m, power) in &term.p {
         for _ in 0..*power {
-            let sa2 = packets.bra.width * packets.bra.width;
-            let sb2 = packets.ket.width * packets.ket.width;
-            let u = 1.0 / sa2 + 1.0 / sb2;
-            let c0 = (packets.bra.center[*m as usize] / sa2
-                + packets.ket.center[*m as usize] / sb2)
-                / u;
-            let mut c = [C::new(0.0, 0.0); 3];
-            c[*m as usize] = C::new(-1.0 / (u * sa2), 0.0);
-            poly = poly.mul_linear(C::new(c0, 0.0), c);
+            poly.mul_linear(
+                C::new(0.0, 0.0),
+                &[(*m as usize, C::new(conv.two_pi, 0.0))],
+            );
         }
     }
-    // Canonical p = −i∂ has the real symbol 2πk (see dirac_symbol).
-    let mut scale = C::new(1.0, 0.0);
-    for _ in 0..term.p_degree() {
-        scale *= C::new(conv.two_pi, 0.0);
-    }
-    scale * poly.integrate(&base.product(&field))
+    poly.multiply_by(&momentum_packet_gauss(&packets.bra).conj());
+    poly.integrate()
 }
 
-/// `∏_n (Φ̂_n^{⋆a_n})(K)`, a real Gaussian in the transferred momentum `K`.
-fn field_convolution(q: &[(u32, u32)], packets: &DictionaryPackets, sign: f64) -> PhaseGauss {
-    let mut out: Option<PhaseGauss> = None;
-    for (n, power) in q {
-        let packet = &packets.fields[*n as usize];
+/// Coordinate representation: `q̂ → x`, `p̂ → −i∂_x`.
+fn coordinate_term(term: &Term, packets: &DictionaryPackets) -> C {
+    let mut poly = Poly::new(coordinate_packet_gauss(&packets.ket));
+    for (n, power) in &term.q {
         for _ in 0..*power {
-            let g = momentum_packet_gauss(packet);
+            poly.mul_linear(C::new(0.0, 0.0), &[(*n as usize, C::new(1.0, 0.0))]);
+        }
+    }
+    for (m, power) in &term.p {
+        for _ in 0..*power {
+            poly.apply_derivative(*m as usize, -C::i());
+        }
+    }
+    poly.multiply_by(&coordinate_packet_gauss(&packets.bra).conj());
+    poly.integrate()
+}
+
+// ---------------------------------------------------------------------------
+// Per-mode 3D field kernel
+// ---------------------------------------------------------------------------
+
+/// The spatial axis of a momentum index in the named layout.
+///
+/// The blocks `x; G,dG; W,dW; B,dB` all start at a base divisible by three, so
+/// their spatial index is exactly `m mod 3`; the four Higgs momenta are scalar
+/// amplitudes and get the declared profile axis `m mod 3`.
+pub fn axis_of(momentum: u32) -> usize {
+    momentum as usize % 3
+}
+
+fn packet3(p: &Packet) -> Packet {
+    Packet {
+        center: p.center[..3].to_vec(),
+        width: p.width,
+    }
+}
+
+fn packet_axis(p: &Packet, residue: usize) -> Packet {
+    Packet {
+        center: vec![p.center[residue]],
+        width: p.width,
+    }
+}
+
+/// `∏_n Φ̂_n^{⋆a_n}` in three dimensions, a real Gaussian in the transferred
+/// momentum.
+fn field_convolution_3d(term: &Term, packets: &DictionaryPackets, sign: f64) -> Gauss {
+    let mut out: Option<Gauss> = None;
+    for (n, power) in &term.q {
+        let field = momentum_packet_gauss(&packet3(&packets.fields[*n as usize]));
+        for _ in 0..*power {
             out = Some(match out {
-                None => g,
-                Some(current) => current.convolve(&g),
+                None => field.clone(),
+                Some(current) => current.convolve(&field),
             });
         }
     }
-    let mut g = out.expect("field_convolution requires a non-empty q monomial");
+    let mut g = out.expect("field convolution requires a non-empty q monomial");
     if sign < 0.0 {
-        g.center = [-g.center[0], -g.center[1], -g.center[2]];
+        g.b = g.b.iter().map(|b| -*b).collect();
     }
     g
 }
 
-// ---------------------------------------------------------------------------
-// Coordinate route
-// ---------------------------------------------------------------------------
+/// `∫ φ̂_bra(K+l) φ̂_ket(l) l^p dl` as a Gaussian in `K` times a linear factor
+/// (with the `(2π)^p` symbol of `p` already folded in).
+fn ket_side_momentum(
+    bra: &Packet,
+    ket: &Packet,
+    p: &[(u32, u32)],
+    conv: &Conventions,
+) -> Poly {
+    let mb = 1.0 / (bra.width * bra.width);
+    let mk = 1.0 / (ket.width * ket.width);
+    let m = mb + mk;
+    let s = (bra.width * bra.width + ket.width * ket.width).sqrt();
+    // ∫φ̂_b(K+l)φ̂_k(l)dl
+    //   = amp_b amp_k (2π)^{3/2} w_b³w_k³/S³ exp(−|K−(c_b−c_k)|²/(2S²)),
+    // with the packets' own L² normalisation amp = (πw²)^{−3/4}.
+    let norm = |w: f64| -(3.0 / 4.0) * (std::f64::consts::PI * w * w).ln();
+    let amp = (norm(bra.width) + norm(ket.width)).exp()
+        * (TWO_PI.sqrt() * s).powi(3)
+        * (bra.width * ket.width / (s * s)).powi(3);
+    let base = Gauss::from_center(
+        C::new(amp, 0.0),
+        &sub3(bra.center.as_slice(), ket.center.as_slice()),
+        s,
+    );
+    let mut poly = Poly::new(base);
+    let mut scale = C::new(1.0, 0.0);
+    for (m_index, power) in p {
+        let axis = axis_of(*m_index);
+        for _ in 0..*power {
+            // l_axis = (M_b c_b + M_k c_k)/M − (M_b/M) K_axis.
+            let c0 = (mb * bra.center[axis] + mk * ket.center[axis]) / m;
+            poly.mul_linear(C::new(c0, 0.0), &[(axis, C::new(-mb / m, 0.0))]);
+            scale *= C::new(conv.two_pi, 0.0);
+        }
+    }
+    for (_, coef) in poly.terms.iter_mut() {
+        *coef *= scale;
+    }
+    poly
+}
 
-fn coordinate_term(term: &Term, packets: &DictionaryPackets) -> C {
-    let ket = coordinate_packet_gauss(&packets.ket);
-    let mut g = coordinate_packet_gauss(&packets.bra)
-        .conjugate()
-        .product(&ket);
+fn sub3(a: &[f64], b: &[f64]) -> Vec<f64> {
+    a[..3].iter().zip(&b[..3]).map(|(x, y)| x - y).collect()
+}
+
+fn momentum_term_3d(term: &Term, packets: &DictionaryPackets, conv: &Conventions) -> C {
+    let bra = packet3(&packets.bra);
+    let ket = packet3(&packets.ket);
+    if term.q.is_empty() {
+        let mut poly = Poly::new(
+            momentum_packet_gauss(&bra).product(&momentum_packet_gauss(&ket)),
+        );
+        for (m, power) in &term.p {
+            for _ in 0..*power {
+                poly.mul_linear(
+                    C::new(0.0, 0.0),
+                    &[(axis_of(*m), C::new(conv.two_pi, 0.0))],
+                );
+            }
+        }
+        return poly.integrate();
+    }
+    let mut poly = ket_side_momentum(&bra, &ket, &term.p, conv);
+    let field = field_convolution_3d(term, packets, conv.transfer_sign);
+    poly.multiply_by(&field);
+    poly.integrate()
+}
+
+fn coordinate_term_3d(term: &Term, packets: &DictionaryPackets) -> C {
+    let ket = packet3(&packets.ket);
+    let xket = coordinate_packet_gauss(&ket);
+    let mut g = coordinate_packet_gauss(&packet3(&packets.bra))
+        .conj()
+        .product(&xket);
     for (n, power) in &term.q {
-        let field = coordinate_packet_gauss(&packets.fields[*n as usize]);
+        let field = coordinate_packet_gauss(&packet3(&packets.fields[*n as usize]));
         for _ in 0..*power {
             g = g.product(&field);
         }
     }
-    let mut poly = Poly::one();
+    let mut poly = Poly::new(g);
     for (m, power) in &term.p {
+        let axis = axis_of(*m);
         for _ in 0..*power {
-            // (−i∂_m) φ_ket = (2π c_m + 4π²w² i x_m) φ_ket
-            //              = (phase_m + i x_m/σ²) φ_ket.
-            let mut c = [C::new(0.0, 0.0); 3];
-            c[*m as usize] = C::i() / (ket.sigma * ket.sigma);
-            poly = poly.mul_linear(C::new(ket.phase[*m as usize], 0.0), c);
+            // −i∂_axis f = i M x_axis − i b_axis for the Gauss form.
+            let inv_var = xket.inv_var[axis];
+            let b = xket.b[axis];
+            poly.mul_linear(
+                -C::i() * b,
+                &[(axis, C::i() * C::new(inv_var, 0.0))],
+            );
         }
     }
-    poly.integrate(&g)
+    poly.integrate()
+}
+
+/// The 3D field-mode kernel of one dictionary entry (momentum representation).
+pub fn three_d_kernel(
+    entry: &DictionaryEntry,
+    packets: &DictionaryPackets,
+    params: &SmParameters,
+    conv: &Conventions,
+) -> C {
+    entry
+        .terms
+        .iter()
+        .map(|term| coefficient(term, params) * momentum_term_3d(term, packets, conv))
+        .sum()
+}
+
+/// The 3D field-mode kernel of one dictionary entry (coordinate representation).
+pub fn three_d_coordinate_kernel(
+    entry: &DictionaryEntry,
+    packets: &DictionaryPackets,
+    params: &SmParameters,
+) -> C {
+    entry
+        .terms
+        .iter()
+        .map(|term| coefficient(term, params) * coordinate_term_3d(term, packets))
+        .sum()
+}
+
+/// The one-axis overlap of a term's fields on spatial residue `residue`, with no
+/// derivative factor. This is the spectator factor in
+/// `collective = three_d * O_0^54 O_1^53 O_2^53`.
+pub fn axis_overlap(term: &Term, packets: &DictionaryPackets, residue: usize) -> C {
+    let mut g = momentum_packet_gauss(&packet_axis(&packets.bra, residue))
+        .product(&momentum_packet_gauss(&packet_axis(&packets.ket, residue)));
+    for (n, power) in &term.q {
+        let field = momentum_packet_gauss(&packet_axis(&packets.fields[*n as usize], residue));
+        for _ in 0..*power {
+            g = g.product(&field);
+        }
+    }
+    Poly::new(g).integrate()
+}
+
+/// Per-term values of all four kernels, for the cross-check tests.
+#[derive(Clone, Debug)]
+pub struct TermKernels {
+    pub label: String,
+    pub q_degree: u32,
+    pub coefficient: C,
+    pub collective_momentum: C,
+    pub collective_coordinate: C,
+    pub three_d_momentum: C,
+    pub three_d_coordinate: C,
+    pub axis_overlap: [C; 3],
+}
+
+/// Per-term breakdown of the whole dictionary.
+pub fn term_kernels(
+    packets: &DictionaryPackets,
+    params: &SmParameters,
+    conv: &Conventions,
+) -> Vec<TermKernels> {
+    let mut out = Vec::new();
+    for entry in dictionary() {
+        for term in &entry.terms {
+            out.push(TermKernels {
+                label: entry.label.clone(),
+                q_degree: term.q_degree(),
+                coefficient: coefficient(term, params),
+                collective_momentum: momentum_term(term, packets, conv),
+                collective_coordinate: coordinate_term(term, packets),
+                three_d_momentum: momentum_term_3d(term, packets, conv),
+                three_d_coordinate: coordinate_term_3d(term, packets),
+                axis_overlap: [
+                    axis_overlap(term, packets, 0),
+                    axis_overlap(term, packets, 1),
+                    axis_overlap(term, packets, 2),
+                ],
+            });
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -614,8 +957,7 @@ fn family_of(label: &str) -> Result<Family, String> {
     Err(format!("unknown dictionary label family: {label}"))
 }
 
-/// One parsed term plus references to where its `q`/`p` factors live, so a
-/// following `^{-1}` can find them.
+/// Where a just-parsed base sits in the term, so a following `^{-1}` can find it.
 enum BaseRef {
     Constant,
     Q(usize),
@@ -700,17 +1042,13 @@ fn parse_expression(expression: &str) -> Result<Vec<Term>, String> {
         }
         let mut term = Term::default();
         cursor.parse_term(&mut term)?;
-        if sign < 0.0 {
-            for f in term.factors.iter_mut() {
-                *f = negate_factor(*f)?;
-            }
-            // Keep the sign as an explicit -1 rational so ordering is stable.
-            term.factors.insert(0, Factor::Rational(-1, 1));
-            // `-1 * -1` for an already negative coefficient would double negate;
-            // parse_term never emits a leading sign, so this is the only sign.
-        }
         if term.factors.is_empty() && term.q.is_empty() && term.p.is_empty() {
             return Err("empty term".into());
+        }
+        if sign < 0.0 {
+            // parse_term never consumes a leading sign, so this -1 is the only
+            // sign on the term.
+            term.factors.insert(0, Factor::Rational(-1, 1));
         }
         terms.push(term);
         cursor.skip_ws();
@@ -735,11 +1073,7 @@ fn parse_expression(expression: &str) -> Result<Vec<Term>, String> {
     Ok(terms)
 }
 
-fn negate_factor(f: Factor) -> Result<Factor, String> {
-    Ok(f)
-}
-
-impl<'a> Cursor<'a> {
+impl Cursor<'_> {
     fn parse_term(&mut self, term: &mut Term) -> Result<(), String> {
         loop {
             self.skip_ws();
@@ -756,22 +1090,16 @@ impl<'a> Cursor<'a> {
             if self.peek() == Some('^') {
                 self.bump();
                 let exponent = self.read_group()?;
-                let exponent: i64 = exponent
-                    .replace(' ', "")
-                    .parse()
-                    .map_err(|_| format!("unparsable exponent '{{{exponent}}}' at {}", self.pos))?;
+                let exponent: i64 = exponent.replace(' ', "").parse().map_err(|_| {
+                    format!("unparsable exponent '{{{exponent}}}' at {}", self.pos)
+                })?;
                 self.apply_exponent(term, base, exponent)?;
             }
         }
         Ok(())
     }
 
-    fn apply_exponent(
-        &mut self,
-        term: &mut Term,
-        base: BaseRef,
-        exponent: i64,
-    ) -> Result<(), String> {
+    fn apply_exponent(&mut self, term: &mut Term, base: BaseRef, exponent: i64) -> Result<(), String> {
         match base {
             BaseRef::Q(i) => {
                 if exponent < 1 {
@@ -797,7 +1125,8 @@ impl<'a> Cursor<'a> {
                         }
                         *last = Factor::Rational(d, n);
                     }
-                    (Factor::Rational(n, d), 1) => *last = Factor::Rational(n, d),
+                    (Factor::InvSqrt2, -1) => *last = Factor::Sqrt2,
+                    (Factor::InvSqrt3, -1) => *last = Factor::Sqrt3,
                     (f, 1) => *last = f,
                     (_, e) => return Err(format!("unsupported exponent {e}")),
                 }
@@ -813,13 +1142,16 @@ impl<'a> Cursor<'a> {
                 for expected in "\\frac".chars() {
                     self.expect(expected)?;
                 }
-                let numerator: i64 = self.read_group()?.trim().parse().map_err(|_| {
-                    format!("non-integer fraction numerator at {}", self.pos)
-                })?;
-                let denominator: i64 =
-                    self.read_group()?.trim().parse().map_err(|_| {
-                        format!("non-integer fraction denominator at {}", self.pos)
-                    })?;
+                let numerator: i64 = self
+                    .read_group()?
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("non-integer fraction numerator at {}", self.pos))?;
+                let denominator: i64 = self
+                    .read_group()?
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("non-integer fraction denominator at {}", self.pos))?;
                 term.factors.push(Factor::Rational(numerator, denominator));
                 Ok(BaseRef::Constant)
             }
@@ -921,14 +1253,29 @@ impl<'a> Cursor<'a> {
                 if !self.eat('_') {
                     return Err(format!("Yukawa '{name}' without a subscript"));
                 }
-                let subscript = self.read_group()?;
-                let digits: Vec<usize> = subscript
-                    .split(',')
-                    .map(|part| part.trim().parse::<usize>())
-                    .collect::<Result<_, _>>()
-                    .map_err(|_| format!("bad Yukawa indices '{{{subscript}}}'"))?;
+                let subscript = self.read_group()?.trim().to_string();
+                // The Cadabra export writes `yu_{00}` (two bare digits) while
+                // hand-written forms use `yu_{0,0}`; accept both.
+                let digits: Vec<usize> = if subscript.contains(',') {
+                    subscript
+                        .split(',')
+                        .map(|part| part.trim().parse::<usize>())
+                        .collect::<Result<_, _>>()
+                        .map_err(|_| format!("bad Yukawa indices '{{{subscript}}}'"))?
+                } else {
+                    subscript
+                        .chars()
+                        .map(|c| {
+                            c.to_digit(10)
+                                .map(|d| d as usize)
+                                .ok_or_else(|| format!("bad Yukawa index '{c}'"))
+                        })
+                        .collect::<Result<_, _>>()?
+                };
                 if digits.len() != 2 || digits.iter().any(|&x| x >= 3) {
-                    return Err(format!("Yukawa indices must be two values in 0..3: '{subscript}'"));
+                    return Err(format!(
+                        "Yukawa indices must be two values in 0..3: '{subscript}'"
+                    ));
                 }
                 term.factors.push(Factor::Yukawa {
                     conj,
@@ -948,27 +1295,7 @@ mod tests {
     use super::*;
 
     fn params() -> SmParameters {
-        let mut yu = [[C::new(0.0, 0.0); 3]; 3];
-        let mut yd = [[C::new(0.0, 0.0); 3]; 3];
-        let mut ynu = [[C::new(0.0, 0.0); 3]; 3];
-        let mut ye = [[C::new(0.0, 0.0); 3]; 3];
-        for i in 0..3 {
-            yu[i][i] = C::new(0.6 + 0.1 * i as f64, 0.05);
-            yd[i][i] = C::new(0.4 + 0.07 * i as f64, -0.03);
-            ynu[i][i] = C::new(0.25 + 0.02 * i as f64, 0.0);
-            ye[i][i] = C::new(0.31 + 0.03 * i as f64, 0.01);
-        }
-        SmParameters {
-            gs: 1.1,
-            gw: 0.65,
-            gy: 0.36,
-            lambda: 0.13,
-            vev: 246.0,
-            yu,
-            yd,
-            ynu,
-            ye,
-        }
+        fixture_parameters()
     }
 
     fn entry(label: &str) -> DictionaryEntry {
@@ -1000,11 +1327,26 @@ mod tests {
     }
 
     #[test]
+    fn the_dictionary_never_mixes_q_and_p() {
+        for e in dictionary() {
+            for term in &e.terms {
+                assert!(
+                    !(term.q.is_empty() == false && term.p.is_empty() == false),
+                    "{} mixes q and p in one term",
+                    e.label
+                );
+                assert!(term.q_degree() <= 2, "{} has q-degree > 2", e.label);
+                assert!(term.p_degree() <= 1, "{} has p-degree > 1", e.label);
+            }
+        }
+    }
+
+    #[test]
     fn kinetic_row_is_the_bare_jet_momentum() {
         let e = entry("kin3");
         assert_eq!(e.terms.len(), 1);
         assert_eq!(e.terms[0].p, vec![(3, 1)]);
-        assert_eq!(e.terms[0].q.len(), 0);
+        assert!(e.terms[0].q.is_empty());
         assert!(e.terms[0].factors.is_empty());
     }
 
@@ -1022,24 +1364,41 @@ mod tests {
     }
 
     #[test]
+    fn momentum_space_q_is_a_derivative_not_a_shift() {
+        // kin3 = p_3 has the real symbol 2πk_3; the value must equal 2π times
+        // the k_3 moment of the bra/ket overlap.
+        let packets = DictionaryPackets::declared();
+        let sm = params();
+        let conv = Conventions::canonical();
+        let e = entry("kin3");
+        let value = momentum_kernel(&e, &packets, &sm, &conv);
+        let overlap = momentum_packet_gauss(&packets.bra)
+            .product(&momentum_packet_gauss(&packets.ket));
+        let expected = C::new(TWO_PI, 0.0) * overlap.moment1(3) * overlap.i0();
+        assert!(
+            (value - expected).norm() < 1e-12 * (1.0 + expected.norm()),
+            "{value} vs {expected}"
+        );
+    }
+
+    #[test]
     fn momentum_and_coordinate_routes_agree_on_each_family() {
         let packets = DictionaryPackets::declared();
         let sm = params();
         let conv = Conventions::canonical();
-        for label in ["kin0", "kin150", "magG00", "magW04", "magB02", "covH07", "wall"] {
+        for label in ["kin3", "kin150", "magG00", "magW22", "magB02", "covH10", "wall"] {
             let e = entry(label);
             let m = momentum_kernel(&e, &packets, &sm, &conv);
             let c = coordinate_kernel(&e, &packets, &sm);
             assert!(
-                (m - c).norm() < 1e-9 * (1.0 + m.norm()),
+                (m - c).norm() < 1e-9 * (1.0 + c.norm()),
                 "{label}: momentum {m} vs coordinate {c}"
             );
-            assert!(m.norm() > 1e-9, "{label} must be nonzero for these packets");
         }
     }
 
     #[test]
-    fn insertion_transfer_and_derivative_agree() {
+    fn insertion_and_derivative_rows_agree() {
         let packets = DictionaryPackets::declared();
         let sm = params();
         let conv = Conventions::canonical();
@@ -1047,30 +1406,170 @@ mod tests {
             let e = entry(label);
             let m = momentum_kernel(&e, &packets, &sm, &conv);
             let c = coordinate_kernel(&e, &packets, &sm);
-            assert!((m - c).norm() < 1e-8 * (1.0 + m.norm()), "{label}: {m} vs {c}");
+            assert!(
+                (m - c).norm() < 1e-9 * (1.0 + c.norm()),
+                "{label}: {m} vs {c}"
+            );
         }
     }
 
     #[test]
-    fn reversing_the_transfer_breaks_the_cross_check() {
+    fn the_whole_dictionary_cross_checks() {
+        let packets = DictionaryPackets::declared();
+        let sm = params();
+        let report = worst_gap(&packets, &sm);
+        assert_eq!(report.rows, 1241);
+        assert!(
+            report.relative_gap < 1e-9,
+            "worst row {} gap {:e} (momentum {}, coordinate {})",
+            report.label,
+            report.relative_gap,
+            report.momentum,
+            report.coordinate
+        );
+    }
+
+    #[test]
+    fn the_3d_mode_kernel_is_plancherel_consistent_on_every_row() {
         let packets = DictionaryPackets::declared();
         let sm = params();
         let conv = Conventions::canonical();
-        let reversed = Conventions {
-            transfer_sign: -1.0,
+        let mut worst = (0.0f64, String::new());
+        for entry in dictionary() {
+            let m = three_d_kernel(entry, &packets, &sm, &conv);
+            let c = three_d_coordinate_kernel(entry, &packets, &sm);
+            let gap = (m - c).norm() / (1.0 + c.norm());
+            assert!(
+                gap < 1e-9,
+                "{}: 3D momentum {m} vs coordinate {c}",
+                entry.label
+            );
+            if gap > worst.0 {
+                worst = (gap, entry.label.clone());
+            }
+        }
+        assert!(worst.0 < 1e-11, "worst 3D row {} gap {:e}", worst.1, worst.0);
+    }
+
+    #[test]
+    fn the_derivative_terms_are_the_collective_symbol_on_their_axis() {
+        // A `q`-free term is the same object in both kernels: `p_m` acting on the
+        // ket. The collective value is therefore the 3D value times the 160
+        // spectator overlaps (54/53/53 by residue), and the derivative factor
+        // cancels because it lives on the same residue in both routes.
+        //
+        // `q`-bearing terms are NOT compared this way: `q` is a coordinate
+        // multiplication in the collective kernel and a field insertion in the
+        // 3D kernel, i.e. a different operator. Their 3D routing is checked by
+        // `the_3d_mode_kernel_is_plancherel_consistent_on_every_row` instead.
+        let packets = DictionaryPackets::declared();
+        let sm = params();
+        let conv = Conventions::canonical();
+        let mut checked = 0usize;
+        for term in term_kernels(&packets, &sm, &conv) {
+            if term.q_degree != 0 {
+                continue;
+            }
+            let expected = term.three_d_momentum
+                * term.axis_overlap[0].powi(54)
+                * term.axis_overlap[1].powi(53)
+                * term.axis_overlap[2].powi(53);
+            let scale = 1.0 + term.collective_momentum.norm();
+            assert!(
+                (term.collective_momentum - expected).norm() < 1e-9 * scale,
+                "{}: collective {} vs 3D*spectators {}",
+                term.label,
+                term.collective_momentum,
+                expected
+            );
+            checked += 1;
+        }
+        // 40 kinetic rows plus every derivative term of the 232 p-bearing rows.
+        assert!(
+            checked >= 232,
+            "only {checked} derivative terms matched the collective symbol"
+        );
+    }
+
+    #[test]
+    fn the_3d_axis_map_matches_the_named_layout() {
+        use crate::sm_full::coord;
+        for a in 0..8u32 {
+            for i in 0..3u32 {
+                assert_eq!(axis_of(coord::g(a, i)), i as usize);
+                for j in 0..3u32 {
+                    assert_eq!(axis_of(coord::dg(a, i, j)), j as usize);
+                }
+            }
+        }
+        for a in 0..3u32 {
+            for i in 0..3u32 {
+                assert_eq!(axis_of(coord::w(a, i)), i as usize);
+                for j in 0..3u32 {
+                    assert_eq!(axis_of(coord::dw(a, i, j)), j as usize);
+                }
+            }
+            assert_eq!(axis_of(coord::b(a)), a as usize);
+            for j in 0..3u32 {
+                assert_eq!(axis_of(coord::db(a, j)), j as usize);
+            }
+        }
+        for i in 0..3u32 {
+            assert_eq!(axis_of(coord::x(i)), i as usize);
+        }
+        // The four Higgs momenta are scalar amplitudes: no spatial axis exists,
+        // so the kernel uses the declared profile axis `m mod 3`. Assert the
+        // declaration rather than pretending it is a layout fact.
+        for a in 0..4u32 {
+            assert_eq!(axis_of(coord::phi(a)), a as usize % 3);
+        }
+    }
+
+    #[test]
+    fn convolution_matches_quadrature_in_one_dimension() {
+        let a = momentum_packet_gauss(&Packet {
+            center: vec![0.3],
+            width: 0.7,
+        });
+        let b = momentum_packet_gauss(&Packet {
+            center: vec![-0.2],
+            width: 1.1,
+        });
+        let c = a.convolve(&b);
+        let n = 400_000usize;
+        let (lo, hi) = (-8.0f64, 8.0f64);
+        let h = (hi - lo) / n as f64;
+        for k in [-0.8f64, 0.0, 0.35] {
+            let mut sum = 0.0;
+            for i in 0..n {
+                let q = lo + (i as f64 + 0.5) * h;
+                sum += (a.value(&[q]) * b.value(&[k - q])).re;
+            }
+            let numeric = sum * h;
+            let closed = c.value(&[k]).re;
+            assert!(
+                (closed - numeric).abs() < 1e-6 * (1.0 + numeric.abs()),
+                "k={k}: closed {closed} vs quadrature {numeric}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_fourier_symbol_breaks_the_cross_check() {
+        let packets = DictionaryPackets::declared();
+        let sm = params();
+        let wrong = Conventions {
+            two_pi: 1.0,
             ..Conventions::canonical()
         };
-        let e = entry("matter0x2");
-        let canonical_gap =
-            (momentum_kernel(&e, &packets, &sm, &conv) - coordinate_kernel(&e, &packets, &sm))
+        let e = entry("kin7");
+        let canonical = (momentum_kernel(&e, &packets, &sm, &Conventions::canonical())
+            - coordinate_kernel(&e, &packets, &sm))
+        .norm();
+        let mutated =
+            (momentum_kernel(&e, &packets, &sm, &wrong) - coordinate_kernel(&e, &packets, &sm))
                 .norm();
-        let reversed_gap =
-            (momentum_kernel(&e, &packets, &sm, &reversed) - coordinate_kernel(&e, &packets, &sm))
-                .norm();
-        assert!(canonical_gap < 1e-9);
-        assert!(
-            reversed_gap > 1e-3,
-            "the reversed transfer must be detectable, gap {reversed_gap}"
-        );
+        assert!(canonical < 1e-12);
+        assert!(mutated > 1e-3, "mutation must be detectable, gap {mutated}");
     }
 }

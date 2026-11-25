@@ -12,7 +12,7 @@ trap 'rm -rf "$work_dir"' EXIT
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$work_dir/mpl}"
 "$cadabra_cli" -q -n "$repo_root/docs/sm_full_nested.cdb" > "$work_dir/full.latex"
 cmp "$repo_root/docs/fixtures/sm_full_cadabra.latex" "$work_dir/full.latex"
-for module in sm_gauge_fixed_hamiltonian faris_lavine_n_sm; do
+for module in sm_gauge_fixed_hamiltonian faris_lavine_n_sm sm_momentum_nested; do
     "$cadabra_cli" -q -n "$repo_root/docs/$module.cdb" > "$work_dir/$module.log"
     found=0
     while IFS= read -r line; do
@@ -25,8 +25,14 @@ for module in sm_gauge_fixed_hamiltonian faris_lavine_n_sm; do
             exit 1
         fi
     done < "$work_dir/$module.log"
-    if (( found < 17 )); then
-        echo "Truncated SM check transcript: $module ($found rows)" >&2
+    # sm_momentum_nested is a focused convention module (8 rows); the two
+    # historical SM modules keep their 17-row floor.
+    case "$module" in
+        sm_momentum_nested) min_rows=8 ;;
+        *) min_rows=17 ;;
+    esac
+    if (( found < min_rows )); then
+        echo "Truncated SM check transcript: $module ($found < $min_rows rows)" >&2
         exit 1
     fi
     echo "[ok] $module: $found CHECK rows (scope as documented)"
