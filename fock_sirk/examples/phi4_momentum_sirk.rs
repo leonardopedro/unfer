@@ -63,10 +63,11 @@ fn shift_invert() -> JointKrylovMethod {
 /// Cutoffs of the outside-window sweep. C = 16 and 20 are the extension past
 /// the window at which the seed's support is fully covered; they need a looser
 /// solve policy (see `sweep_method`) and a larger component budget. C = 22, 24,
-/// 26, 28, 30, 32, 34 and 36 push past 20 to show that the tail keeps shrinking
-/// while the SIRK error stays flat (rank-limited, not window-limited). C = 36 is
-/// the largest window the component budget allows (see `SWEEP_COMPONENT_BUDGET`).
-const SWEEP_CUTOFFS: [u32; 13] = [4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36];
+/// 26, 28, 30, 32, 34, 36, 38 and 40 push past 20 to show that the tail keeps
+/// shrinking while the SIRK error stays flat (rank-limited, not window-limited).
+/// C = 40 is the largest window the component budget allows (see
+/// `SWEEP_COMPONENT_BUDGET`).
+const SWEEP_CUTOFFS: [u32; 15] = [4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40];
 
 /// Solve policy per cutoff. The `1e-13` relative residual is affordable while
 /// the window is small, but at C = 20 the smallest scheduled shift
@@ -90,9 +91,11 @@ fn sweep_method(cutoff: u32) -> JointKrylovMethod {
 /// registration, C = 24 (1820 labels, 3.35e6 components) needs more than
 /// C = 20's 4e6, C = 26 (2380 labels, 5.71e6) needs more than 4e6 too, C = 28
 /// (3060 labels, 9.42e6) needs more than C = 26's 8e6, C = 32 (4845 labels,
-/// 2.36e7 components) needs more than C = 28's 1.2e7, and C = 36 (7315 labels,
-/// 5.37e7 components) needs more than C = 32's 2.5e7.
-const SWEEP_COMPONENT_BUDGET: usize = 60_000_000;
+/// 2.36e7 components) needs more than C = 28's 1.2e7, C = 36 (7315 labels,
+/// 5.37e7 components) needs more than C = 32's 2.5e7, C = 38 (8855 labels,
+/// 7.84e7) needs more than C = 36's 6e7, and C = 40 (10626 labels, 1.129e8
+/// components) needs more than C = 38's.
+const SWEEP_COMPONENT_BUDGET: usize = 130_000_000;
 
 fn solve(
     h: &InnerExpr,
