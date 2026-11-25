@@ -55,6 +55,15 @@
 # by an estimate above `SLOW_SECS`, so a row that grew past the threshold (as
 # `temper-4` did, 950 s) leaves the default sweep until `--all` is used.
 #
+# `--digits N` compares numeric fields to N significant digits instead of
+# byte-for-byte. The committed logs are bitwise on the machine that recorded
+# them; on a different CPU/libm (GitHub's hosted runner) the same seeded run can
+# differ in the last printed digits -- and 50 Adam steps or a 100-step HMC chain
+# amplify a last-bit difference, so the per-push lane uses `--digits 6` to
+# separate "different hardware" from "different behaviour". Counts, verdicts and
+# labels are never rounded: they are integers or words and still compare
+# exactly. Default stays exact, so local reproduction is unchanged.
+#
 # Exit status: 0 all compared rungs matched; 1 any mismatch or failed run;
 # 2 setup problem (no binary, no fixture, unknown gate).
 set -uo pipefail
@@ -119,6 +128,7 @@ RUN_ALL=0
 RUN_ALTS=0
 RUN_QUICK=0
 CHECK_MANIFEST=0
+DIGITS=0
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -127,6 +137,7 @@ while [ $# -gt 0 ]; do
     --alts)     RUN_ALTS=1 ;;
     --quick)    RUN_QUICK=1 ;;
     --check-manifest) CHECK_MANIFEST=1 ;;
+    --digits)   DIGITS=${2:?--digits needs a count}; shift ;;
     --skip-slow) RUN_ALL=0 ;;
     --out)      OUT=${2:?--out needs a directory}; shift ;;
     -h|--help)  sed -n '2,40p' "$0"; exit 0 ;;
@@ -135,6 +146,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+printf '%s' "$DIGITS" | grep -qE '^[0-9]+$' && [ "$DIGITS" -le 17 ] \
+  || { echo "setup: --digits takes a significant-digit count 0..17" >&2; exit 2; }
 
 [ -d "$LOG_DIR" ] || { echo "setup: $LOG_DIR missing" >&2; exit 2; }
 [ "$CHECK_MANIFEST" -eq 1 ] || [ -f "$FIXTURE" ] \
@@ -211,6 +225,32 @@ summaries() {
     | sed -e 's/[[:space:]]\+/ /g' -e 's/ *$//'
 }
 
+# Print every line with each number literal rounded to N significant digits.
+# Labels, counts and verdicts survive unchanged (an integer prints the same
+# either way), so only genuine numeric drift can be absorbed.
+to_digits() {
+  awk -v d="$1" '
+    function norm(s,   out, i, c, rest, L) {
+      out = ""; i = 1
+      while (i <= length(s)) {
+        c = substr(s, i, 1)
+        if (c ~ /[-+0-9.]/) {
+          rest = substr(s, i)
+          if (match(rest, /^[-+]?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?/) && RLENGTH > 0) {
+            L = substr(rest, 1, RLENGTH)
+            out = out sprintf("%.*e", d - 1, L + 0)
+            i += RLENGTH
+            continue
+          }
+        }
+        out = out c
+        i++
+      }
+      return out
+    }
+    { print norm($0) }' "$2"
+}
+
 # Per-field report for two summary lines: key: recorded -> rerun.
 field_diff() {
   printf '%s\n%s\n' "$1" "$2" | awk '
@@ -247,6 +287,7 @@ SKIPPED=()
 
 echo "R13 gate re-run: $STAMP"
 echo "  rerun logs: $OUT"
+[ "$DIGITS" -gt 0 ] && echo "  numeric comparison: $DIGITS significant digits (not byte-exact)"
 echo
 
 while IFS='|' read -r name cls budget log prog args; do
@@ -296,7 +337,15 @@ while IFS='|' read -r name cls budget log prog args; do
     continue
   fi
 
-  if cmp -s "$expected" "$actual"; then
+  matched=0
+  if [ "$DIGITS" -gt 0 ]; then
+    to_digits "$DIGITS" "$expected" > "$expected.digits"
+    to_digits "$DIGITS" "$actual" > "$actual.digits"
+    cmp -s "$expected.digits" "$actual.digits" && matched=1
+  else
+    cmp -s "$expected" "$actual" && matched=1
+  fi
+  if [ "$matched" -eq 1 ]; then
     echo "ok   $name ($(wc -l < "$expected") lines, ${elapsed}s)"
     continue
   fi

@@ -163,8 +163,24 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - name: build the examples the quick rows run
         run: cargo build --locked --release -p pcnl --example vector_regression --example vector_stream
-      - name: rerun the quick R13 gate rows
-        run: bash scripts/check-pcnl-gates --quick
+      # `--digits 6`: the logs are bitwise on the machine that recorded them, and
+      # this runner is a different CPU/libm, so a seeded 100-step chain can move in
+      # the last printed digits. Counts, verdicts and labels still compare exactly,
+      # so real drift (a changed trajectory, a changed threshold) still fails.
+      - name: rerun the quick R13 canary rows
+        run: |
+          set +e
+          bash scripts/check-pcnl-gates --quick --digits 6 > /tmp/canary.log 2>&1
+          status=$?
+          tail -60 /tmp/canary.log
+          if [ "$status" -ne 0 ]; then
+            # Job logs need repo admin rights; annotations are public, so a
+            # failure has to be readable from the annotations API.
+            grep -E '^(FAIL|      )' /tmp/canary.log | head -25 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit "$status"
 
   # ---------------------------------------------------------------------------
   # X7: cross-repo integration.
