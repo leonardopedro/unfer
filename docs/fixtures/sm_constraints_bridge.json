@@ -26,12 +26,12 @@
         "field_level_quotient": false,
         "finite_quotient": true,
         "harmonic_representatives": {
-          "basis_sha256": "d921b13955eae437efcf2b2fd8fb6f10b3f2df3a1d979628267a5479e6607ef7",
+          "basis_sha256": "4915935f64755efc19d837417a54b42c7c2c57bd2a050d8c95991a2add9e46b1",
           "degree_0": 1,
           "degree_1": 1,
           "degree_2": 0
         },
-        "q_squared_residual": 6.661338147750939e-16,
+        "q_squared_residual": 6.66133814775e-16,
         "quotient_map": {
           "degrees": [
             0,
@@ -44,9 +44,9 @@
             0
           ],
           "kind": "harmonic representatives (ker Q ∩ ker Q*)",
-          "representative_basis_sha256": "d921b13955eae437efcf2b2fd8fb6f10b3f2df3a1d979628267a5479e6607ef7"
+          "representative_basis_sha256": "4915935f64755efc19d837417a54b42c7c2c57bd2a050d8c95991a2add9e46b1"
         },
-        "representation_closure_residual": 4.710277376051325e-16,
+        "representation_closure_residual": 4.71027737605e-16,
         "tolerance": 1e-9
       },
       "claim_id": "n10_finite_adjoint_ce_quotient",
@@ -55,7 +55,7 @@
         "The complex uses the twelve homogeneous gauge generators and the bare structure constants.",
         "The coefficient module is the adjoint representation, not the complete matter/Higgs Fock space.",
         "Cochains are truncated at ghost degree three; degrees 0..2 are reported.",
-        "Ranks and harmonic bases are SVD measurements with tolerance 1e-9, not interval enclosures."
+        "Ranks are SVD measurements and the harmonic basis is the canonical reduced-row-echelon kernel basis, both at tolerance 1e-9, not interval enclosures."
       ],
       "not_claimed": [
         "No field-theoretic BRST cohomology or gauge-invariant Hilbert space.",
@@ -761,7 +761,7 @@
         0,
         1
       ],
-      "worst_residual": 4.440892098500626e-16
+      "worst_residual": 4.4408920985e-16
     },
     "gauss_commutator_gauge_vacuum": {
       "pairs": 144,
@@ -770,17 +770,17 @@
         5,
         6
       ],
-      "worst_residual": 5.551115123125783e-17
+      "worst_residual": 5.55111512313e-17
     },
     "hamiltonian_gauss_commutator": {
       "images": 24,
       "tolerance": 2e-9,
-      "worst_residual": 1.4669222755248606e-13
+      "worst_residual": 1.46692227552e-13
     },
     "quotient_map": null,
     "quotient_note": "The finite adjoint Chevalley-Eilenberg quotient and the finite field-level occupation windows, including their harmonic representatives, are bound separately under finite_ce_quotient, finite_fock_brst_window and the jet-inclusive N10 record; the top-level quotient_map stays null because no continuum physical quotient is constructed, and the remaining entries are finite-image residual checks only."
   },
-  "artifact_sha256": "adfd7064cb8f4fc459b3912d8c0ffe1c2b94e4dd7ced5f1ce5f82a522f834a16",
+  "artifact_sha256": "05d089151281089332131e8725b8d06660638e802790145249c7ae21d60ee2a6",
   "claim_id": "n10_finite_constraint_dictionary",
   "endpoint": "N10-finite-dictionary",
   "hypotheses": [

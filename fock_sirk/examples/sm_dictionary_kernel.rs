@@ -15,7 +15,7 @@
 
 use nested_fock_algebra::sm_dictionary::{
     DictionaryPackets, Q_COORDINATES, coordinate_kernel, dictionary, fixture_parameters,
-    momentum_kernel, three_d_coordinate_kernel, three_d_kernel, worst_gap,
+    momentum_kernel, q_bearing_quadrature, three_d_coordinate_kernel, three_d_kernel, worst_gap,
 };
 use nested_fock_algebra::sm_momentum::Conventions;
 use num_complex::Complex64 as C;
@@ -62,6 +62,7 @@ fn main() {
 
     let worst = worst_gap(&packets, &params);
     assert_eq!(worst.rows, entries.len());
+    let q_bearing = q_bearing_quadrature(&packets, 400);
 
     let document = json!({
         "schema": "sm-dictionary-kernel/v1",
@@ -92,6 +93,17 @@ fn main() {
             "worst_label": worst_3d.1,
             "worst_relative_gap": worst_3d.0,
             "note": "per-mode 3D kernel (field insertions, spatial derivative on the ket); validated against its own coordinate route, and its derivative terms against the collective kernel",
+        },
+        "q_bearing_quadrature": {
+            "subset": "the first four q-bearing entries of every family",
+            "nodes": 400,
+            "terms": q_bearing.terms,
+            "routing_sensitive_terms": q_bearing.routing_sensitive_terms,
+            "worst_collective_gap": q_bearing.worst_collective_gap,
+            "worst_collective_row": q_bearing.worst_collective_row,
+            "worst_three_d_gap": q_bearing.worst_three_d_gap,
+            "worst_three_d_row": q_bearing.worst_three_d_row,
+            "note": "q is a coordinate multiplication in the collective kernel and a 3D profile insertions in the per-mode kernel, so the two routes are not equal there; each closed form is checked term by term against an independent trapezoid evaluation of its own integrand, built from the term and the packet layout",
         },
         "parameters": {
             "gs": params.gs,

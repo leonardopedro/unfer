@@ -9,7 +9,7 @@
 //! fixture can be regenerated and bound as one artifact.
 
 use crate::joint_sirk::{joint_axpy, joint_norm};
-use crate::sm_bridge::{BRIDGE_SCHEMA, bind_artifact, canonical_json_sha256};
+use crate::sm_bridge::{BRIDGE_SCHEMA, bind_artifact, canonical_json_sha256, reported_residual};
 use crate::sm_brst_fock::{finite_fock_brst_jet_window, finite_fock_brst_window};
 use crate::sm_brst_quotient::finite_brst_quotient;
 use nested_fock_algebra::exact_inner::{
@@ -234,24 +234,24 @@ pub fn finite_constraint_bridge() -> Value {
         "artifact": {
             "gauss_commutator_gauge_vacuum": {
                 "pairs": 12 * 12,
-                "worst_residual": gauss_vacuum,
+                "worst_residual": reported_residual(gauss_vacuum),
                 "worst_pair": [gauss_vacuum_pair.0, gauss_vacuum_pair.1],
                 "tolerance": 2e-9,
             },
             "gauss_commutator_gauge_occupied": {
                 "pairs": 8 * 8,
-                "worst_residual": gauss_occupied,
+                "worst_residual": reported_residual(gauss_occupied),
                 "worst_pair": [gauss_occupied_pair.0, gauss_occupied_pair.1],
                 "tolerance": 2e-9,
             },
             "brst_nilpotency": {
                 "images": brst_images,
-                "worst_residual": brst,
+                "worst_residual": reported_residual(brst),
                 "tolerance": 2e-9,
             },
             "hamiltonian_gauss_commutator": {
                 "images": hamiltonian_images,
-                "worst_residual": hamiltonian,
+                "worst_residual": reported_residual(hamiltonian),
                 "tolerance": 2e-9,
             },
             "finite_dictionary": true,

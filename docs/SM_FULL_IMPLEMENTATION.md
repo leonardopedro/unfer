@@ -311,10 +311,12 @@ projected window.
   `artifact.finite_ce_quotient` in the same bridge. The cochain dimensions are
   `[12, 144, 792, 2640]`, the differential ranks `[11, 132, 660]`, the measured
   `Q^2` residual `6.66e-16`, the representation-closure residual `4.71e-16`, and
-  the cohomology dimensions `[1, 1, 0]` (degrees 0..2). Harmonic representatives
-  come from an SVD at tolerance `1e-9`, so these are measurements, not interval
-  enclosures. This is a finite adjoint CE quotient, **not** the field-theoretic
-  BRST complex.
+  the cohomology dimensions `[1, 1, 0]` (degrees 0..2). The ranks are SVD
+  measurements at tolerance `1e-9`; the harmonic representatives come from the
+  canonical reduced-row-echelon kernel of the stacked `[Q_k ; Q_{k-1}^†]`, whose
+  free columns give a basis independent of any singular-vector rotation. These
+  are measurements, not interval enclosures. This is a finite adjoint CE
+  quotient, **not** the field-theoretic BRST complex.
 - **Field-level truncation audit.** The ghost-only restriction of the joint
   charge is finite at ghost degree ≤3 and computes Lie-algebra homology, not
   physical BRST cohomology. A direct probe of the full field-level
@@ -743,8 +745,8 @@ identity under `matrix_skew_proof` (`H_hermitian`, `A_skew`). Its
 | `docs/fixtures/sm_defect_analytic_proof.ndjson.gz` | `ccddf3b7c83edfed0d44aa6d9b9ae81080bff7fc04b04ded4829f65028f96445` | gzip nanoda payload; raw sha256 `83e3571e…14ed31`; 38,336 declarations |
 | `docs/fixtures/sm_defect_skew_proof.ndjson.gz` | `eeb92d5b0fc588851ee4600b692c092a3d8e0a982b509b1947c38bc32c7dd9aa` | gzip nanoda payload; raw sha256 `498ae454…db528cc`; 7,540 declarations |
 | `docs/fixtures/sm_defect_bridge.json` | `bde3f770ef0ed8ffae28c680e08f09872883059a61e60fdba7bc20f9910a64bd` | bridge file with the kernel-verified `matrix_skew_proof` and its parsed-source provenance check; record digest `77dec777…1816ca`. Carries both `evolution_bound=1.0109852165754634` (sampled) and `frobenius_product_bound=1.060938397590336` (the value this table's older digest recorded as `evolution_bound`) |
-| `fock_sirk/src/sm_brst_fock.rs` | `db65e7e21e9d56946315b045186cb3f0f5cd78e6854d16131f79bb758e0da8e0` | matter and jet-inclusive finite BRST windows; block-graded harmonic quotients (the `H^1` fingerprint is the canonical augmented-RREF left nullspace, not raw singular vectors) |
-| `docs/fixtures/sm_constraints_bridge.json` | `5dc9a7a15dc8c260768f4df4e7ada08e383120dc61da0b95d10e7c2ceb3fe309` | N10 finite constraint + finite CE + finite Fock BRST bridge, including the jet record; record digest `adfd7064…f834a16` |
+| `fock_sirk/src/sm_brst_fock.rs` | `a6535958139893f16600cf74555caa28f0be6b4c2abb441f20df5022af12b07b` | matter and jet-inclusive finite BRST windows; block-graded harmonic quotients (the `H^1` fingerprint is the canonical augmented-RREF left nullspace, not raw singular vectors) |
+| `docs/fixtures/sm_constraints_bridge.json` | `0dd581b134e64df8ecd117355a7e694ad709281d7b8e5452adf3a523af175999` | N10 finite constraint + finite CE + finite Fock BRST bridge, including the jet record; record digest `05d08915…d60ee2a6`; residuals reported to twelve significant digits |
 | `docs/fixtures/sm_brst_jet_window.json` | `7288181b9cd70c77174428f61a5621c3bbb78b6ae12eaaaed5e4e5c9ca65fab5` | measured jet-inclusive window: 36,207 states, cohomology `[1,19,35,689]` |
 | `fock_sirk/tests/sm_brst_jet_window.rs` | `92c923d12f70ed07f81e25170c4f87e8785ab8bcdcfedc8958f0ff9233b9e704` | pins the jet fixture and its verified payload |
 | `../timepiece/BookProof/Sm/ChapterSmBrstQuotient.lean` | `bff21dc424b11e32b6425759d0cfa866060820aa717d3ec785b6491abb169165` | finite-window dimensions plus the jet block-matrix `Q² = 0` identity |
@@ -948,6 +950,16 @@ term's one-axis overlap on residue `j` (the derivative factor cancels). `q`-bear
 terms are deliberately not compared this way: `q` is a coordinate
 multiplication in the collective kernel and a field insertion with momentum
 transfer in the 3D kernel, so they are different operators.
+
+`q`-bearing rows are therefore cross-checked inside each route, over the first
+four `q`-bearing entries of every family (94 terms, all `p`-free so the
+comparison is routing-sensitive). Each closed-form value is compared with a
+trapezoid evaluation of its own integrand, and for these terms the integrand is
+rebuilt from the term and the packet layout rather than from the closed-form
+polynomial — so a wrong mode, axis or weight would disagree. Measured: worst
+collective gap `1.3e-16` (`wall`), worst 3D gap `3.1e-15` (`magW02`), recorded as
+`q_bearing_quadrature` in the fixture. This is an integration cross-check of the
+insertion, not an equality between the two kernels.
 
 The symbolic companion `docs/sm_momentum_nested.cdb` (8 CHECK rows, in
 `scripts/check-sm-symbolic`) pins the conventions and the rigged constants

@@ -12,7 +12,7 @@
 //! window. They are not a continuum physical quotient and are not promoted to a
 //! physical-sector identification.
 
-use crate::sm_bridge::canonical_json_sha256;
+use crate::sm_bridge::{canonical_json_sha256, reported_residual};
 use nalgebra::{DMatrix, linalg::SVD};
 use nested_fock_algebra::exact_inner::{
     ActionLimits, InnerExpr, JointInnerBasis as B, JointOuterBasis as O, NestedVector,
@@ -253,11 +253,19 @@ fn entries_json(entries: &[(usize, C)]) -> Vec<Value> {
         .collect()
 }
 
-/// A deterministic, sparse nullspace basis from the reduced row-echelon form of
-/// `Q_degree`. For each free column `f` the basis vector is
-/// `e_f - sum_i R[i,f] e_{pivot_i}`. Every such vector is closed; at the top
-/// degree (`Q_{n+1}=0`) this is the harmonic representative space.
-fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize>) {
+/// A deterministic, sparse kernel basis from the reduced row-echelon form of
+/// `matrix`. For each free column `f` the basis vector is
+/// `e_f - sum_i R[i,f] e_{pivot_i}`. The RREF is unique, so the basis depends on
+/// the matrix alone — unlike singular vectors, which are defined only up to
+/// rotations inside a degenerate kernel. A right kernel of `Q_degree` is closed;
+/// at the top degree (`Q_{n+1}=0`) it is the harmonic representative space, and
+/// on the stacked `[Q_k ; Q_{k-1}^†]` it is `ker Q_k ∩ ker Q_{k-1}^†`.
+///
+/// Returns the pivot columns and `(free_column, entries)` for each basis vector.
+pub(crate) fn rref_kernel(
+    matrix: &DMatrix<C>,
+    tolerance: f64,
+) -> (Vec<usize>, Vec<(usize, Vec<(usize, C)>)>) {
     let mut reduced = matrix.clone();
     let rows = reduced.nrows();
     let columns = reduced.ncols();
@@ -276,7 +284,7 @@ fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize
                 best = row;
             }
         }
-        if best_norm <= TOLERANCE {
+        if best_norm <= tolerance {
             continue;
         }
         if best != pivot_row {
@@ -291,7 +299,7 @@ fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize
                 continue;
             }
             let factor = reduced[(row, column)];
-            if factor.norm() <= TOLERANCE {
+            if factor.norm() <= tolerance {
                 reduced[(row, column)] = C::new(0.0, 0.0);
                 continue;
             }
@@ -305,8 +313,7 @@ fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize
         pivot_row += 1;
     }
 
-    let dimension = columns - pivots.len();
-    let mut vector_hashes = Vec::with_capacity(dimension);
+    let mut kernel = Vec::with_capacity(columns - pivots.len());
     for free in 0..columns {
         if pivots.binary_search(&free).is_ok() {
             continue;
@@ -319,11 +326,24 @@ fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize
             }
         }
         entries.sort_by_key(|(index, _)| *index);
-        vector_hashes.push(canonical_json_sha256(&json!({
-            "free": free,
-            "entries": entries_json(&entries),
-        })));
+        kernel.push((free, entries));
     }
+    (pivots, kernel)
+}
+
+/// Canonical hash of the right kernel of `Q_degree`.
+fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize>) {
+    let (pivots, kernel) = rref_kernel(matrix, TOLERANCE);
+    let dimension = kernel.len();
+    let vector_hashes: Vec<String> = kernel
+        .iter()
+        .map(|(free, entries)| {
+            canonical_json_sha256(&json!({
+                "free": free,
+                "entries": entries_json(entries),
+            }))
+        })
+        .collect();
     let basis_hash = canonical_json_sha256(&json!({
         "degree": degree,
         "dimension": dimension,
@@ -870,7 +890,7 @@ fn window_record(measurement: WindowMeasurement, include_jets: bool) -> Value {
         "matter_state_dimensions": measurement.matter_dims,
         "matter_block_ranks": measurement.matter_block_ranks,
         "gauge_singlet_kernel_dimension": measurement.gauge_singlet_kernel_dimension,
-        "q_squared_residual": measurement.q_squared,
+        "q_squared_residual": reported_residual(measurement.q_squared),
         "tolerance": TOLERANCE,
         "state_count": measurement.state_count,
         "state_basis_sha256": measurement.basis_hash,

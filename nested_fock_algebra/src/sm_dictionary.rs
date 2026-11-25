@@ -69,8 +69,17 @@
 //! and derivative routing are validated against the collective kernel, not
 //! against a re-typed formula. A `q`-bearing term is **not** comparable: `q` is
 //! a coordinate multiplication in the collective kernel and a field insertion
-//! with momentum transfer in the 3D kernel (a different operator). Those rows
-//! are validated by the 3D kernel's own Plancherel pair instead.
+//! with momentum transfer in the 3D kernel (a different operator).
+//!
+//! The `q`-bearing rows are therefore cross-checked inside each route. Every
+//! closed-form value is compared with a trapezoid evaluation of the same
+//! integrand ([`coordinate_term_quadrature`], [`coordinate_term_3d_quadrature`]),
+//! and for a `p`-free term the integrand is assembled from the term and the
+//! packet layout instead of from the closed-form polynomial
+//! ([`coordinate_term_q_only_quadrature`],
+//! [`coordinate_term_3d_q_only_quadrature`]) — so the check is sensitive to
+//! which mode is inserted, on which axis, and with which weight. The 3D
+//! insertion is a profile along **every** axis; `axis_of` routes `p`, not `q`.
 //!
 //! ## Packets
 //!
@@ -101,6 +110,7 @@
 use crate::sm_full::SmParameters;
 use crate::sm_momentum::{Conventions, TWO_PI};
 use num_complex::Complex64 as C;
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 /// The Cadabra export this module parses: 40 momenta, 49 bosonic forms and
@@ -685,8 +695,9 @@ fn momentum_term(term: &Term, packets: &DictionaryPackets, conv: &Conventions) -
     poly.integrate()
 }
 
-/// Coordinate representation: `q̂ → x`, `p̂ → −i∂_x`.
-fn coordinate_term(term: &Term, packets: &DictionaryPackets) -> C {
+/// The collective-coordinate integrand of one term: `q̂ → x`, `p̂ → −i∂_x`,
+/// times the conjugate bra packet.
+fn coordinate_poly(term: &Term, packets: &DictionaryPackets) -> Poly {
     let mut poly = Poly::new(coordinate_packet_gauss(&packets.ket));
     for (n, power) in &term.q {
         for _ in 0..*power {
@@ -699,7 +710,12 @@ fn coordinate_term(term: &Term, packets: &DictionaryPackets) -> C {
         }
     }
     poly.multiply_by(&coordinate_packet_gauss(&packets.bra).conj());
-    poly.integrate()
+    poly
+}
+
+/// Coordinate representation: `q̂ → x`, `p̂ → −i∂_x`.
+fn coordinate_term(term: &Term, packets: &DictionaryPackets) -> C {
+    coordinate_poly(term, packets).integrate()
 }
 
 // ---------------------------------------------------------------------------
@@ -817,7 +833,8 @@ fn momentum_term_3d(term: &Term, packets: &DictionaryPackets, conv: &Conventions
     poly.integrate()
 }
 
-fn coordinate_term_3d(term: &Term, packets: &DictionaryPackets) -> C {
+/// The 3D field-mode coordinate integrand of one term.
+fn coordinate_poly_3d(term: &Term, packets: &DictionaryPackets) -> Poly {
     let ket = packet3(&packets.ket);
     let xket = coordinate_packet_gauss(&ket);
     let mut g = coordinate_packet_gauss(&packet3(&packets.bra))
@@ -842,7 +859,255 @@ fn coordinate_term_3d(term: &Term, packets: &DictionaryPackets) -> C {
             );
         }
     }
-    poly.integrate()
+    poly
+}
+
+fn coordinate_term_3d(term: &Term, packets: &DictionaryPackets) -> C {
+    coordinate_poly_3d(term, packets).integrate()
+}
+
+// ---------------------------------------------------------------------------
+// Independent quadrature evaluation
+// ---------------------------------------------------------------------------
+
+/// Trapezoid quadrature of `∫ x^k exp(−½ M x² + b x) dx` on one axis.
+///
+/// The window follows the Gaussian envelope (`±12σ` around the shifted centre)
+/// and the rule converges super-exponentially there for a Gaussian times a
+/// low-degree polynomial, so this shares no step with the closed-form moments in
+/// [`Poly::integrate`]: it is an independent evaluation of the same integrand.
+fn axis_quadrature(g: &Gauss, max_power: u32, nodes: usize) -> Vec<C> {
+    debug_assert_eq!(g.inv_var.len(), 1, "one axis at a time");
+    let inv_var = g.inv_var[0];
+    let sigma = (1.0 / inv_var).sqrt();
+    let center = g.b[0].re / inv_var;
+    let half = 12.0 * sigma + center.abs();
+    let step = 2.0 * half / nodes as f64;
+    let mut sums = vec![C::new(0.0, 0.0); max_power as usize + 1];
+    for i in 0..=nodes {
+        let x = center - half + step * i as f64;
+        let weight = if i == 0 || i == nodes { 0.5 } else { 1.0 };
+        // The wavefunction itself, sampled — no moment formula is involved.
+        let envelope = g.value(&[x]) * C::new(weight * step, 0.0);
+        let mut power = C::new(1.0, 0.0);
+        for sum in sums.iter_mut() {
+            *sum += envelope * power;
+            power *= C::new(x, 0.0);
+        }
+    }
+    sums
+}
+
+/// One-axis view of a separable [`Gauss`], with the amplitude left out so the
+/// per-axis integrals stay multiplicative.
+fn axis_view(g: &Gauss, axis: usize) -> Gauss {
+    Gauss {
+        log_amp: C::new(0.0, 0.0),
+        inv_var: vec![g.inv_var[axis]],
+        b: vec![g.b[axis]],
+    }
+}
+
+/// Quadrature evaluation of a [`Poly`], axis by axis.
+///
+/// A Gaussian times a polynomial is separable, so the multi-dimensional
+/// integral is the product of the per-axis integrals `∫ x^k exp(−½M_a x² + b_a x)
+/// dx` — no tensor grid is needed, which is what makes the 163-dimensional
+/// collective coordinate integral cheap enough to evaluate by quadrature.
+fn quadrature_value(poly: &Poly, nodes: usize) -> C {
+    let dims = poly.g.inv_var.len();
+    let max_power = poly
+        .terms
+        .iter()
+        .flat_map(|(mono, _)| mono.iter().map(|(_, power)| *power))
+        .max()
+        .unwrap_or(0);
+    let per_axis: Vec<Vec<C>> = (0..dims)
+        .map(|axis| axis_quadrature(&axis_view(&poly.g, axis), max_power, nodes))
+        .collect();
+    let mut total = C::new(0.0, 0.0);
+    for (mono, coef) in &poly.terms {
+        let mut value = *coef;
+        let mut powers = vec![0u32; dims];
+        for &(axis, power) in mono {
+            powers[axis] = power;
+        }
+        for (axis, power) in powers.iter().enumerate() {
+            value *= per_axis[axis][*power as usize];
+        }
+        total += value;
+    }
+    poly.g.log_amp.exp() * total
+}
+
+/// Quadrature evaluation of a term's collective-coordinate value.
+pub fn coordinate_term_quadrature(
+    term: &Term,
+    packets: &DictionaryPackets,
+    nodes: usize,
+) -> C {
+    quadrature_value(&coordinate_poly(term, packets), nodes)
+}
+
+/// Quadrature evaluation of a term's 3D field-mode coordinate value.
+pub fn coordinate_term_3d_quadrature(
+    term: &Term,
+    packets: &DictionaryPackets,
+    nodes: usize,
+) -> C {
+    quadrature_value(&coordinate_poly_3d(term, packets), nodes)
+}
+
+/// One-dimensional packet at `axis`, as the route reads it.
+fn axis_packet(p: &Packet, axis: usize) -> Packet {
+    Packet {
+        center: vec![p.center[axis]],
+        width: p.width,
+    }
+}
+
+/// Per-axis integrand of a `p`-free term, built from the term and the packet
+/// layout rather than from [`Poly`].
+///
+/// `three_d` selects the route's own insertion: a `q_n` becomes `x_n` (the
+/// coordinate multiplication of the collective kernel, power on axis `n`) or the
+/// profile of field `n` (the per-mode insertion, a factor on axis `n mod 3`).
+/// Nothing here reads the closed-form polynomial, so a wrong mode, axis or
+/// grouping shows up as a disagreement with it.
+fn q_only_axis_factors(
+    term: &Term,
+    packets: &DictionaryPackets,
+    three_d: bool,
+) -> Vec<(Gauss, u32)> {
+    let axes = if three_d { 3 } else { Q_COORDINATES };
+    let mut factors = Vec::with_capacity(axes);
+    for axis in 0..axes {
+        let mut g = coordinate_packet_gauss(&axis_packet(&packets.bra, axis))
+            .conj()
+            .product(&coordinate_packet_gauss(&axis_packet(&packets.ket, axis)));
+        let mut power = 0u32;
+        for (n, insertions) in &term.q {
+            for _ in 0..*insertions {
+                if three_d {
+                    // A 3D field insertion is the mode's profile along every
+                    // axis; `axis_of` routes `p`, not `q`.
+                    g = g.product(&coordinate_packet_gauss(&axis_packet(
+                        &packets.fields[*n as usize],
+                        axis,
+                    )));
+                } else if *n as usize == axis {
+                    power += 1;
+                }
+            }
+        }
+        factors.push((g, power));
+    }
+    factors
+}
+
+fn q_only_quadrature(
+    term: &Term,
+    packets: &DictionaryPackets,
+    three_d: bool,
+    nodes: usize,
+) -> C {
+    let mut total = C::new(1.0, 0.0);
+    for (g, power) in q_only_axis_factors(term, packets, three_d) {
+        let parts = axis_quadrature(&axis_view(&g, 0), power, nodes);
+        total *= g.log_amp.exp() * parts[power as usize];
+    }
+    total
+}
+
+/// Quadrature evaluation of a `p`-free term's collective-coordinate value,
+/// assembled from the packet layout instead of from the closed-form integrand.
+pub fn coordinate_term_q_only_quadrature(
+    term: &Term,
+    packets: &DictionaryPackets,
+    nodes: usize,
+) -> C {
+    q_only_quadrature(term, packets, false, nodes)
+}
+
+/// Quadrature evaluation of a `p`-free term's 3D field-mode value, assembled
+/// from the packet layout instead of from the closed-form integrand.
+pub fn coordinate_term_3d_q_only_quadrature(
+    term: &Term,
+    packets: &DictionaryPackets,
+    nodes: usize,
+) -> C {
+    q_only_quadrature(term, packets, true, nodes)
+}
+
+/// Measured agreement between the closed-form `q`-bearing values and an
+/// independent quadrature evaluation of the same integrand.
+#[derive(Clone, Debug)]
+pub struct QBearingQuadrature {
+    pub terms: usize,
+    /// Terms whose integrand was rebuilt from the packet layout, so the check is
+    /// sensitive to the insertion routing and not only to the integration.
+    pub routing_sensitive_terms: usize,
+    pub worst_collective_gap: f64,
+    pub worst_collective_row: String,
+    pub worst_three_d_gap: f64,
+    pub worst_three_d_row: String,
+}
+
+/// Cross-check every `q`-bearing term of a deterministic subset — the first four
+/// `q`-bearing entries of each [`Family`] — against the quadrature evaluation, in
+/// both routes.
+pub fn q_bearing_quadrature(packets: &DictionaryPackets, nodes: usize) -> QBearingQuadrature {
+    let mut report = QBearingQuadrature {
+        terms: 0,
+        routing_sensitive_terms: 0,
+        worst_collective_gap: 0.0,
+        worst_collective_row: String::new(),
+        worst_three_d_gap: 0.0,
+        worst_three_d_row: String::new(),
+    };
+    let mut per_family: BTreeMap<Family, usize> = BTreeMap::new();
+    for entry in dictionary() {
+        let seen = per_family.entry(entry.family).or_insert(0);
+        if *seen >= 4 {
+            continue;
+        }
+        let mut used = false;
+        for term in &entry.terms {
+            if term.q_degree() == 0 {
+                continue;
+            }
+            used = true;
+            let p_free = term.p_degree() == 0;
+            let collective_quad = if p_free {
+                coordinate_term_q_only_quadrature(term, packets, nodes)
+            } else {
+                coordinate_term_quadrature(term, packets, nodes)
+            };
+            let three_d_quad = if p_free {
+                coordinate_term_3d_q_only_quadrature(term, packets, nodes)
+            } else {
+                coordinate_term_3d_quadrature(term, packets, nodes)
+            };
+            let collective = coordinate_term(term, packets);
+            let three_d = coordinate_term_3d(term, packets);
+            let collective_gap = (collective - collective_quad).norm() / (1.0 + collective_quad.norm());
+            let three_d_gap = (three_d - three_d_quad).norm() / (1.0 + three_d_quad.norm());
+            if collective_gap > report.worst_collective_gap {
+                report.worst_collective_gap = collective_gap;
+                report.worst_collective_row = entry.label.clone();
+            }
+            if three_d_gap > report.worst_three_d_gap {
+                report.worst_three_d_gap = three_d_gap;
+                report.worst_three_d_row = entry.label.clone();
+            }
+            report.terms += 1;
+            report.routing_sensitive_terms += usize::from(p_free);
+        }
+        if used {
+            *seen += 1;
+        }
+    }
+    report
 }
 
 /// The 3D field-mode kernel of one dictionary entry (momentum representation).
@@ -1488,6 +1753,41 @@ mod tests {
         assert!(
             checked >= 232,
             "only {checked} derivative terms matched the collective symbol"
+        );
+    }
+
+    #[test]
+    fn the_q_bearing_rows_agree_with_independent_quadrature() {
+        // `q` is not the same operator in the two routes — a coordinate
+        // multiplication in the collective kernel, a per-mode field insertion in
+        // the 3D kernel — so the spectator identity above cannot compare them
+        // here. What can be checked is that each route's `q` insertion is the
+        // one the dictionary asks for: both closed forms are compared with a
+        // trapezoid evaluation of their own integrand, which contains no share
+        // of the moment formulas and would move if the insertion picked the
+        // wrong mode, the wrong axis or the wrong Fourier weight.
+        let report = q_bearing_quadrature(&DictionaryPackets::declared(), 400);
+        assert!(
+            report.terms >= 20,
+            "only {} q-bearing terms checked",
+            report.terms
+        );
+        assert!(
+            report.routing_sensitive_terms >= 8,
+            "only {} q-bearing terms were routing-sensitive",
+            report.routing_sensitive_terms
+        );
+        assert!(
+            report.worst_collective_gap < 1e-11,
+            "worst collective row {} gap {:e}",
+            report.worst_collective_row,
+            report.worst_collective_gap
+        );
+        assert!(
+            report.worst_three_d_gap < 1e-11,
+            "worst 3D row {} gap {:e}",
+            report.worst_three_d_row,
+            report.worst_three_d_gap
         );
     }
 

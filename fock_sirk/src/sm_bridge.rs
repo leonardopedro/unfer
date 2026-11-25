@@ -70,6 +70,26 @@ pub fn canonical_json_sha256(value: &Value) -> String {
     sha256_hex(canonical_json(value).as_bytes())
 }
 
+/// Report a measured quantity with twelve significant decimal digits.
+///
+/// Fixture tests pin these records exactly, but a residual evaluated in `f64`
+/// carries toolchain noise in its last digits: the same inputs produced
+/// `1.4669222755248563e-13` and `1.4669222755248606e-13` under different builds,
+/// which failed an exact fixture comparison although the measured content was
+/// unchanged. Twelve significant digits sits far below the measurement's own
+/// `1e-9` acceptance tolerance and far above that noise, so the record stays a
+/// faithful measurement and becomes reproducible across toolchains. The
+/// formatting is deterministic, and parsing the 12-digit decimal back gives the
+/// nearest `f64` to it.
+pub fn reported_residual(value: f64) -> f64 {
+    if !value.is_finite() || value == 0.0 {
+        return value;
+    }
+    format!("{value:.11e}")
+        .parse::<f64>()
+        .expect("a formatted finite float parses")
+}
+
 /// Insert `artifact_sha256` bound to every other field of `payload`.
 pub fn bind_artifact(mut payload: Value) -> Value {
     let map = payload

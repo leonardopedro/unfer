@@ -8,7 +8,7 @@
 
 use nested_fock_algebra::sm_dictionary::{
     DictionaryPackets, Q_COORDINATES, coordinate_kernel, dictionary, fixture_parameters,
-    momentum_kernel, worst_gap,
+    momentum_kernel, q_bearing_quadrature, worst_gap,
 };
 use nested_fock_algebra::sm_momentum::Conventions;
 use serde_json::Value;
@@ -162,4 +162,46 @@ fn a_wrong_fourier_symbol_changes_exactly_the_p_bearing_rows() {
     // 40 kinetic rows plus the 192 matter rows that carry the spatial Dirac
     // derivative; the remaining 960 matter rows are pure gauge/Higgs insertions.
     assert_eq!(with_p, 232);
+}
+
+#[test]
+fn fixture_binds_the_q_bearing_quadrature_cross_check() {
+    // `q` is a coordinate multiplication in the collective kernel and a 3D
+    // profile insertion in the per-mode kernel, so the two routes are not equal
+    // on q-bearing rows. Each route is instead checked against an independent
+    // trapezoid evaluation of its own integrand; the fixture records the
+    // measured gaps.
+    let doc = fixture();
+    let block = &doc["q_bearing_quadrature"];
+    assert_eq!(block["nodes"], 400);
+    let terms = block["terms"].as_u64().unwrap();
+    assert!(terms >= 20, "fixture binds only {terms} q-bearing terms");
+    assert!(
+        block["routing_sensitive_terms"].as_u64().unwrap() >= 8,
+        "fixture binds too few routing-sensitive terms"
+    );
+    let recomputed = q_bearing_quadrature(&DictionaryPackets::declared(), 400);
+    assert_eq!(recomputed.terms as u64, terms);
+    for (key, gap, row) in [
+        (
+            "worst_collective",
+            recomputed.worst_collective_gap,
+            &recomputed.worst_collective_row,
+        ),
+        (
+            "worst_three_d",
+            recomputed.worst_three_d_gap,
+            &recomputed.worst_three_d_row,
+        ),
+    ] {
+        let row_key = format!("{key}_row");
+        let gap_key = format!("{key}_gap");
+        assert_eq!(block[&row_key], row.as_str(), "{gap_key} row");
+        let stored = block[&gap_key].as_f64().unwrap();
+        assert!(
+            (stored - gap).abs() <= 1e-14 * (1.0 + gap.abs()),
+            "{gap_key}: stored {stored} vs recomputed {gap}"
+        );
+        assert!(stored < 1e-11, "{gap_key} = {stored:e} exceeds the bound");
+    }
 }
