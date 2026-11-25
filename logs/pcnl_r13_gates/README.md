@@ -7,12 +7,14 @@ otherwise git-ignored, so the two negation lines in `.gitignore` are what keep
 this directory trackable.
 
 `scripts/check-pcnl-gates` re-runs every command below and diffs the result
-against the committed log (`posterior`, `chain_diagnostics`, `diag_observable`,
-`summary`, `run=`, `arm=` lines), so a log that stops matching fails loudly:
+against the committed log (`posterior`, `calibration`, `chain_diagnostics`,
+`diag_observable`, `summary`, `run=`, `arm=` lines), so a log that stops
+matching fails loudly:
 
 ```
 ./scripts/check-pcnl-gates              # every gate under 900 s
 ./scripts/check-pcnl-gates --all        # includes hit-and-run 5,000
+./scripts/check-pcnl-gates --quick      # per-push: stream, pilot, readout-exact
 ./scripts/check-pcnl-gates qk-gate      # one gate by name
 ```
 
@@ -37,6 +39,7 @@ Every run is from the repository root, against
 | `temper-4.log` | `vector_regression --kernel hmc --temper 4 --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass hessdiag --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | swaps 0/240 on all chains; R̂ 2.44665, ESS 4.8, tail 10.0, RMSE 0.168598 (matches the recorded row exactly) |
 | `cn-exact-dense.log` | `vector_regression --readout-only --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 6000 --burn 1500 --thin 1 --draws 4500 --chains 4` | posterior only (`readout_conditional`, dim 34); R̂ 1.00616, ESS 620.9, tail 201.3, RMSE 0.105528; `gate=true` |
 | `cn-exact-dense-12k.log` (alt) | the same with `--steps 12000 --burn 3000 --draws 9000` | ESS grows with length: R̂ 1.00423, ESS 1720.5, tail 1107.3, RMSE 0.105396; `gate=true` |
+| `cn-exact-dense-24k.log` (alt) | the same with `--steps 24000 --burn 3000 --draws 21000` | ESS keeps scaling: R̂ 1.00274, ESS 3920.6, tail 2144.3, RMSE 0.105362; `gate=true` |
 | `basins.log` | `vector_basins --runs 2 --steps 8000` | potentials 28.0901/38.7083, RMSE 0.076978/0.087130 |
 | `stream.log` | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | warm coverage 1.0/1.0/0.9917/0.9833, z² 0.032/0.024/0.275/0.356 |
 
@@ -58,15 +61,32 @@ reports `sample_space=readout_conditional` rather than the full parameter. The
 `12k` alternate exists to separate "poor mixing" from "short chain": at twice
 the draws with the same start and proposal the bulk ESS goes 620.9 → 1720.5 and
 the tail ESS 201.3 → 1107.3, so the CN row's ESS was estimator-truncated rather
-than a stuck chain.
+than a stuck chain. The `24k` row (four times the original, `18,000` draws per
+chain) continues the line: bulk ESS `3920.6`, tail `2144.3`, R̂ `1.00274`, point
+estimate `0.105362` — 2.28× the 12k ESS for 2× the steps, so the growth is not
+plateauing. It measured ~3,100 s here; its budget is 3,200 s.
 
 Only `--all` runs every row. Budgets are runtime estimates and anything
 budgeted above 900 s (currently `temper-4` and `hitrun-5000`) is skipped by the
 default sweep, which is why the checker now prints a `not selected:` line for
 every row it left out, with the flag that would select it. The `alt` rows
-(`cn-exact-dense-12k` and the two `qk` alternates) need `--alts`.
+(`cn-exact-dense-12k`, `cn-exact-dense-24k` and the two `qk` alternates) need
+`--alts`. `--quick` is the per-push lane: it selects only `stream`, `pilot` and
+`readout-exact` (492 s of gate time measured idle; 1,410 s under load) and
+prints every row it skipped, so it can never be mistaken for the full sweep.
+
+Readout-only rows also print a `calibration` line, which scores the same 90%
+bands on the split the conditional likelihood was fitted on (train) and reports
+the residual sd there, its df-adjusted value, and the declared noise. Its
+train-residual estimate is ~`0.0044`, well under the declared `0.05`, because
+the frozen backbone memorised the train split; the held-out residual is the
+operative scale behind the `0.158` coverage. See `docs/PCNL_STATUS.md`,
+"Why the readout-conditional 90% coverage is 0.158".
 
 Measured on 2026-11-25 on the local 12-core machine: `--all` = 13 rows /
 6,645 s / ~1 h 55 m, `--all --alts` = 16 rows / 8,349 s / ~2 h 20 m, both
-reproducing every summary line (exit 0). Those are the numbers the scheduled
-lane's `timeout-minutes` is sized against.
+reproducing every summary line (exit 0). The manifest now has 17 entries (the
+13 gates plus `cn-exact-dense-12k`, `cn-exact-dense-24k` and the two `qk`
+alternates); the 24k row alone is ~3,100 s, so a full `--all --alts` sweep is
+now above the recorded 2 h 20 m. Those figures are what the scheduled lane's
+`timeout-minutes` is sized against; the per-push lane is `--quick` instead.

@@ -139,6 +139,57 @@ fn quantile(sorted: &[f64], q: f64) -> f64 {
     sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo as f64)
 }
 
+/// Posterior predictive summary for one split: draw-mean RMSE, the 90% band
+/// (param and predictive) and the mean band half-width.
+struct SplitScore {
+    rmse: f64,
+    halfwidth_mean: f64,
+    covered_param: usize,
+    covered_predictive: usize,
+    total: usize,
+}
+
+fn score_split(target: &VectorRegression, draws: &[&Tensor], q: usize) -> SplitScore {
+    let mut sq_mean = 0.0;
+    let mut covered = 0usize;
+    let mut covered_predictive = 0usize;
+    let mut halfwidth = 0.0;
+    let mut total = 0usize;
+    for row in 0..target.rows() {
+        let mut coords: Vec<Vec<f64>> = vec![Vec::with_capacity(draws.len()); q];
+        for d in draws {
+            for (j, v) in target.predict_row(d, row).unwrap().into_iter().enumerate() {
+                coords[j].push(f64::from(v));
+            }
+        }
+        let y = &target.y()[row * q..(row + 1) * q];
+        for j in 0..q {
+            coords[j].sort_by(f64::total_cmp);
+            let mean = coords[j].iter().sum::<f64>() / coords[j].len() as f64;
+            let lo = quantile(&coords[j], 0.05);
+            let hi = quantile(&coords[j], 0.95);
+            let var =
+                coords[j].iter().map(|v| (v - mean).powi(2)).sum::<f64>() / coords[j].len() as f64;
+            let z = 1.6448536269514722;
+            let pred_sd = (var + target.noise() * target.noise()).sqrt();
+            sq_mean += (mean - f64::from(y[j])).powi(2);
+            halfwidth += (hi - lo) / 2.0;
+            covered += usize::from(f64::from(y[j]) >= lo && f64::from(y[j]) <= hi);
+            covered_predictive += usize::from(
+                f64::from(y[j]) >= mean - z * pred_sd && f64::from(y[j]) <= mean + z * pred_sd,
+            );
+            total += 1;
+        }
+    }
+    SplitScore {
+        rmse: (sq_mean / total as f64).sqrt(),
+        halfwidth_mean: halfwidth / total as f64,
+        covered_param: covered,
+        covered_predictive,
+        total,
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let fixture = PathBuf::from(
@@ -853,57 +904,84 @@ fn main() {
         println!("posterior predictive unavailable: a chain retained no draws");
         return;
     }
-    let draws: Vec<Tensor> = chains
-        .iter()
-        .flat_map(|c| c.draws.iter())
-        .map(|d| Tensor::from_vec(d.clone(), shapes.flat_size(), &Device::Cpu).unwrap())
-        .collect();
-    let mut sq_mean = 0.0;
-    let mut covered = 0usize;
-    let mut covered_predictive = 0usize;
-    let mut total = 0usize;
-    for row in 0..test.rows() {
-        let mut coords: Vec<Vec<f64>> = vec![Vec::with_capacity(draws.len()); q];
-        for d in &draws {
-            for (j, v) in test.predict_row(d, row).unwrap().into_iter().enumerate() {
-                coords[j].push(f64::from(v));
-            }
-        }
-        let y = &test.y()[row * q..(row + 1) * q];
-        for j in 0..q {
-            coords[j].sort_by(f64::total_cmp);
-            let mean = coords[j].iter().sum::<f64>() / coords[j].len() as f64;
-            let lo = quantile(&coords[j], 0.05);
-            let hi = quantile(&coords[j], 0.95);
-            let var =
-                coords[j].iter().map(|v| (v - mean).powi(2)).sum::<f64>() / coords[j].len() as f64;
-            let z = 1.6448536269514722;
-            let pred_sd = (var + test.noise() * test.noise()).sqrt();
-            sq_mean += (mean - f64::from(y[j])).powi(2);
-            covered += usize::from(f64::from(y[j]) >= lo && f64::from(y[j]) <= hi);
-            covered_predictive += usize::from(
-                f64::from(y[j]) >= mean - z * pred_sd && f64::from(y[j]) <= mean + z * pred_sd,
-            );
-            total += 1;
+    // Each draw is a full flat parameter vector (~229 KB at the 57,378-
+    // coordinate size). Convert the chain buffers to tensors in place and drain
+    // the originals: keeping both would double peak memory and OOM the 24k
+    // length probe.
+    let chain_draws: Vec<usize> = chains.iter().map(|c| c.draws.len()).collect();
+    let mut draws: Vec<Tensor> = Vec::with_capacity(chain_draws.iter().sum());
+    for chain in chains.iter_mut() {
+        for draw in chain.draws.drain(..) {
+            draws.push(Tensor::from_vec(draw, shapes.flat_size(), &Device::Cpu).unwrap());
         }
     }
+    let draw_refs: Vec<&Tensor> = draws.iter().collect();
+    let test_score = score_split(&test, &draw_refs, q);
     println!(
-        "posterior draw_mean_rmse={:.6} param_interval90_coverage={:.4} ({covered}/{total}) predictive_interval90_coverage={:.4} ({covered_predictive}/{total}) chains={chain_count} warm_started=true jitter={jitter} equilibrium_claim=false",
-        (sq_mean / total as f64).sqrt(),
-        covered as f64 / total as f64,
-        covered_predictive as f64 / total as f64
+        "posterior draw_mean_rmse={:.6} param_interval90_coverage={:.4} ({}/{}) predictive_interval90_coverage={:.4} ({}/{}) chains={chain_count} warm_started=true jitter={jitter} equilibrium_claim=false",
+        test_score.rmse,
+        test_score.covered_param as f64 / test_score.total as f64,
+        test_score.covered_param,
+        test_score.total,
+        test_score.covered_predictive as f64 / test_score.total as f64,
+        test_score.covered_predictive,
+        test_score.total
     );
+    // The readout conditional is the only split an exact likelihood conditions
+    // on, so score the same 90% bands on it (train) as well as on the held-out
+    // split above.  A calibrated sampler must reproduce the analytic Gaussian
+    // here; the residual sd is the noise-scale estimate that split can give.
+    if readout_only {
+        // A band from every draw is the right estimator but O(draws) forward
+        // passes per observation; on the 24k length probe that dominates the
+        // run.  A deterministic evenly spaced subsample keeps the check
+        // honest (it is still the posterior's own draws) at fixed cost.
+        const BAND_DRAWS: usize = 2000;
+        let band_draws: Vec<&Tensor> = if draw_refs.len() <= BAND_DRAWS {
+            draw_refs.clone()
+        } else {
+            (0..BAND_DRAWS)
+                .map(|i| draw_refs[i * draw_refs.len() / BAND_DRAWS])
+                .collect()
+        };
+        let train_score = score_split(&train, &band_draws, q);
+        let params = sampled.dim() as f64;
+        let dof = train_score.total as f64 - params;
+        let sse = train_score.rmse.powi(2) * train_score.total as f64;
+        let residual_sd_df = if dof > 0.0 {
+            (sse / dof).sqrt()
+        } else {
+            f64::NAN
+        };
+        println!(
+            "calibration conditioning_split=train rows={} outputs={q} draws={} band_draws={} param_interval90_coverage={:.4} ({}/{}) predictive_interval90_coverage={:.4} ({}/{}) band_halfwidth90_mean={:.6} residual_sd={:.6} residual_sd_df_adjusted={:.6} df={:.0} assumed_likelihood_noise={:.6} sampled_params={}",
+            train.rows(),
+            draws.len(),
+            band_draws.len(),
+            train_score.covered_param as f64 / train_score.total as f64,
+            train_score.covered_param,
+            train_score.total,
+            train_score.covered_predictive as f64 / train_score.total as f64,
+            train_score.covered_predictive,
+            train_score.total,
+            train_score.halfwidth_mean,
+            train_score.rmse,
+            residual_sd_df,
+            dof,
+            train.noise(),
+            sampled.dim()
+        );
+    }
     if chain_count >= 2 {
         let obs_rows = 4.min(test.rows());
         let mut traces: Vec<Vec<Vec<f64>>> = vec![vec![Vec::new(); chain_count]; obs_rows * q];
-        for (chain_index, chain) in chains.iter().enumerate() {
+        let mut offset = 0usize;
+        for (chain_index, &count) in chain_draws.iter().enumerate() {
+            let chain_slice = &draws[offset..offset + count];
             for row in 0..obs_rows {
-                for d in &chain.draws {
+                for d in chain_slice {
                     for (j, v) in test
-                        .predict_row(
-                            &Tensor::from_vec(d.clone(), shapes.flat_size(), &Device::Cpu).unwrap(),
-                            row,
-                        )
+                        .predict_row(d, row)
                         .unwrap()
                         .into_iter()
                         .enumerate()
@@ -912,6 +990,7 @@ fn main() {
                     }
                 }
             }
+            offset += count;
         }
         let rhats: Vec<f64> = traces
             .iter()

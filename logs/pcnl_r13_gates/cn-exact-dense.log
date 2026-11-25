@@ -16,6 +16,7 @@ chain=3 init=mean start_energy=1.811470 start_grad_rms=4.130675e0
 chain=3 kernel=cn proposal=exact_dense proposal_scale=1 steps=6000 burn=1500 rho=0.5 refresh=0.01 draws=4500 proposals=6000 accepted=2316 cn=2316/5938 refresh=0/62
 chain=3 first_test_draw_mean=[-1.6263113487826453, -0.8431545861297184]
 posterior draw_mean_rmse=0.105528 param_interval90_coverage=0.1583 (38/240) predictive_interval90_coverage=0.5917 (142/240) chains=4 warm_started=true jitter=0.01 equilibrium_claim=false
+calibration conditioning_split=train rows=240 outputs=2 draws=18000 band_draws=2000 param_interval90_coverage=1.0000 (480/480) predictive_interval90_coverage=1.0000 (480/480) band_halfwidth90_mean=0.019031 residual_sd=0.004451 residual_sd_df_adjusted=0.004618 df=446 assumed_likelihood_noise=0.050000 sampled_params=34
 diag_observable=0 rhat_rank=1.00273 ess_bulk=1346.1 ess_tail=1725.3 chain_means=[-1.6272101032469009, -1.625982654121187, -1.6268887862364452, -1.6263113487826453]
 diag_observable=1 rhat_rank=1.00504 ess_bulk=620.9 ess_tail=201.3 chain_means=[-0.8415388212998708, -0.8426772950622771, -0.8429134986003239, -0.8431545861297184]
 diag_observable=2 rhat_rank=1.00409 ess_bulk=692.7 ess_tail=406.1 chain_means=[-1.5041741184393564, -1.5033983021842108, -1.5030567198859321, -1.505397181669871]

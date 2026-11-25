@@ -127,6 +127,31 @@ jobs:
         run: bash scripts/check-pcnl-gates --check-manifest
 
   # ---------------------------------------------------------------------------
+  # R13 per-push gate lane (X11).
+  #
+  # X10 above only proves the committed logs still exist and are cited. The
+  # scheduled lane reruns all of them weekly, which is too slow (and too late)
+  # to be the only numeric guard: a row that stopped reproducing would stay
+  # green on push for up to a week. This lane reruns the three cheapest rows
+  # (`--quick`: stream, pilot, readout-exact; 492 s of gate time on an idle
+  # machine, 1,410 s once while another job held it), so ordinary drift in the
+  # fixture or the summary format fails on the push that caused it. Slow rows
+  # remain the scheduled lane's job; `--quick` prints every row it skipped,
+  # so this lane can never be mistaken for the full sweep.
+  # ---------------------------------------------------------------------------
+  pcnl-quick-gates:
+    name: R13 quick gate rows (per-push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - name: build the examples the quick rows run
+        run: cargo build --locked --release -p pcnl --example vector_regression --example vector_stream
+      - name: rerun the quick R13 gate rows
+        run: bash scripts/check-pcnl-gates --quick
+
+  # ---------------------------------------------------------------------------
   # X7: cross-repo integration.
   #
   # Every repo in this workspace passes its own CI against its own checkout, and

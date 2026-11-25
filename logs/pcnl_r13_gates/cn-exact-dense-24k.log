@@ -1,0 +1,29 @@
+## R13 synthetic vector regression: fixture=docs/fixtures/ultrabert_20ng4_embeddings.safetensors train=240 test=120 dim=768 q=2 shapes=VectorShapes { input: 768, tokens: 4, width: 16, ff: 32, layers: 4, output: 2 } teacher_seed=20261122 noise=0.05
+point adam_steps=300 first_loss=570.259216 last_loss=0.000034 train_rmse=0.000286 test_rmse=0.099276
+checkpoint path=/tmp/pcnl-vector-checkpoint.json schema=["coordinate_0", "coordinate_1"] roundtrip_exact=true prediction=[-1.6128647, -0.82934743]
+sample_space=readout_conditional dim=34
+exact_posterior dim=34 total_grad_rms_at_mean=8.673e-4 var_over_prior p10=7.719e-2 p50=1.852e-1 p90=3.320e-1
+chain=0 init=mean start_energy=1.811470 start_grad_rms=4.130675e0
+chain=0 kernel=cn proposal=exact_dense proposal_scale=1 steps=24000 burn=6000 rho=0.5 refresh=0.01 draws=18000 proposals=24000 accepted=9716 cn=9716/23789 refresh=0/211
+chain=0 first_test_draw_mean=[-1.6264845705297257, -0.8418463742766116]
+chain=1 init=mean start_energy=1.811470 start_grad_rms=4.130675e0
+chain=1 kernel=cn proposal=exact_dense proposal_scale=1 steps=24000 burn=6000 rho=0.5 refresh=0.01 draws=18000 proposals=24000 accepted=9815 cn=9815/23751 refresh=0/249
+chain=1 first_test_draw_mean=[-1.6266320878201062, -0.8414430567986435]
+chain=2 init=mean start_energy=1.811470 start_grad_rms=4.130675e0
+chain=2 kernel=cn proposal=exact_dense proposal_scale=1 steps=24000 burn=6000 rho=0.5 refresh=0.01 draws=18000 proposals=24000 accepted=9596 cn=9596/23785 refresh=0/215
+chain=2 first_test_draw_mean=[-1.626192517141501, -0.841582909580734]
+chain=3 init=mean start_energy=1.811470 start_grad_rms=4.130675e0
+chain=3 kernel=cn proposal=exact_dense proposal_scale=1 steps=24000 burn=6000 rho=0.5 refresh=0.01 draws=18000 proposals=24000 accepted=9697 cn=9697/23743 refresh=0/257
+chain=3 first_test_draw_mean=[-1.626528439965513, -0.8418913952840699]
+posterior draw_mean_rmse=0.105362 param_interval90_coverage=0.1583 (38/240) predictive_interval90_coverage=0.5917 (142/240) chains=4 warm_started=true jitter=0.01 equilibrium_claim=false
+calibration conditioning_split=train rows=240 outputs=2 draws=72000 band_draws=2000 param_interval90_coverage=1.0000 (480/480) predictive_interval90_coverage=1.0000 (480/480) band_halfwidth90_mean=0.018941 residual_sd=0.004387 residual_sd_df_adjusted=0.004552 df=446 assumed_likelihood_noise=0.050000 sampled_params=34
+diag_observable=0 rhat_rank=1.00042 ess_bulk=4702.8 ess_tail=2759.2 chain_means=[-1.6264845705297257, -1.6266320878201062, -1.626192517141501, -1.626528439965513]
+diag_observable=1 rhat_rank=1.00045 ess_bulk=4535.1 ess_tail=2758.0 chain_means=[-0.8418463742766116, -0.8414430567986435, -0.841582909580734, -0.8418913952840699]
+diag_observable=2 rhat_rank=1.00274 ess_bulk=4534.3 ess_tail=2953.5 chain_means=[-1.5039283545480835, -1.5038269875182046, -1.5037917546629906, -1.5041538458996349]
+diag_observable=3 rhat_rank=1.00138 ess_bulk=4789.1 ess_tail=4290.8 chain_means=[-0.7475594215624862, -0.7476805414358775, -0.747620792693562, -0.7480872480074564]
+diag_observable=4 rhat_rank=1.00085 ess_bulk=4494.8 ess_tail=2873.1 chain_means=[-1.4346197375986312, -1.4344282170534135, -1.4347591619624032, -1.4352044784294233]
+diag_observable=5 rhat_rank=1.00162 ess_bulk=5562.2 ess_tail=2284.6 chain_means=[-0.6287042755186558, -0.6294206836819649, -0.6289266488618321, -0.6292469637625747]
+diag_observable=6 rhat_rank=1.00099 ess_bulk=4185.5 ess_tail=2604.9 chain_means=[-1.4292510726253191, -1.4292118388017019, -1.429107429365317, -1.4294996084570886]
+diag_observable=7 rhat_rank=1.00102 ess_bulk=3920.6 ess_tail=2144.3 chain_means=[-0.7391053374906381, -0.7390998901757929, -0.7389039861030049, -0.7384881088336309]
+chain_diagnostics observables=8 rhat_rank_max=1.00274 ess_bulk_min=3920.6 ess_tail_min=2144.3 gate=true gate_definition=4_chains_rank_rhat<1.01_bulk_ess>=400
+limitations: synthetic targets; fixture embeddings, not live text; sample_space=readout_conditional_34d; warm-started jittered chains; not a promotion or calibration result

@@ -28,6 +28,7 @@
 #   ./scripts/check-pcnl-gates qk-gate         # one gate (name or log prefix)
 #   ./scripts/check-pcnl-gates --all           # including the slow ones
 #   ./scripts/check-pcnl-gates --alts          # also the documented alternates
+#   ./scripts/check-pcnl-gates --quick         # only the per-push quick rows
 #   ./scripts/check-pcnl-gates --check-manifest # structure only, no numerics
 #
 # `--check-manifest` needs no built binary and no gate run: it asserts that the
@@ -35,6 +36,13 @@
 # log still contains summary lines. That is the shape per-push CI can afford
 # (see `.github/workflows/ci.yml`, job "artifact + corpus drift gates"); the
 # numeric sweep is the scheduled lane in `.github/workflows/pcnl-gates.yml`.
+#
+# `--quick` runs only `QUICK_NAMES`: the three cheapest rows (stream ~35 s,
+# pilot ~165 s, readout-exact ~292 s on an idle machine, so ~8 min plus the
+# release build; 1,410 s measured once while another job held the machine).
+# That is the per-push lane in `ci.yml`, where the scheduled lane's full sweep
+# is unaffordable. It selects the named rows only -- it is never a silent
+# subset: the closing report names every row it did not run.
 #
 # `--skip-slow` is the default: entries budgeted above `SLOW_SECS` (900 s) are
 # not run, so the script stays usable as a pre-commit check. They are never
@@ -54,6 +62,9 @@ LOG_DIR=logs/pcnl_r13_gates
 BIN_DIR=./target/release/examples
 FIXTURE=docs/fixtures/ultrabert_20ng4_embeddings.safetensors
 SLOW_SECS=900
+# Per-push lane: see the header. Names only, so a renamed row fails the
+# selection check below instead of silently shrinking the quick lane.
+QUICK_NAMES="stream pilot readout-exact"
 
 # name|class|budget_s|log|program|arguments
 # class: gate  = a row of the R13 gate table, run by default
@@ -73,6 +84,9 @@ cn-exact-dense|gate|700|cn-exact-dense.log|vector_regression|--readout-only --ke
 # Twice the chain length of the row above, same start: tests whether the CN ESS is
 # length-limited (it is: 620.9 -> 1720.5 bulk) rather than a stuck chain.
 cn-exact-dense-12k|alt|1300|cn-exact-dense-12k.log|vector_regression|--readout-only --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 12000 --burn 3000 --thin 1 --draws 9000 --chains 4
+# Four times the original row's chain length (2x the 12k one): the ESS test is
+# linear-in-draws scaling, since a stuck chain would plateau instead.
+cn-exact-dense-24k|alt|3200|cn-exact-dense-24k.log|vector_regression|--readout-only --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 24000 --burn 3000 --thin 1 --draws 21000 --chains 4
 basins|gate|300|basins.log|vector_basins|--runs 2 --steps 8000
 stream|gate|90|stream.log|vector_stream|--prefixes 4 --adam-steps 300 --lr 0.02
 jitter-lf4|gate|600|jitter-lf4.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass lowrank --lowrank-rank 32 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --hmc-jitter --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4
@@ -88,6 +102,7 @@ OUT=target/r13-logs/gate-diff-$STAMP
 SEL=()
 RUN_ALL=0
 RUN_ALTS=0
+RUN_QUICK=0
 CHECK_MANIFEST=0
 
 while [ $# -gt 0 ]; do
@@ -95,6 +110,7 @@ while [ $# -gt 0 ]; do
     --list)     printf '%s\n' "$MANIFEST" | awk -F'|' '{ printf "%-20s %-5s %5ss  %s\n", $1, $2, $3, $4 }'; exit 0 ;;
     --all)      RUN_ALL=1 ;;
     --alts)     RUN_ALTS=1 ;;
+    --quick)    RUN_QUICK=1 ;;
     --check-manifest) CHECK_MANIFEST=1 ;;
     --skip-slow) RUN_ALL=0 ;;
     --out)      OUT=${2:?--out needs a directory}; shift ;;
@@ -108,6 +124,15 @@ done
 [ -d "$LOG_DIR" ] || { echo "setup: $LOG_DIR missing" >&2; exit 2; }
 [ "$CHECK_MANIFEST" -eq 1 ] || [ -f "$FIXTURE" ] \
   || { echo "setup: fixture $FIXTURE missing" >&2; exit 2; }
+
+# A quick-lane row that no longer exists would make the per-push lane quietly
+# cover less than it claims, so resolve every name against the manifest.
+if [ "$RUN_QUICK" -eq 1 ]; then
+  for qn in $QUICK_NAMES; do
+    printf '%s\n' "$MANIFEST" | awk -F'|' -v n="$qn" '$1 == n { found = 1 } END { exit !found }' \
+      || { echo "setup: --quick names '$qn', which is not in the manifest" >&2; exit 2; }
+  done
+fi
 
 # --- coverage: manifest <-> directory -------------------------------------
 coverage_problem=0
@@ -127,7 +152,7 @@ done <<< "$MANIFEST"
 lines_problem=0
 while IFS='|' read -r name _cls _budget log _prog _args; do
   [ -f "$LOG_DIR/$log" ] || continue   # already reported by the coverage pass
-  n=$(grep -cE '^(posterior |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$LOG_DIR/$log" 2>/dev/null)
+  n=$(grep -cE '^(posterior |calibration |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$LOG_DIR/$log" 2>/dev/null)
   [ "${n:-0}" -gt 0 ] \
     || { echo "coverage: $LOG_DIR/$log (entry '$name') has no summary lines" >&2; lines_problem=1; }
 done <<< "$MANIFEST"
@@ -153,6 +178,10 @@ selected() { # name class budget
     done
     return 1
   fi
+  if [ "$RUN_QUICK" -eq 1 ]; then
+    case " $QUICK_NAMES " in *" $name "*) return 0 ;; esac
+    return 1
+  fi
   [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ] && return 1
   [ "$RUN_ALL" -eq 0 ] && [ "$budget" -gt "$SLOW_SECS" ] && return 1
   return 0
@@ -160,7 +189,7 @@ selected() { # name class budget
 
 # Summary lines only; see the header for why chain lines are excluded.
 summaries() {
-  grep -E '^(posterior |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$1" 2>/dev/null \
+  grep -E '^(posterior |calibration |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$1" 2>/dev/null \
     | sed -e 's/[[:space:]]\+/ /g' -e 's/ *$//'
 }
 
@@ -205,7 +234,9 @@ echo
 while IFS='|' read -r name cls budget log prog args; do
   if ! selected "$name" "$cls" "$budget" "$log"; then
     skipped=$((skipped + 1))
-    if [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ]; then
+    if [ "$RUN_QUICK" -eq 1 ]; then
+      SKIPPED+=("$name (not in the per-push quick set; --all)")
+    elif [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ]; then
       SKIPPED+=("$name (alternate; --alts)")
     elif [ "$RUN_ALL" -eq 0 ] && [ "$budget" -gt "$SLOW_SECS" ]; then
       SKIPPED+=("$name (budget ${budget}s > ${SLOW_SECS}s; --all)")
