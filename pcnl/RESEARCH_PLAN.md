@@ -472,7 +472,11 @@ ESS `4.8` / RMSE `0.168598` exactly (swaps `0/240`); under `prior` the same
 command gives `2.15397` / `5.1` / `0.096604`. The CN exact-dense row was also
 re-executed and needs `--readout-only` — without it `--proposal exact` with
 `--init mean` is refused — giving R̂ `1.00616` / ESS `620.9` on the
-readout-conditional (dim 34) target. The conclusions those rows support —
+readout-conditional (dim 34) target. Its ESS was short because the chain was:
+doubling to `--steps 12000 --burn 3000 --draws 9000` (`cn-exact-dense-12k`)
+raises bulk ESS to `1720.5` and tail ESS to `1107.3` with R̂ `1.00423` and the
+same point estimate, so the CN row's mixing caveat is a draw-count effect. The
+conclusions those rows support —
 tempering is not viable at this energy scale, jitter does not close the gate —
 hold in the re-runs.
 

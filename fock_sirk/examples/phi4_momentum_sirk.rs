@@ -28,15 +28,18 @@ use fock_sirk::joint_sirk::{
     solve_joint_sirk,
 };
 use fock_sirk::sm_defect::{defect_terms, reduced_growth};
-use nalgebra::DMatrix;
 use nested_fock_algebra::exact_inner::{ActionLimits, InnerExpr, JointOuterBasis, NestedVector};
 use nested_fock_algebra::phi4_momentum::{ScalarMomCont, frozen_jet_comparison, occupations_of};
 use nested_fock_algebra::phi4_scalar::ScalarGrid;
 use num_complex::Complex64 as C;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::time::Instant;
+
+mod common;
+
+use common::window_reference::WindowOperator;
 
 fn vacuum_support() -> Vec<([u32; 4], f64)> {
     vec![([0, 0, 0, 0], 1.0)]
@@ -142,73 +145,6 @@ fn return_probability(
     let coefficients = result.time_evolve(t).expect("finite time");
     let state = result.reconstruct(&coefficients).expect("reconstruction");
     joint_inner_product(initial, &state).norm_sqr()
-}
-
-/// Exact dense Padé evolution of one declared window (the sharp reference tier).
-struct WindowOperator {
-    index: BTreeMap<JointOuterBasis, usize>,
-    matrix: DMatrix<C>,
-}
-
-impl WindowOperator {
-    fn build(h: &InnerExpr, window: &BTreeSet<JointOuterBasis>) -> Self {
-        let labels: Vec<JointOuterBasis> = window.iter().cloned().collect();
-        let index: BTreeMap<JointOuterBasis, usize> = labels
-            .iter()
-            .cloned()
-            .enumerate()
-            .map(|(i, b)| (b, i))
-            .collect();
-        let n = labels.len();
-        let mut matrix = DMatrix::<C>::zeros(n, n);
-        for (j, basis) in labels.iter().enumerate() {
-            let image = h
-                .d_gamma(
-                    &NestedVector::from([(basis.clone(), C::new(1.0, 0.0))]),
-                    ActionLimits::default(),
-                )
-                .expect("finite action");
-            for (target, amplitude) in image {
-                if let Some(&i) = index.get(&target) {
-                    matrix[(i, j)] += amplitude;
-                }
-            }
-        }
-        Self { index, matrix }
-    }
-
-    fn reference_return(&self, initial: &NestedVector, t: f64) -> f64 {
-        let basis = initial.keys().next().expect("nonempty seed").clone();
-        let j = self.index[&basis];
-        (self.matrix.clone() * C::new(0.0, -t)).exp()[(j, j)].norm_sqr()
-    }
-
-    /// `|⟨ψ|ψ(t)⟩ − ⟨ψ|w(t)⟩|` on the declared window: the amplitude error the
-    /// full-action amplitude bound has to dominate. The seed is `e_j`, so this
-    /// is one entry of the exact column against the reconstructed SIRK state.
-    fn amplitude_gap(
-        &self,
-        result: &fock_sirk::joint_sirk::JointSirkResult,
-        initial: &NestedVector,
-        t: f64,
-    ) -> f64 {
-        let basis = initial.keys().next().expect("nonempty seed").clone();
-        let j = self.index[&basis];
-        let exact = (self.matrix.clone() * C::new(0.0, -t))
-            .exp()
-            .column(j)
-            .into_owned();
-        let state = result
-            .reconstruct(&result.time_evolve(t).expect("finite time"))
-            .expect("reconstruction");
-        let mut sirk = C::new(0.0, 0.0);
-        for (label, amplitude) in &state {
-            if self.index.get(label) == Some(&j) {
-                sirk += *amplitude;
-            }
-        }
-        (exact[j] - sirk).norm()
-    }
 }
 
 fn shifts_json(shifts: &[C]) -> Value {
@@ -770,6 +706,17 @@ fn main() {
              formed inside h before dGamma"
         ),
     );
+    root.insert(
+        "reference_tier".into(),
+        json!({
+            "method": "Hermitian Lanczos seed column + Padé exp of the tridiagonal",
+            "krylov_checkpoints": [64, 128, 256, 512],
+            "convergence_tolerance_on_column": 1e-13,
+            "replaced": "dense n x n Padé exp of the window matrix (cubic in the label count)",
+            "why": "past C = 24 the dense reference dominated the cell it certified; see docs/VERIFY_PHI4_MOMENTUM.md §5.8",
+            "agreement_with_dense": "§5.8: every return_probability_window_exact entry moved by at most 7.1e-14 absolute against the dense run to C = 26",
+        }),
+    );
     root.insert("rank_two_cell".into(), rank2);
     root.insert("cutoff_sweep".into(), cutoffs);
     root.insert("rank_sweep".into(), ranks);
@@ -778,7 +725,7 @@ fn main() {
     root.insert(
         "limitations".into(),
         json!([
-            "the full-action charge is the amplitude-overlap bound (2 a + a^2 on <psi|e>), not the state bound: the state bound was tightened from 5.95 to 0.18 and its charge 0.39 -> 0.00076 (base), an ~500x improvement, which is what lets the defect route certify the 5.6e-2 momentum-spread response (charge 1.27e-2) but not the 1.6e-3 coupling response (charge 1.79e-3, a factor 1.1 short). The sharp tier (measured compressed-flow discrepancy against the exact Pade evolution of the declared window) certifies both",
+            "the full-action charge is the amplitude-overlap bound (2 a + a^2 on <psi|e>), not the state bound: the state bound was tightened from 5.95 to 0.18 and its charge 0.39 -> 0.00076 (base), an ~500x improvement, which is what lets the defect route certify the 5.6e-2 momentum-spread response (charge 1.27e-2) but not the 1.6e-3 coupling response (charge 1.79e-3, a factor 1.1 short). The sharp tier (measured compressed-flow discrepancy against the exact seed-column evolution of the declared window) certifies both",
             "the rank-2 cell on the degree-2 window reports the windowed return probability, which is 8.65e-4 below the converged window value because the omitted tail (squared norm 9/2) is projected out",
             "the ForwardProducts diagnostic is more accurate than shift-invert at m = 4 on these bounded windows; the plan's degradation claim appears only as growth with C, not as a rank-for-rank deficit",
             "momenta are continuous; no lattice or momentum sum is used anywhere in this record",

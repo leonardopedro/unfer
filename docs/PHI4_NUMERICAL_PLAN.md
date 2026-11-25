@@ -37,7 +37,9 @@ amplitude-based probability charges are approximately $0.000763$, $0.001024$ and
 $0.01189$ (base, coupled, spread). Their paired charge is $0.001786$ for coupling
 and $0.01266$ for spread. The computed spread interval excludes zero and the coupling
 interval includes it. The JSON field named `certified` uses a sampled overlap integral.
-The field named `exact` uses floating-point Padé evolution of the declared window.
+The field named `exact` is the exact seed column of the declared window's evolution
+(a Hermitian-Lanczos `exp(-i t H_window)` action; formerly a dense floating-point Padé
+exponential, reproduced to about $10^{-15}$ — see [§5.8](VERIFY_PHI4_MOMENTUM.md)).
 They provide reproducible comparisons. Neither supplies the missing error bounds in §3.
 The periodic one- and two-site data and the static jet remain regression controls
 for different Hamiltonians.

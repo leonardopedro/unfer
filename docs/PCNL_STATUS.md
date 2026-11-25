@@ -7755,6 +7755,7 @@ RMSE `0.130804` instead of `0.144261` for the pilot row and
 | multimodality basins — RMSE 0.0770/0.0871, potentials 28.09/38.71 | `vector_basins --runs 2 --steps 8000` | `logs/pcnl_r13_gates/basins.log` (re-verified: `28.0901`/`38.7083`, RMSE `0.076978`/`0.087130`) |
 | continual stream — coverage90 0.983–1.000, z² 0.02–0.36 | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | `logs/pcnl_r13_gates/stream.log` (re-verified: warm coverage `1.0/1.0/0.9917/0.9833`, z² `0.032/0.024/0.275/0.356`) |
 | CN exact-dense, 6,000 steps — R̂ 1.00616, ESS 620.9, tail 201.3, RMSE 0.105528 (`gate=true`) | `vector_regression --readout-only --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 6000 --burn 1500 --thin 1 --draws 4500 --chains 4` | `logs/pcnl_r13_gates/cn-exact-dense.log` (re-verified; readout-conditional, dim 34) |
+| CN exact-dense, 12,000 steps — R̂ 1.00423, ESS 1720.5, tail 1107.3, RMSE 0.105396 (`gate=true`) | as above with `--steps 12000 --burn 3000 --draws 9000` | `logs/pcnl_r13_gates/cn-exact-dense-12k.log` (length-scaling probe, not a new gate) |
 
 The readout, pilot, Hessian, low-rank 8/32 (with and without jitter), hit-and-run
 400/5,000, q/k gate, basins and stream rows were re-executed and match to the
@@ -7793,6 +7794,16 @@ the system mid-session, so only the numbers in this table survive for those:
   `0.121815`) with `--steps 5000 --thin 2 --draws 1875`, i.e. burn `1,250`
   derived from `steps/4`. Twelve times the moves of the 400-move gate buys ESS
   `4.5` against `4.9`: the plateau is not a move-count problem.
+- **CN ESS is length-limited, not stuck** (`cn-exact-dense-12k`, kept as an
+  alternate). Doubling the chain of the 6,000-step CN row — `--steps 12000
+  --burn 3000 --draws 9000`, same start, same proposal — gives ESS `1720.5`
+  against `620.9` (2.8× for 2× the draws, so the earlier figure was also
+  truncated by the estimator at 4,500 draws), tail ESS `1107.3` against
+  `201.3`, R̂ `1.00423` against `1.00616`, and an unchanged point estimate
+  (RMSE `0.105396` vs `0.105528`, `param_interval90_coverage` `0.1583` both
+  runs, predictive `141/240` vs `142/240`). The mixing caveat on this row is
+  therefore finite-sample, not a failure to explore; the 90% interval coverage
+  of `0.158` is still far from nominal and is not a promotion.
 - **low-rank 32 + trajectory jitter — recovered**, on the same flag the other
   legacy rows needed: `--start-scale legacy`. With it the run returns R̂
   `2.14626`, ESS `5.1`, tail `10.0`, RMSE `0.092472` exactly. Without the flag

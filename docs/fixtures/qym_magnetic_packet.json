@@ -1,0 +1,37 @@
+{
+  "schema": "qym-cubic-continuous-packet/v1",
+  "spatial_units": "Gaussian length 1, Fourier exp(-2 pi i k.x), Lebesgue dx and dk",
+  "profiles": [
+    "A_1^1=X f_1",
+    "A_2^2=Y f_2",
+    "A_2^3=Z x_1 f_3"
+  ],
+  "f_j": "exp(-pi |x|^2) cos(2 pi j x_3)",
+  "colour": "SU(2) block, f^3_12=+1, f^2_13=-1; coupling external",
+  "convention": "positive electric and magnetic squares with factor 1/2",
+  "states": "one outer excitation; inner He_0^3 to He_1(X)He_1(Y)He_1(Z), iid N(0,1)",
+  "scope": "unreduced Weyl-gauge packet form; no physical spectral or mass witness",
+  "soft_control": "i(-k_2,k_1,0) exp(-pi |k|^2/width^2), one colour, curl energy/norm^2 = 5*pi*width^2/2",
+  "coupling": 1,
+  "packet_action": {
+    "formula": "sum_i (P_i^2 / metric_i + curl_i Q_i^2)/2 + g entry XYZ + g^2 X^2 (wall_12 Y^2 + wall_13 Z^2)/2",
+    "profile_metric": [
+      0.17710681565140393,
+      0.17677669529878676,
+      0.014067442439954782
+    ],
+    "curl_norm_squared": [
+      8.091659141541145,
+      29.02617753310862,
+      5.175020000724799
+    ],
+    "wall_12_13": [
+      0.03327576139807117,
+      0.0012971322602180826
+    ]
+  },
+  "coordinate_entry": "sqrt(3)*(exp(16*pi/3) + exp(12*pi) + exp(16*pi) + exp(52*pi/3))*exp(-52*pi/3)/36",
+  "fourier_colour_3": "sqrt(3)*(exp(16*pi/3) + exp(12*pi) + exp(16*pi) + exp(52*pi/3))*exp(-52*pi/3)/54",
+  "fourier_colour_2": "sqrt(3)*(exp(16*pi/3) + exp(12*pi) + exp(16*pi) + exp(52*pi/3))*exp(-52*pi/3)/108",
+  "entry_decimal": "0.0488421330902749521180563611401"
+}

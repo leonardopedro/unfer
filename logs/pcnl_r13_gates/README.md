@@ -36,6 +36,7 @@ Every run is from the repository root, against
 | `hitrun-5000.log` | `vector_regression --kernel hitrun --init point --steps 5000 --hr-width 1 --thin 2 --draws 1875 --chains 4` | R̂ 3.03445, ESS 4.5, RMSE 0.121815 |
 | `temper-4.log` | `vector_regression --kernel hmc --temper 4 --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass hessdiag --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | swaps 0/240 on all chains; R̂ 2.44665, ESS 4.8, tail 10.0, RMSE 0.168598 (matches the recorded row exactly) |
 | `cn-exact-dense.log` | `vector_regression --readout-only --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 6000 --burn 1500 --thin 1 --draws 4500 --chains 4` | posterior only (`readout_conditional`, dim 34); R̂ 1.00616, ESS 620.9, tail 201.3, RMSE 0.105528; `gate=true` |
+| `cn-exact-dense-12k.log` (alt) | the same with `--steps 12000 --burn 3000 --draws 9000` | ESS grows with length: R̂ 1.00423, ESS 1720.5, tail 1107.3, RMSE 0.105396; `gate=true` |
 | `basins.log` | `vector_basins --runs 2 --steps 8000` | potentials 28.0901/38.7083, RMSE 0.076978/0.087130 |
 | `stream.log` | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | warm coverage 1.0/1.0/0.9917/0.9833, z² 0.032/0.024/0.275/0.356 |
 
@@ -53,4 +54,14 @@ mode fit rather than an 8000-step one) reproduces 2.44665 / 4.8 / 0.168598.
 The CN row needs `--readout-only` before `--proposal exact` / `--init mean`:
 the analytic posterior only exists for the readout conditional, so the pairing
 is rejected outright ("require `--readout-only`") without it, and the run then
-reports `sample_space=readout_conditional` rather than the full parameter.
+reports `sample_space=readout_conditional` rather than the full parameter. The
+`12k` alternate exists to separate "poor mixing" from "short chain": at twice
+the draws with the same start and proposal the bulk ESS goes 620.9 → 1720.5 and
+the tail ESS 201.3 → 1107.3, so the CN row's ESS was estimator-truncated rather
+than a stuck chain.
+
+Only `--all` runs every row. Budgets are runtime estimates and anything
+budgeted above 900 s (currently `temper-4` and `hitrun-5000`) is skipped by the
+default sweep, which is why the checker now prints a `not selected:` line for
+every row it left out, with the flag that would select it. The `alt` rows
+(`cn-exact-dense-12k` and the two `qk` alternates) need `--alts`.

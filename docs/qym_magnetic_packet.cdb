@@ -1,0 +1,141 @@
+# Continuous packet test of the positive Weyl-gauge magnetic square in yang_mills_hamiltonian.cdb.
+# From the unfer root: cadabra2-cli -q -n docs/qym_magnetic_packet.cdb
+# amplitudes X,Y,Z are independent standard-normal Mehler coordinates (unit-width prior).
+# A_1^1=X u, A_2^2=Y v, A_2^3=Z w. f^3_12=+1, f^2_13=-1, g is external.
+import itertools
+import json
+from pathlib import Path
+import sympy as sp
+
+# F12^2 and F12^3. The other curls only enter quadratic terms on these packets.
+magnetic := ((Y*Vd - g*X*Z*U*W)*(Y*Vd - g*X*Z*U*W) + (Z*Wd + g*X*Y*U*V)*(Z*Wd + g*X*Y*U*V))/2.
+distribute(magnetic)
+sort_product(magnetic)
+collect_terms(magnetic)
+expected := Y*Vd*Y*Vd/2 + Z*Wd*Z*Wd/2 + g*X*Y*Z*U*(V*Wd-W*Vd) + g*X*Z*U*W*g*X*Z*U*W/2 + g*X*Y*U*V*g*X*Y*U*V/2.
+difference := @(magnetic) - @(expected).
+distribute(difference)
+sort_product(difference)
+collect_terms(difference)
+assert str(difference) == '0', str(difference)
+print("CHECK ordered-magnetic-square (0 = ok): 0")
+
+def check(name, expr):
+    difference = sp.simplify(expr)
+    assert difference == 0, (name, difference)
+    print("CHECK " + name + " (0 = ok): 0")
+
+x, z = sp.symbols("x z", real=True)
+pi = sp.pi
+def gaussian_moment(power, rate):
+    return sp.integrate(x**power * sp.exp(-pi*rate*x**2), (x, -sp.oo, sp.oo))
+
+# f_j = exp(-pi |x|^2) cos(2 pi j x_3). The three profiles are f_1, f_2, x_1 f_3.
+env = sp.exp(-pi*x**2)
+check("coordinate-Wronskian", env*sp.diff(x*env, x) - x*env*sp.diff(env, x) - env**2)
+# The z integral of a polarized Gaussian is its Fourier transform at signed sum n.
+t = sp.symbols("t", real=True)
+z_transform = sp.fourier_transform(sp.exp(-3*pi*z**2), z, t)
+centres = (1, 2, 3)
+triads = list(itertools.product(*[(c, -c) for c in centres]))
+coordinate = gaussian_moment(0, 3)**2 * sum(z_transform.subs(t, sum(row)) for row in triads)/8
+
+# Momentum calculation. Integrate q in each direction by completing the convolution square.
+# q is the leg of U, k-q the second leg; the x_1 factor in W transforms to -i (k-q)_1.
+q, k, a, b, c = sp.symbols("q k a b c", real=True)
+check("convolution-square", (q-a)**2+(k-q-b)**2-2*(q-(k+a-b)/2)**2-(k-a-b)**2/2)
+pair_mass = gaussian_moment(0, 2)**3
+check("odd-convolution-moment", gaussian_moment(1, 2))
+# In direction 1 all centres vanish; the packet carrying x_1 contributes -i k_1/2
+# after convolution, and -i k_1 before convolution.
+check("overlap-square", (k-c)**2+(k-a-b)**2/2-3*(k-(2*c+a+b)/3)**2/2-(c-a-b)**2/3)
+def overlap(first, second, tested):
+    return (pair_mass * gaussian_moment(2, sp.Rational(3,2)) *
+            gaussian_moment(0, sp.Rational(3,2))**2 * sp.exp(-pi*(tested-first-second)**2/3))
+
+# Conjugate the differentiated test leg. The second colour has the negative structure constant.
+first_factor = sp.conjugate(2*pi*sp.I*(-sp.I))
+second_factor = -sp.conjugate(2*pi*sp.I)*(-sp.I/2)
+first = first_factor*sum(overlap(a,b,c) for a,b,c in triads)/8
+second = second_factor*sum(overlap(a,c,b) for a,b,c in triads)/8
+entry = sp.factor(coordinate)
+check("parseval-first-colour", first - 2*entry/3)
+check("parseval-second-colour", second - entry/3)
+check("both-ordered-cross-terms", first+second-entry)
+check("adjoint", sp.conjugate(entry)-entry)
+assert entry.is_positive
+assert overlap(1,2,3) > overlap(-1,2,3)
+# On three He_0 seeds Q=b+b† gives He_1 in each independent amplitude, norm one.
+# Other terms in the complete square have the wrong total parity for this matrix element.
+field, coupling = sp.symbols("field coupling", real=True)
+normal_second = sp.integrate(field**2*sp.exp(-field**2/2)/sp.sqrt(2*pi),(field,-sp.oo,sp.oo))
+check("normalized-Mehler-matrix-element", (coupling*entry)*normal_second**3-coupling*entry)
+check("abelian-limit", (coupling*entry).subs(coupling,0))
+assert sp.simplify(entry - (-entry)).is_positive
+assert sp.simplify(entry - entry/2).is_positive
+
+# Pull back kinetic and magnetic energies to this three-profile ansatz before quantization.
+# The L2 metric is diagonal by colour. Each kinetic coefficient is the inverse profile norm².
+def z_product(centres):
+    signs = itertools.product(*[(c, -c) for c in centres])
+    rate = sp.Integer(len(centres))
+    return sum(sp.exp(-pi*sum(row)**2/rate) for row in signs)/(2**len(centres)*sp.sqrt(rate))
+
+def z_gradient(centre):
+    # Parseval for the longitudinal derivative of f_j. Shifted Gaussian second moment.
+    signs = (sp.Integer(centre), -sp.Integer(centre))
+    return pi**2*sum(sp.exp(-pi*(a-b)**2/2) *
+                     (gaussian_moment(2,2)+(a+b)**2*gaussian_moment(0,2)/4)
+                     for a,b in itertools.product(signs, repeat=2))
+
+m0 = gaussian_moment(0,2)
+m2 = gaussian_moment(2,2)
+m4 = gaussian_moment(4,2)
+norms = []
+curls = []
+for centre in centres:
+    x_norm = m2 if centre == 3 else m0
+    x_derivative = (m0-4*pi*m2+4*pi**2*m4 if centre == 3 else 4*pi**2*m2)
+    z_norm = z_product([centre, centre])
+    norms.append(x_norm*m0*z_norm)
+    curls.append(x_derivative*m0*z_norm + x_norm*m0*z_gradient(centre))
+
+walls = [gaussian_moment(power,4)*gaussian_moment(0,4)*z_product([1,1,j,j])
+         for power,j in [(0,2),(2,3)]]
+def decimals(values):
+    return [float(sp.N(value, 17)) for value in values]
+
+# Single-colour transverse control, Ahat = i(-k2,k1,0) exp(-pi |k|² / width²).
+# k.Ahat = 0; the colour bracket vanishes. The prefactor i ensures spatial reality.
+width = sp.symbols("width", positive=True)
+den = 2*m2*m0**2
+numer = 2*m4*m0**2 + 4*m2**2*m0
+soft_energy = (2*pi)**2 * width**2 * numer/(2*den)
+check("normalized-soft-curl", soft_energy-5*pi*width**2/2)
+
+record = {
+    "schema": "qym-cubic-continuous-packet/v1",
+    "spatial_units": "Gaussian length 1, Fourier exp(-2 pi i k.x), Lebesgue dx and dk",
+    "profiles": ["A_1^1=X f_1", "A_2^2=Y f_2", "A_2^3=Z x_1 f_3"],
+    "f_j": "exp(-pi |x|^2) cos(2 pi j x_3)",
+    "colour": "SU(2) block, f^3_12=+1, f^2_13=-1; coupling external",
+    "convention": "positive electric and magnetic squares with factor 1/2",
+    "states": "one outer excitation; inner He_0^3 to He_1(X)He_1(Y)He_1(Z), iid N(0,1)",
+    "scope": "unreduced Weyl-gauge packet form; no physical spectral or mass witness",
+    "soft_control": "i(-k_2,k_1,0) exp(-pi |k|^2/width^2), one colour, curl energy/norm^2 = 5*pi*width^2/2",
+    "coupling": 1,
+    "packet_action": {
+        "formula": "sum_i (P_i^2 / metric_i + curl_i Q_i^2)/2 + g entry XYZ + g^2 X^2 (wall_12 Y^2 + wall_13 Z^2)/2",
+        "profile_metric": decimals(norms),
+        "curl_norm_squared": decimals(curls),
+        "wall_12_13": decimals(walls),
+    },
+    "coordinate_entry": str(entry),
+    "fourier_colour_3": str(sp.factor(first)),
+    "fourier_colour_2": str(sp.factor(second)),
+    "entry_decimal": str(sp.N(entry, 30)),
+}
+folder = Path("docs/fixtures")
+assert folder.is_dir(), "run from the unfer root"
+(folder / "qym_magnetic_packet.json").write_text(json.dumps(record, indent=2) + "\n")
+print("QYM_PACKET_ENTRY", entry, sp.N(entry, 17))

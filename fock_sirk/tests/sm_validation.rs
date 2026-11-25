@@ -40,6 +40,14 @@
 //! sum-of-squares property that holds for any Hermitian symbol dictionary, i.e.
 //! a test that cannot fail. Re-enable them only together with the helpers and a
 //! re-derivation of the CHECK rows.
+//!
+//! What is *not* left unverified is the rows themselves: the last test in this
+//! file runs `docs/faris_lavine_n_sm.cdb` through `cadabra2-cli` and certifies
+//! that CHECK 17a/17b, 28, 29, 30a-30c and 33 reduce to 0 in the symbolic
+//! module those Rust tests were mirroring (`sm_cdb_check_rows_reduce_to_zero`).
+//! That certifies the algebra, not the numerical dictionary the excluded tests
+//! also wanted; the distinction is recorded there and in
+//! `docs/VERIFY_SM_FARIS_LAVINE.md`.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
@@ -1207,4 +1215,100 @@ mod unbacked_cdb_decomposition {
          N - 1 = (c0-1) + sum-of-squares certificate, and CHECK 17 square verified"
         );
     }
+}
+
+/// The cdb rows the excluded modules above were mirroring, certified where they
+/// actually live.
+///
+/// `tests 13/15` wanted Rust-side re-derivations of CHECK 17/28-30/33; the
+/// helper layer that backed them was never committed. The same rows exist as
+/// labeled zero-intent handles in `docs/faris_lavine_n_sm.cdb`, and this test
+/// runs that module and requires every one of them to print 0 — the same
+/// claim `scripts/verify_cdb_modules.sh` makes for all `docs/*.cdb`, narrowed
+/// to the rows these Rust tests named.
+///
+/// Cadabra2 is a **subprocess, never linked** (S30). Engine-dependent tests
+/// skip instead of passing when the binary is absent: an unrunnable check is
+/// not a green one.
+#[test]
+fn sm_cdb_check_rows_reduce_to_zero() {
+    use std::process::Command;
+
+    // Rows the excluded modules cite. CHECK 17 is the Cabibbo unitarity of the
+    // quark mixing matrix, 28 the lepton-Yukawa (PMNS-bounded) square, 29/30 the
+    // BRST gauge-fixing term at A_0 = 0, and 33 the "N >= 1" accounting
+    // identity. CHECK 33 appears twice in the module; both lines must be zero.
+    const ROWS: [&str; 7] = [
+        "CHECK 17a",
+        "CHECK 17b",
+        "CHECK 28",
+        "CHECK 29",
+        "CHECK 30a",
+        "CHECK 30b",
+        "CHECK 30c",
+    ];
+    const ROWS_33: &str = "CHECK 33";
+
+    let cli = std::env::var_os("CADABRA_CLI").unwrap_or_else(|| "cadabra2-cli".into());
+    let module = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/faris_lavine_n_sm.cdb");
+    let output = match Command::new(&cli).args(["-q", "-n", module]).output() {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("SKIP: cadabra2 engine unavailable ({cli:?}: {error}); set CADABRA_CLI");
+            return;
+        }
+    };
+    assert!(
+        output.status.success(),
+        "docs/faris_lavine_n_sm.cdb failed to run: {:?}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // `CHECK 17a SM ... (0 = ok) : 0` — take the printed value after the last
+    // colon and require it to be exactly zero.
+    let value_of = |label: &str, line: &str| -> f64 {
+        let value = line.rsplit(':').next().unwrap_or("").trim();
+        value.parse::<f64>().unwrap_or_else(|_| {
+            panic!("{label}: cadabra printed a non-numeric value {value:?} in {line:?}")
+        })
+    };
+
+    let mut seen = 0usize;
+    for row in ROWS {
+        let mut lines = stdout.lines().filter(|line| line.starts_with(row));
+        let line = lines
+            .next()
+            .unwrap_or_else(|| panic!("{row}: no '(0 = ok)' line in the cdb output"));
+        assert!(
+            lines.next().is_none(),
+            "{row}: expected exactly one certified line in the cdb output"
+        );
+        assert_eq!(
+            value_of(row, line),
+            0.0,
+            "{row} did not reduce to 0: {line:?}"
+        );
+        seen += 1;
+    }
+
+    let mut rows_33 = 0usize;
+    for line in stdout.lines().filter(|line| line.starts_with(ROWS_33)) {
+        assert_eq!(
+            value_of(ROWS_33, line),
+            0.0,
+            "{ROWS_33} did not reduce to 0: {line:?}"
+        );
+        rows_33 += 1;
+    }
+    assert!(
+        rows_33 >= 2,
+        "expected both CHECK 33 lines (accounting identity and spatial comparison), saw {rows_33}"
+    );
+
+    eprintln!(
+        "sm_cdb_check_rows: {} CHECK 17/28-30 rows and {} CHECK 33 rows certified zero by {cli:?}",
+        seen, rows_33
+    );
 }
