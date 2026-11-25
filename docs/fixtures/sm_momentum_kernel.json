@@ -1,0 +1,137 @@
+{
+  "conventions": {
+    "adjoint": "f_hat_dagger(q) = f_hat(-q)_dagger",
+    "convolution": "(a*b)(K) = \\int a(q) b(K-q) d^3q",
+    "derivative": "d_i f -> 2\\pi i k_i f_hat(k)",
+    "transfer": "k-l",
+    "transform": "f_hat(k) = \\int e^{-2\\pi i k.x} f(x) d^3x",
+    "two_pi": 6.283185307179586
+  },
+  "elements": {
+    "dirac_left": {
+      "im": 0.0,
+      "re": -2.4484582493201485
+    },
+    "dirac_right": {
+      "im": 0.0,
+      "re": 2.4484582493201485
+    },
+    "gauge_higgs_cross": {
+      "im": -3.3056138516407376,
+      "re": 0.0
+    },
+    "higgs_potential_constant": 119021053.32000001,
+    "longitudinal_curl": 0.0,
+    "magnetic_cross": {
+      "im": 3.544786217144068,
+      "re": 0.0
+    },
+    "scalar_gradient": 0.345,
+    "transfer_integral": 7.252472656811951,
+    "transverse_curl": 0.2,
+    "yukawa_transfer": {
+      "im": 1.4504945313623903,
+      "re": 5.076730859768365
+    }
+  },
+  "evolution": {
+    "defect_frobenius": 296.0312947023059,
+    "first_order_bound": 2.960312947023059,
+    "full_dim": 3,
+    "gram_frobenius": 7.38857961792959,
+    "hermiticity_defect": 0.0,
+    "label": "measured finite packet-basis diagnostic; not a certified enclosure",
+    "leakage": 0.0,
+    "measured_map_gap": 0.44053817410743784,
+    "return_compressed": 0.49490065128024807,
+    "return_full": 0.3733731124267632,
+    "return_gap": 0.12152753885348488,
+    "time": 0.01,
+    "window_dim": 2
+  },
+  "mutations": {
+    "drop_higgs_constant": {
+      "dropped": 0.0,
+      "kept": 119021053.32000001
+    },
+    "drop_two_pi": {
+      "im": 0.5641702486624991,
+      "re": 0.0
+    },
+    "drop_yukawa_adjoint": {
+      "im": -1.4504945313623903,
+      "re": 5.076730859768365
+    },
+    "flip_nonabelian_sign": {
+      "im": -3.544786217144068,
+      "re": 0.0
+    },
+    "remove_higgs_cross": {
+      "im": 0.0,
+      "re": 0.0
+    },
+    "reverse_transfer": 7.016000284088793
+  },
+  "non_claims": [
+    "no continuum or gauge-reduction claim",
+    "no smearing removal or self-adjointness proof",
+    "no joint_sirk run on the complete inner operator",
+    "the cadabra2 symbolic reference has not been executed on this host"
+  ],
+  "outer_lift": {
+    "inner_constant": {
+      "im": -0.5,
+      "re": 1.75
+    },
+    "one_quantum": {
+      "im": -0.5,
+      "re": 1.75
+    },
+    "ordered_product_difference": 2.0000000000000004,
+    "two_quanta": {
+      "im": -1.0000000000000002,
+      "re": 3.500000000000001
+    },
+    "vacuum_terms": 0
+  },
+  "packets": [
+    {
+      "center": [
+        0.4,
+        0.0,
+        0.0
+      ],
+      "width": 0.8
+    },
+    {
+      "center": [
+        -0.2,
+        0.3,
+        0.0
+      ],
+      "width": 0.9
+    },
+    {
+      "center": [
+        0.1,
+        0.1,
+        -0.2
+      ],
+      "width": 0.6
+    }
+  ],
+  "parameters": {
+    "gs": 1.1,
+    "gw": 0.65,
+    "gy": 0.36,
+    "lambda": 0.13,
+    "vev": 246.0,
+    "yu00": {
+      "im": 0.2,
+      "re": 0.7
+    }
+  },
+  "schema": "sm-momentum-kernel/v1",
+  "source": "nested_fock_algebra::sm_momentum (2026-11-24 work order)",
+  "status": "measured"
+}
