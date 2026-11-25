@@ -925,6 +925,43 @@ accuracy. The component budget had to rise from `2.5e7` to `6e7` because the
 `C = 36` window is `5.37e7` components; `ActionLimits::max_work` is `4 × 6e7`
 for the same reason as before.
 
+**Trying to cut the other `36 %`, and failing.** Three variants were measured
+against the §5.11 `C = 26` baseline (`axpy 2.21 s`, `dot 1.63 s`, solve
+`9.77 s`) on one machine state, each A/B'd against the committed kernel:
+
+| variant | `axpy` | `dot` | solve | verdict |
+|---|---|---|---|---|
+| committed (branch on a zero entry) | `2.49 s` | `1.86 s` | `12.06 s` | baseline of this A/B |
+| branch-free (`select` on the same test) | `2.57 s` | `1.93 s` | `12.14 s` | no gain |
+| no zero-skip at all | `2.34 s` | `1.86 s` | `12.14 s` | within noise, and drops the skip |
+| **one** Gram–Schmidt pass instead of two | `1.29 s` | `0.97 s` | `10.73 s` | **fails the orthogonality pin** |
+
+The two branch variants do nothing because the loop is not branch-limited: it
+runs at `4.3–5.0 ns` per element in every form, i.e. it is not vectorised at
+all and the `if` costs nothing next to the scalar complex multiply-add. The
+one-pass variant is the real saving — `11 %` of the solve, `916` steps instead
+of `917` — but it pushes the reorthogonalisation defect to the pin's edge:
+`window_solve_matches_the_map_walk_at_solver_precision` fails with
+`orthonormal basis 3: got 1.0004e-12, expected 0 (tolerance 1e-12)`. Two passes
+are what hold that defect two orders below the tolerance, so the pass count is
+not a free parameter and nothing here was adopted; `joint_sirk.rs` is unchanged.
+The `36 %` is therefore reducible only by an explicitly SIMD complex kernel
+(no such dependency in the tree) or by moving the whole loop to a device — which
+this host cannot run (§5.12, GPU note below).
+
+**The GPU `gemv` is not measured, and the host is the reason.** This machine has
+no CUDA device: no `nvidia-smi`, no `/dev/nvidia*`, no `nvcc`, and
+`examples/debug_cuda.rs` reports that the binary was built without the `cuda`
+feature. The `cuda` feature additionally needs `nvcc` at build time, so the
+project's own triage line cannot be produced here either. What can be said without a device
+is arithmetic, not measurement: the `C = 32` step streams `375.6 MB` from host
+DRAM in `20.9 ms`, while a device-resident matrix would be read at device
+bandwidth (order `0.4 ms` at `1 TB/s`), and the per-step host↔device traffic
+for the one `4845`-vector (`77.5 KB` each way) is order `10 µs` — so a
+device-resident `gemv` is plausible, not demonstrated. Even a free `gemv` would
+leave the `36.6 %` `axpy`/inner-product work on the host, i.e. a `~17.1 s`
+solve (§5.12), unless those kernels move with it. No speedup is claimed.
+
 **The regeneration is a clean one.** Unlike the §5.11 re-record, nothing moved:
 comparing the new fixture with the previous one leaf by leaf, the only
 differences among the `22` shared cells are their `runtime_ms` (the box was
