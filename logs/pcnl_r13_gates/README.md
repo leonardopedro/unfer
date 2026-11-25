@@ -84,12 +84,14 @@ verdict is `false` at that chain length by construction, and the default sweep
 skips them because the full rows subsume them.
 
 The scripts are byte-exact by default, which is only true on the machine that
-recorded the logs. Both GitHub workflows therefore pass `--band 0.2`: the first
-hosted runs of the canary lane moved a 50-step Adam `test_rmse_mean` by 0.1%
-and one `z2` by 4.7% with no code change, and an MCMC accept/reject can flip a
-whole chain, so numeric tolerance cannot separate hardware from behaviour.
-Integer literals (counts), words (`gate=true`) and the `NaN` class still compare
-exactly; `--band` is a gross-drift net, and byte-exact reproduction stays
+recorded the logs. On GitHub's hosted runner, with no code change, a 50-step
+Adam canary moved `test_rmse_mean` by 0.1% and one `z2` by 4.7%, and a 100-step
+HMC canary moved `rhat_rank` `2.54906 → 1.91680` with `ess_tail` `13.4 → 22.8`
+(at 75 draws those are noise, and one accept/reject flip moves the counts in
+`(93/240)`). The per-push lane therefore uses `--structure`: key sequence,
+`gate=`/`sample_space=` words and finiteness must match, magnitudes need not.
+The scheduled `--all` lane uses `--band 0.2`, since its rows are long enough for
+R̂/ESS to mean something. Byte-exact reproduction stays
 `./scripts/check-pcnl-gates` on the recording machine.
 
 Readout-only rows also print a `calibration` line, which scores the same 90%

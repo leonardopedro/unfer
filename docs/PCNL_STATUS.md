@@ -7816,16 +7816,19 @@ did not run. This is the trade the per-push budget forces: ~2 min of coverage
 that fires on the push, with the complete gate sweep still scheduled.
 
 The hosted runner is not the recording machine, so the lane compares with
-`--band 0.2` and never byte-for-byte: the first two GitHub runs of this job
-showed that a seeded 50-step Adam canary moves `test_rmse_mean` by 0.1% and one
-`z2` by 4.7% with no code change, purely from a different CPU/libm, and an MCMC
-accept/reject decision can flip a whole chain — so no digit count can separate
-hardware from behaviour. Counts (`(478/480)`, `rows=240`), words (`gate=true`)
-and the `NaN` class still compare exactly; the band is a gross-drift net.
-Byte-exact reproduction stays `./scripts/check-pcnl-gates` on the machine that
-recorded the logs, which is why that is the default. (The structural check
-`--check-manifest` needs no numerics at all and is what the earlier per-push
-lane ran.)
+`--structure`, not byte-for-byte, and the first GitHub runs are why. Measured on
+that runner with no code change: the 50-step Adam canary moved
+`test_rmse_mean` by 0.1% and one `z2` by 4.7%, and the 100-step HMC canary
+moved `rhat_rank` `2.54906 → 1.91680` and `ess_tail` `13.4 → 22.8` — at 75
+draws per chain those diagnostics are noise rather than estimates, and one
+accept/reject flip also changes the counts inside `(93/240)`. So the lane
+checks what is portable: the key sequence, the `gate=`/`sample_space=` words,
+that every number stays finite (a `NaN` must stay `NaN`), and that the run
+exits 0. Byte-exact reproduction stays `./scripts/check-pcnl-gates` on the
+machine that recorded the logs, which is why that is the default; the
+scheduled `--all` lane, whose rows are long enough for ESS/R̂ to mean something,
+uses `--band 0.2` as a gross-drift net. The lesson generalises: a committed log
+is machine-local evidence, and only structure travels.
 
 The four full-parameter rows (`pilot`, `hessian-64`, `lowrank-8`,
 `lowrank-32`) carried a flag the first reconstruction of this table dropped:
