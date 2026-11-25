@@ -7,6 +7,59 @@ requires its own interacting packet matrix elements and full-action tails.
 [Packet experiment](SM_RESEARCH_PLAN.md#continuous-momentum-numerical-work-order) ·
 [Cadabra2 kernels](SM_HAMILTONIAN_AUDIT.md#continuous-momentum-cadabra2-work-order)
 
+## Continuous-momentum SM kernel (2026-11-24 execution record)
+
+This tree now implements the **first deliverable** of the 2026-11-24 order: a
+nonzero mixed SM matrix element between two distinct smooth momentum packets,
+with the declared Fourier conventions and one finite packet-basis
+one-outer-particle evolution cell. Status: **measured**, with the usual
+non-claims below.
+
+| artifact | role |
+|---|---|
+| `nested_fock_algebra/src/sm_momentum.rs` | Conventions `f̂(k)=∫e^{-2πik·x}f`, `∂ᵢ→2πikᵢ`, `(a⋆b)(K)=∫a(q)b(K−q)`; Gaussian packets; `gauge_magnetic_cross`, `gauge_magnetic_free`, `higgs_gauge_cross`, `transfer_integral`, `yukawa_transfer`, `dirac_symbol`/`dirac_packet_element`, `transverse_curl_projector`, `scalar_gradient_symbol`; mutation switches and 13 unit tests |
+| `fock_sirk/examples/sm_momentum_kernel.rs` | Emits the versioned fixture |
+| `docs/fixtures/sm_momentum_kernel.json` | Schema `sm-momentum-kernel/v1`: conventions, packets, elements, five mutation controls, evolution cell |
+| `fock_sirk/tests/sm_momentum_validation.rs` | Binds the live module to the fixture (8 tests) |
+
+**Measured elements** (packets centred at `(0.4,0,0)`, `(-0.2,0.3,0)` and a
+background at `(0.1,0.1,-0.2)` with widths `0.8/0.9/0.6`; colours `1,5` against
+background `3`, so both nonzero `f^{abc}` act):
+
+* nonabelian magnetic cross `3.544786217144068i` (zero at `gs=0`, zero for a
+  colour commuting with the background);
+* gauge–Higgs (weak) cross `−3.305613851640738i` between realified components
+  `0` and `2` (zero when the cross term is removed);
+* Yukawa transfer `5.076730859768365 + 1.4504945313623903i`;
+* transferred-momentum integral `7.252472656811951`, changing to
+  `7.016000284088793` under the reversed transfer;
+* retained Higgs constant `λv⁴/4 = 1.19021e8`;
+* independent spatial checks: free Dirac entry `2.448458` with the left-handed
+  chirality its exact negative, the transverse projector exactly zero on a
+  longitudinal polarization, and the scalar-gradient symbol `½|k|²`.
+  `dΓ(cI)` gives `0` on the outer vacuum, `c` on one quantum and `2c` on two,
+  and `dΓ(B²) ≠ dΓ(B)²` on a two-quantum state (the ordered-product check).
+
+**Mutation controls** (each flips one convention): omitting `2π` changes the
+magnetic element to `0.5641702486624991i`; flipping the nonabelian sign negates
+it; removing the Higgs cross gives exactly zero; reversing the transfer changes
+the integral; conjugating the Yukawa element gives `5.07673 − 1.45049i`.
+
+**Evolution cell** (`t=0.01`, 3-packet orthonormalized basis, rank-2 window):
+Hermiticity defect `0.0`, full return `0.3733731124`, compressed return
+`0.4949006513`, measured map gap `0.440538` against the recorded first-order
+diagnostic `leakage + t‖D‖‖c‖ = 2.9603129470` (`‖D‖_F = 296.03`). The defect is a
+loose bound here because the packet-basis generator is not a reduced resolvent;
+it is reported as a measured diagnostic, not an enclosure. The two quadrature
+cross-checks (3D packet product, 3D convolution collapse of the 6D transfer
+integral) agree with the closed forms to `1e-9`/`1e-7`.
+
+**Not performed / still open.** The cadabra2 symbolic module (engine absent on
+this host), the full 1,241-expression dictionary routing, the complete inner
+operator and its `joint_sirk` evolution, domain/ESA and physical-gauge
+reduction, and removal of smearing. A finite packet match is evidence for the
+specified packets only.
+
 ## Independent-coordinate research and evidence order (2026-11-15)
 
 Use [SM_RESEARCH_PLAN.md](SM_RESEARCH_PLAN.md), **N6–N14**, for the next numerical and

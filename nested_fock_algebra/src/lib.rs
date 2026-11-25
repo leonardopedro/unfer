@@ -708,6 +708,7 @@ impl Hamiltonian {
 pub mod exact_inner;
 pub mod sm_constraints;
 pub mod sm_full;
+pub mod sm_momentum;
 
 pub mod cas;
 pub use cas::{

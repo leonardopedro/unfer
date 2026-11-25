@@ -49,6 +49,7 @@ use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
 use crate::engine::ConsensusEngine;
+use crate::jobs::{Fence, JobCommand, JobQueue, JOB_COMMAND_SCHEMA};
 
 /// D10: the schema a replicated ledger submission is read under. A command
 /// under any other schema is refused by name rather than applied as a
@@ -90,6 +91,16 @@ pub struct LedgerSnapshot {
     /// Monotonic pump request counter; survives restarts so request ids never
     /// collide with entries already in a durable submission journal.
     next_request_id: u64,
+    /// D14: the current job fence per resource. It lives in the committed
+    /// snapshot, so the committed state — not a worker — owns which fence is
+    /// current, and a restarted worker cannot re-admit the one it lost.
+    #[serde(default)]
+    jobs: JobQueue,
+    /// D14: job commands this node accepted and has not yet seen decided. It
+    /// is a local durability device exactly like `outbox` — the command is
+    /// recovered from the decision value, not from this map.
+    #[serde(default)]
+    job_outbox: BTreeMap<u64, JobCommand>,
 }
 
 /// Atomic (`write` + `rename`) JSON persistence for the replicated ledger.
@@ -180,6 +191,8 @@ struct LedgerState {
     bank: Vec<ConsensusTransaction>,
     outbox: BTreeMap<u64, ConsensusTransaction>,
     committed_ids: BTreeMap<u64, u64>,
+    jobs: JobQueue,
+    job_outbox: BTreeMap<u64, JobCommand>,
 }
 
 impl LedgerState {
@@ -190,6 +203,8 @@ impl LedgerState {
             committed_ids: self.committed_ids.clone(),
             next_id,
             next_request_id,
+            jobs: self.jobs.clone(),
+            job_outbox: self.job_outbox.clone(),
         }
     }
 }
@@ -207,6 +222,32 @@ pub struct SharedLedger {
     /// the ledger is only the application target (D11).
     submitted: Option<mpsc::UnboundedSender<(u64, ReplicatedValue)>>,
     file: Option<LedgerFile>,
+}
+
+/// D14: encode an ordered job command as a replicated value. It carries its
+/// own payload under [`JOB_COMMAND_SCHEMA`], so a replica that never saw the
+/// submission applies the same command from the decision alone.
+pub fn encode_job_value(command: &JobCommand) -> Result<ReplicatedValue, String> {
+    let json = serde_json::to_vec(command)
+        .map_err(|error| format!("could not encode job command: {error}"))?;
+    Command::new(JOB_COMMAND_SCHEMA, json)
+        .map(ReplicatedValue::Command)
+        .map_err(|error| format!("could not frame job command: {error}"))
+}
+
+/// Decode a job command from a decision value. `None` when the value is under a
+/// different schema; undecodable bytes under the job schema are an error, so a
+/// malformed command halts every replica instead of being silently skipped.
+fn decode_job_command(value: &ReplicatedValue) -> Result<Option<JobCommand>, String> {
+    let ReplicatedValue::Command(command) = value else {
+        return Ok(None);
+    };
+    if command.schema() != JOB_COMMAND_SCHEMA {
+        return Ok(None);
+    }
+    serde_json::from_slice(command.payload())
+        .map(Some)
+        .map_err(|error| format!("job command does not decode: {error}"))
 }
 
 /// D10: the value a submission becomes. The reservation id lives **inside**
@@ -298,6 +339,8 @@ impl SharedLedger {
                 bank: loaded.bank,
                 outbox: loaded.outbox,
                 committed_ids: loaded.committed_ids,
+                jobs: loaded.jobs,
+                job_outbox: loaded.job_outbox,
             })),
             next_id: Arc::new(AtomicU64::new(loaded.next_id)),
             request_seq: Arc::new(AtomicU64::new(loaded.next_request_id)),
@@ -319,6 +362,19 @@ impl SharedLedger {
             .collect::<Vec<_>>();
         for (id, tx) in outstanding {
             if let (Some(pump), Ok(value)) = (&ledger.submitted, encode_ledger_value(id, &tx)) {
+                let _ = pump.send((id, value));
+            }
+        }
+        let outstanding_jobs = ledger
+            .state
+            .lock()
+            .unwrap()
+            .job_outbox
+            .iter()
+            .map(|(id, command)| (*id, command.clone()))
+            .collect::<Vec<_>>();
+        for (id, command) in outstanding_jobs {
+            if let (Some(pump), Ok(value)) = (&ledger.submitted, encode_job_value(&command)) {
                 let _ = pump.send((id, value));
             }
         }
@@ -355,6 +411,32 @@ impl SharedLedger {
         Ok(id)
     }
 
+    /// Reserve a unique id for an ordered job command, persist it in this
+    /// node's job outbox, and hand the framed value to the pump. Mirrors
+    /// [`SharedLedger::allocate`]: the outbox entry is the durability device,
+    /// the value is what the cluster applies.
+    pub fn allocate_job(&self, command: JobCommand) -> Result<u64, String> {
+        let Some(pump) = &self.submitted else {
+            return Err(
+                "this ledger has no submission pump; submit the job command through "
+                    .to_owned()
+                    + "the node's TLS endpoint instead of proposing locally",
+            );
+        };
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let value = encode_job_value(&command)?;
+        {
+            let mut state = self.state.lock().unwrap();
+            state.job_outbox.insert(id, command);
+            if let Err(error) = self.persist_state(&state) {
+                state.job_outbox.remove(&id);
+                return Err(error);
+            }
+        }
+        let _ = pump.send((id, value));
+        Ok(id)
+    }
+
     /// Apply a batch of committed values in decision order.
     ///
     /// D10: the transaction is read **from the decision value**, not from a
@@ -366,9 +448,15 @@ impl SharedLedger {
     /// ledger) is a no-op because the id is already committed.
     fn append(&self, values: Vec<ReplicatedValue>) -> Result<(), String> {
         // Decode before touching state: a malformed value must not leave the
-        // outbox half-edited.
+        // outbox half-edited. D14: a job command is dispatched by schema, so
+        // both kinds of decision flow through one ordered apply.
         let mut decoded = Vec::with_capacity(values.len());
+        let mut job_commands = Vec::new();
         for value in &values {
+            if let Some(command) = decode_job_command(value)? {
+                job_commands.push(command);
+                continue;
+            }
             if let Some((id, tx)) = decode_ledger_value(value)? {
                 decoded.push((id, tx));
             }
@@ -388,6 +476,15 @@ impl SharedLedger {
                 if !state.committed_ids.contains_key(&id) {
                     appended.push((id, tx));
                 }
+            }
+            // A refused job command is a deterministic no-op: every replica
+            // computes the same verdict, so it changes no state and is not an
+            // error here. It must still be applied in decision order.
+            for command in &job_commands {
+                let _ = state.jobs.apply(command);
+                // Clear this node's pending entry by content: an id issued by a
+                // different replica addresses a different outbox entry.
+                state.job_outbox.retain(|_, pending| pending != command);
             }
             if appended.is_empty() && values.is_empty() {
                 return Ok(());
@@ -480,6 +577,28 @@ impl SharedLedger {
 
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.committed_tx.subscribe()
+    }
+
+    /// D14: mutate the committed job fences under the ledger lock and persist
+    /// one coherent snapshot. Every transition (claim, renew, release,
+    /// reclaim, settle, disable) goes through here, so the durable snapshot is
+    /// always a state the cluster actually held — the same rule the bank
+    /// follows.
+    pub fn with_jobs<R>(&self, f: impl FnOnce(&mut JobQueue) -> R) -> Result<R, String> {
+        let mut state = self.state.lock().unwrap();
+        let result = f(&mut state.jobs);
+        self.persist_state(&state)?;
+        Ok(result)
+    }
+
+    /// D14: read the current fence without taking a mutable handle.
+    pub fn current_fence(&self, resource: &str) -> Option<Fence> {
+        self.state
+            .lock()
+            .unwrap()
+            .jobs
+            .current_fence(resource)
+            .cloned()
     }
 }
 
@@ -1953,6 +2072,190 @@ mod tests {
         // And re-delivering the same decision changes nothing.
         peer.append(vec![value]).expect("persist");
         assert_eq!(peer.committed(), 1);
+    }
+
+    /// D14 step 3: the job fence is sourced from the ledger's live committed
+    /// watermark — the ordered point every replica applies decisions at — so a
+    /// claim made at a committed slot is refused once a later decision moves
+    /// the ledger past it.
+    #[test]
+    fn the_job_fence_is_owned_and_durably_held_by_the_committed_ledger() {
+        use crate::jobs::JobState;
+
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-d14-fence-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let claim = {
+            let ledger = SharedLedger::open(&dir).expect("open committed state");
+            ledger
+                .with_jobs(|jobs| {
+                    jobs.set_deployment("deploy-1");
+                    jobs.enqueue("settle-auction");
+                })
+                .unwrap();
+            let claim = ledger
+                .with_jobs(|jobs| jobs.claim("settle-auction", "worker-a"))
+                .unwrap()
+                .expect("claim under the ledger lock");
+            assert_eq!(
+                ledger.current_fence("settle-auction").as_ref(),
+                Some(claim.fence()),
+                "the committed state owns the current fence"
+            );
+            claim
+        };
+
+        // Reopen the committed state: the fence survives, so a restarted
+        // process can take over and the old worker's fence is dead.
+        let reopened = SharedLedger::open(&dir).expect("reopen committed state");
+        assert_eq!(
+            reopened.current_fence("settle-auction").as_ref(),
+            Some(claim.fence()),
+            "the fence is durable, not worker state"
+        );
+        reopened
+            .with_jobs(|jobs| jobs.reclaim("settle-auction", "worker-b"))
+            .unwrap()
+            .expect("the restarted process takes over");
+        let stale = reopened.with_jobs(|jobs| jobs.mark_fired(&claim)).unwrap();
+        assert!(stale.is_err(), "the old fence is stale after the reclaim");
+        let state = reopened
+            .with_jobs(|jobs| jobs.state("settle-auction"))
+            .unwrap();
+        assert_eq!(state, Some(JobState::Claimed), "worker-b still holds it");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// D14: an allocated job command is durable before it is proposed, is
+    /// re-proposed after a restart, and is cleared once the decision applies it.
+    #[test]
+    fn an_allocated_job_command_is_durable_and_cleared_when_decided() {
+        use crate::jobs::{JobCommand, JobState};
+
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-d14-job-outbox-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (pump, mut proposed) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
+        let ledger = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        ledger
+            .with_jobs(|jobs| {
+                jobs.set_deployment("deploy-1");
+                jobs.enqueue("settle-auction");
+            })
+            .unwrap();
+        let command = JobCommand::Claim {
+            resource: "settle-auction".to_string(),
+            holder: "worker-a".to_string(),
+        };
+        ledger.allocate_job(command.clone()).expect("durable allocation");
+        let (_, proposed_before) = proposed.try_recv().expect("the pump receives the value");
+        drop(ledger);
+
+        // Reopen: the pending command is re-proposed from the durable outbox.
+        let (pump, mut reproposed) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
+        let reopened = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        let (_, proposed_after) = reproposed
+            .try_recv()
+            .expect("a pending job command survives a restart");
+        assert_eq!(proposed_before, proposed_after);
+
+        // Applying the decision settles the fence and drains the pending entry.
+        reopened.append(vec![proposed_after]).unwrap();
+        assert_eq!(
+            reopened.with_jobs(|jobs| jobs.state("settle-auction")).unwrap(),
+            Some(JobState::Claimed)
+        );
+        drop(reopened);
+
+        let (pump, mut nothing) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
+        let _quiet = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        assert!(
+            nothing.try_recv().is_err(),
+            "a decided command is not re-proposed"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// D14: a job command is an ordered decision, so two replicas that apply
+    /// the same command stream converge on the same fence — and a command that
+    /// is refused is a deterministic no-op that changes neither replica.
+    #[test]
+    fn a_job_command_converges_across_replicas_and_a_refusal_mutates_nothing() {
+        use crate::jobs::{JobClaim, JobCommand, JobState};
+
+        let a = mem_ledger();
+        let b = mem_ledger();
+        for ledger in [&a, &b] {
+            ledger
+                .with_jobs(|jobs| {
+                    jobs.set_deployment("deploy-1");
+                    jobs.enqueue("settle-auction");
+                })
+                .unwrap();
+        }
+
+        let claim = encode_job_value(&JobCommand::Claim {
+            resource: "settle-auction".to_string(),
+            holder: "worker-a".to_string(),
+        })
+        .unwrap();
+        a.append(vec![claim.clone()]).unwrap();
+        b.append(vec![claim]).unwrap();
+        let fence = a.current_fence("settle-auction").expect("fenced");
+        assert_eq!(
+            Some(&fence),
+            b.current_fence("settle-auction").as_ref(),
+            "both replicas computed the same fence from the same command"
+        );
+
+        // A takeover moves the committed fence on both replicas.
+        let takeover = encode_job_value(&JobCommand::TakeOver {
+            resource: "settle-auction".to_string(),
+            epoch: 2,
+            holder: "worker-b".to_string(),
+        })
+        .unwrap();
+        a.append(vec![takeover.clone()]).unwrap();
+        b.append(vec![takeover]).unwrap();
+        let newer = a.current_fence("settle-auction").expect("fenced");
+        assert!(newer.supersedes(&fence));
+        assert_eq!(Some(&newer), b.current_fence("settle-auction").as_ref());
+
+        // The old worker's late settle is refused identically by both.
+        let stale = encode_job_value(&JobCommand::Settle {
+            claim: JobClaim::for_test("settle-auction", fence),
+        })
+        .unwrap();
+        a.append(vec![stale.clone()]).expect("a refusal is not an apply error");
+        b.append(vec![stale]).expect("a refusal is not an apply error");
+        for ledger in [&a, &b] {
+            assert_eq!(
+                Some(&newer),
+                ledger.current_fence("settle-auction").as_ref(),
+                "a refused command must not change the fence"
+            );
+            assert_eq!(
+                ledger.with_jobs(|jobs| jobs.state("settle-auction")).unwrap(),
+                Some(JobState::Claimed),
+                "a refused command must not change the job state"
+            );
+        }
     }
 
     /// The outbox is a local durability device only: it is drained by the
