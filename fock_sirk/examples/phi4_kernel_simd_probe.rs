@@ -29,11 +29,13 @@
 //! because in the solver the scalar single accumulator is latency-bound: patched
 //! in and timed at `C = 26` the NEON path took `dot` from `1.65 s` to `0.44 s`
 //! (`3.75x`) and the solve from `9.760 s` to `8.528 s` (`12.6 %`). That, not
-//! the table above, is the number §5.12 quotes. The path is **not** adopted: it changes the solve's last
-//! bits (`probability` differs at `1.6e-16`, `917` vs `915` iterations) and so
-//! would need the frozen sweep record regenerated, and it is `aarch64`-only, so
-//! x86 hosts would keep the scalar path and produce different digits. It exists
-//! here to make that number re-measurable.
+//! the table above, is the number §5.12 quotes. The path **is** the committed
+//! one on `aarch64` (`joint_sirk::coords_inner_product`), kept re-measurable
+//! here against the scalar fallback an x86 host still runs. The reassociation
+//! moves the solve's last bits (`probability` differs at `1.6e-16`, `917` vs
+//! `915` iterations), so the frozen sweep record was regenerated on this host,
+//! and — because the path is `aarch64`-only — an x86 host keeps the scalar path
+//! and produces different digits from the same commit.
 //!
 //! On a non-`aarch64` host only the scalar timings are reported.
 

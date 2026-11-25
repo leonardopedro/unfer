@@ -293,13 +293,32 @@ impl FiniteWindowAction {
 }
 
 // The coordinate forms of `joint_inner_product`, `joint_norm` and
-// `joint_axpy`. All three skip exactly the labels the map walk never visits
-// (the map stores no zero amplitudes), and visit the rest in the same
-// ascending label order, so each label receives the same arithmetic in the
-// same sequence: these are bit-identical to the map operations, not merely
-// close (`tests/joint_map_ops.rs` and the solver pin in
-// `tests/phi4_momentum_sirk.rs`).
+// `joint_axpy`. All three visit exactly the labels the map walk visits (the
+// map stores no zero amplitudes), in the same ascending label order, and the
+// scalar forms give each label the same arithmetic in the same sequence: the
+// scalar fallback is bit-identical to the map operations, not merely close
+// (`tests/joint_map_ops.rs` and the solver pin in `tests/phi4_momentum_sirk.rs`).
+//
+// The aarch64 inner product is the one deliberate exception: NEON carries four
+// independent accumulators, so the sum is reassociated and its last bits move
+// (`docs/VERIFY_PHI4_MOMENTUM.md` §5.12: `3.75x` off the `dot` kernel and
+// `12.6 %` off the C = 26 solve, for a `1.6e-16` change in the return
+// probability). The frozen sweep record was generated with this path.
 fn coords_inner_product(a: &[C], b: &[C]) -> C {
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: Advanced SIMD is part of the aarch64 baseline, and both
+        // slices are read only at indices below `min(a.len(), b.len())`.
+        return unsafe { coords_inner_product_neon(a, b) };
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        coords_inner_product_scalar(a, b)
+    }
+}
+/// The scalar fallback, used on every target without the aarch64 SIMD path.
+#[cfg(not(target_arch = "aarch64"))]
+fn coords_inner_product_scalar(a: &[C], b: &[C]) -> C {
     let zero = C::new(0.0, 0.0);
     let mut sum = zero;
     for (x, y) in a.iter().zip(b) {
@@ -307,6 +326,55 @@ fn coords_inner_product(a: &[C], b: &[C]) -> C {
             continue;
         }
         sum += x.conj() * y;
+    }
+    sum
+}
+/// Four interleaved accumulators: `re0/re1` carry the real parts of the two
+/// half-vectors, `im0/im1` the imaginary parts, so the four `vfmaq_f64` chains
+/// are independent until the final `vaddvq_f64`.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn coords_inner_product_neon(a: &[C], b: &[C]) -> C {
+    use core::arch::aarch64::*;
+    let n = a.len().min(b.len());
+    let ap = a.as_ptr() as *const f64;
+    let bp = b.as_ptr() as *const f64;
+    let mut re0 = vdupq_n_f64(0.0);
+    let mut re1 = vdupq_n_f64(0.0);
+    let mut im0 = vdupq_n_f64(0.0);
+    let mut im1 = vdupq_n_f64(0.0);
+    let mut i = 0;
+    while i + 4 <= n {
+        // SAFETY: `i + 4 <= n` keeps every load inside both slices.
+        let (v0, v1, v2, v3, w0, w1, w2, w3) = unsafe {
+            (
+                vld1q_f64(ap.add(2 * i)),
+                vld1q_f64(ap.add(2 * i + 2)),
+                vld1q_f64(ap.add(2 * i + 4)),
+                vld1q_f64(ap.add(2 * i + 6)),
+                vld1q_f64(bp.add(2 * i)),
+                vld1q_f64(bp.add(2 * i + 2)),
+                vld1q_f64(bp.add(2 * i + 4)),
+                vld1q_f64(bp.add(2 * i + 6)),
+            )
+        };
+        let (ar0, ai0) = (vuzp1q_f64(v0, v1), vuzp2q_f64(v0, v1));
+        let (ar1, ai1) = (vuzp1q_f64(v2, v3), vuzp2q_f64(v2, v3));
+        let (br0, bi0) = (vuzp1q_f64(w0, w1), vuzp2q_f64(w0, w1));
+        let (br1, bi1) = (vuzp1q_f64(w2, w3), vuzp2q_f64(w2, w3));
+        re0 = vfmaq_f64(vfmaq_f64(re0, ar0, br0), ar1, br1);
+        re1 = vfmaq_f64(vfmaq_f64(re1, ai0, bi0), ai1, bi1);
+        im0 = vfmaq_f64(vfmaq_f64(im0, ar0, bi0), ar1, bi1);
+        im1 = vfmaq_f64(vfmaq_f64(im1, ai0, br0), ai1, br1);
+        i += 4;
+    }
+    let mut sum = C::new(
+        vaddvq_f64(vaddq_f64(re0, re1)),
+        vaddvq_f64(vsubq_f64(im0, im1)),
+    );
+    while i < n {
+        sum += a[i].conj() * b[i];
+        i += 1;
     }
     sum
 }

@@ -39,7 +39,7 @@
         "hermite_cutoff": 4,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9673024240041677,
-        "runtime_ms": 35,
+        "runtime_ms": 33,
         "shift_invert": {
           "error": 0.0008017726890898746,
           "return_probability": 0.9681041966932575,
@@ -47,7 +47,7 @@
             "cached_components": 414,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.7238857373383725
+              "max": 0.723885737338373
             },
             "function_solve_iterations": {
               "count": 4,
@@ -64,8 +64,8 @@
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
             "gmres_iterations_total": 48,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 1.8317477791666117e-16,
-            "orthogonality_defect": 2.220446049250313e-16,
+            "hermiticity_defect": 2.9173061139888724e-16,
+            "orthogonality_defect": 1.1102230246251565e-15,
             "shift_solve_iterations": {
               "count": 4,
               "max": 6,
@@ -128,15 +128,15 @@
         "hermite_cutoff": 8,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 166,
+        "runtime_ms": 161,
         "shift_invert": {
-          "error": 0.0030742020154712613,
-          "return_probability": 0.9698107083302441,
+          "error": 0.0030742020154717054,
+          "return_probability": 0.9698107083302445,
           "solver": {
             "cached_components": 5940,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.6613301320520293
+              "max": 0.6613301320520343
             },
             "function_solve_iterations": {
               "count": 4,
@@ -153,8 +153,8 @@
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
             "gmres_iterations_total": 144,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 6.502645680425512e-16,
-            "orthogonality_defect": 7.771561172376096e-16,
+            "hermiticity_defect": 5.670542043517719e-16,
+            "orthogonality_defect": 6.661338147750939e-16,
             "shift_solve_iterations": {
               "count": 4,
               "max": 18,
@@ -167,7 +167,7 @@
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.3356081736537874
+              "max": 0.33560817365378787
             }
           }
         },
@@ -217,22 +217,22 @@
         "hermite_cutoff": 12,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9667225765802239,
-        "runtime_ms": 553,
+        "runtime_ms": 535,
         "shift_invert": {
-          "error": 0.002429654089038613,
-          "return_probability": 0.9691522306692625,
+          "error": 0.0024296540890368368,
+          "return_probability": 0.9691522306692607,
           "solver": {
             "cached_components": 47530,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.6437489867963652
+              "max": 0.6437489867963685
             },
             "function_solve_iterations": {
               "count": 4,
               "max": 46,
               "values": [
                 43,
-                43,
+                44,
                 45,
                 46
               ]
@@ -240,10 +240,10 @@
             "gmres_iterations_cap": 64,
             "gmres_iterations_max": 43,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 336,
+            "gmres_iterations_total": 337,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 9.84512375730459e-16,
-            "orthogonality_defect": 4.440892098500626e-15,
+            "hermiticity_defect": 4.913810635607554e-16,
+            "orthogonality_defect": 3.9968028886505635e-15,
             "shift_solve_iterations": {
               "count": 4,
               "max": 43,
@@ -256,7 +256,7 @@
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.29768849713151624
+              "max": 0.2976884971315168
             }
           }
         },
@@ -306,15 +306,15 @@
         "hermite_cutoff": 16,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666887372381503,
-        "runtime_ms": 1542,
+        "runtime_ms": 1444,
         "shift_invert": {
-          "error": 0.0027333609351414268,
-          "return_probability": 0.9694220981732917,
+          "error": 0.00273336093514287,
+          "return_probability": 0.9694220981732932,
           "solver": {
             "cached_components": 253620,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.5908560008752618
+              "max": 0.590856000861805
             },
             "function_solve_iterations": {
               "count": 4,
@@ -331,8 +331,8 @@
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
             "gmres_iterations_total": 620,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 1.1157398448574878e-15,
-            "orthogonality_defect": 1.1102230246251565e-15,
+            "hermiticity_defect": 6.128903750131578e-16,
+            "orthogonality_defect": 1.4432899320127035e-15,
             "shift_solve_iterations": {
               "count": 4,
               "max": 81,
@@ -345,7 +345,7 @@
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.22290268063409763
+              "max": 0.22290268063396762
             }
           }
         },
@@ -395,22 +395,22 @@
         "hermite_cutoff": 20,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666764094895333,
-        "runtime_ms": 4332,
+        "runtime_ms": 3958,
         "shift_invert": {
-          "error": 0.0029888798240963466,
-          "return_probability": 0.9696652893136296,
+          "error": 0.0029888798240966796,
+          "return_probability": 0.9696652893136299,
           "solver": {
             "cached_components": 1020140,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.4880368711309062
+              "max": 0.48803687110298277
             },
             "function_solve_iterations": {
               "count": 4,
               "max": 141,
               "values": [
                 136,
-                137,
+                138,
                 139,
                 141
               ]
@@ -418,10 +418,10 @@
             "gmres_iterations_cap": 64,
             "gmres_iterations_max": 136,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 1010,
+            "gmres_iterations_total": 1011,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 7.903665129374893e-16,
-            "orthogonality_defect": 6.328271240363392e-15,
+            "hermiticity_defect": 1.2273015954409117e-15,
+            "orthogonality_defect": 5.218048215738236e-15,
             "shift_solve_iterations": {
               "count": 4,
               "max": 136,
@@ -434,7 +434,7 @@
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.13717310728834387
+              "max": 0.13717310728899557
             }
           }
         },
@@ -484,46 +484,46 @@
         "hermite_cutoff": 22,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666809073553623,
-        "runtime_ms": 7400,
+        "runtime_ms": 6654,
         "shift_invert": {
-          "error": 0.0028994061486975475,
-          "return_probability": 0.9695803135040598,
+          "error": 0.0028994061486935507,
+          "return_probability": 0.9695803135040558,
           "solver": {
             "cached_components": 1888380,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.45492357378818127
+              "max": 0.45492357378394144
             },
             "function_solve_iterations": {
               "count": 4,
               "max": 176,
               "values": [
                 171,
-                173,
-                175,
+                172,
+                174,
                 176
               ]
             },
             "gmres_iterations_cap": 64,
-            "gmres_iterations_max": 172,
+            "gmres_iterations_max": 171,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 1248,
+            "gmres_iterations_total": 1245,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 1.5011513217532523e-15,
-            "orthogonality_defect": 1.9984014443252818e-15,
+            "hermiticity_defect": 1.3474143780668606e-15,
+            "orthogonality_defect": 4.218847493575595e-15,
             "shift_solve_iterations": {
               "count": 4,
-              "max": 172,
+              "max": 171,
               "values": [
                 106,
                 128,
                 147,
-                172
+                171
               ]
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.10712885857615904
+              "max": 0.10712885857674243
             }
           }
         },
@@ -573,22 +573,22 @@
         "hermite_cutoff": 24,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666775439926599,
-        "runtime_ms": 12640,
+        "runtime_ms": 11258,
         "shift_invert": {
-          "error": 0.002847765066678276,
-          "return_probability": 0.9695253090593382,
+          "error": 0.002847765066691599,
+          "return_probability": 0.9695253090593515,
           "solver": {
             "cached_components": 3346434,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.4239423287680393
+              "max": 0.42394232876014926
             },
             "function_solve_iterations": {
               "count": 4,
               "max": 216,
               "values": [
                 209,
-                211,
+                212,
                 214,
                 216
               ]
@@ -596,10 +596,10 @@
             "gmres_iterations_cap": 64,
             "gmres_iterations_max": 209,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 1502,
+            "gmres_iterations_total": 1503,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 1.703253170559236e-15,
-            "orthogonality_defect": 5.329070518200751e-15,
+            "hermiticity_defect": 1.3896130138940296e-15,
+            "orthogonality_defect": 6.8833827526759706e-15,
             "shift_solve_iterations": {
               "count": 4,
               "max": 209,
@@ -612,7 +612,7 @@
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.08697162802577217
+              "max": 0.08697162802875244
             }
           }
         },
@@ -662,46 +662,46 @@
         "hermite_cutoff": 26,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666785003538712,
-        "runtime_ms": 21120,
+        "runtime_ms": 18638,
         "shift_invert": {
-          "error": 0.0028423241009422062,
-          "return_probability": 0.9695208244548134,
+          "error": 0.0028423241009591926,
+          "return_probability": 0.9695208244548303,
           "solver": {
             "cached_components": 5709480,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.38531161391591406
+              "max": 0.38531161391706903
             },
             "function_solve_iterations": {
               "count": 4,
               "max": 247,
               "values": [
-                239,
+                240,
                 242,
-                245,
+                246,
                 247
               ]
             },
             "gmres_iterations_cap": 64,
-            "gmres_iterations_max": 239,
+            "gmres_iterations_max": 240,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 1715,
+            "gmres_iterations_total": 1718,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 1.2204974926274603e-15,
-            "orthogonality_defect": 7.771561172376096e-15,
+            "hermiticity_defect": 1.9737462707885987e-15,
+            "orthogonality_defect": 9.992007221626409e-15,
             "shift_solve_iterations": {
               "count": 4,
-              "max": 239,
+              "max": 240,
               "values": [
                 141,
-                167,
-                195,
-                239
+                168,
+                194,
+                240
               ]
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.07345499750024073
+              "max": 0.07345499750165588
             }
           }
         },
@@ -751,15 +751,15 @@
         "hermite_cutoff": 28,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666790886415794,
-        "runtime_ms": 34996,
+        "runtime_ms": 30873,
         "shift_invert": {
-          "error": 0.0028602675806195244,
-          "return_probability": 0.9695393562221989,
+          "error": 0.0028602675806145283,
+          "return_probability": 0.9695393562221939,
           "solver": {
             "cached_components": 9422220,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.33892931812845906
+              "max": 0.33892931812529176
             },
             "function_solve_iterations": {
               "count": 4,
@@ -772,25 +772,25 @@
               ]
             },
             "gmres_iterations_cap": 64,
-            "gmres_iterations_max": 275,
+            "gmres_iterations_max": 276,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 1974,
+            "gmres_iterations_total": 1976,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 1.0233842144383384e-15,
-            "orthogonality_defect": 3.9968028886505635e-15,
+            "hermiticity_defect": 1.2269841912280524e-15,
+            "orthogonality_defect": 1.0880185641326534e-14,
             "shift_solve_iterations": {
               "count": 4,
-              "max": 275,
+              "max": 276,
               "values": [
                 156,
-                189,
+                190,
                 220,
-                275
+                276
               ]
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.0629849246841305
+              "max": 0.06298492468431834
             }
           }
         },
@@ -840,46 +840,46 @@
         "hermite_cutoff": 30,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666782885362749,
-        "runtime_ms": 58808,
+        "runtime_ms": 52136,
         "shift_invert": {
-          "error": 0.002877896401996871,
-          "return_probability": 0.9695561849382718,
+          "error": 0.002877896402022073,
+          "return_probability": 0.969556184938297,
           "solver": {
             "cached_components": 15098380,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.2902227767384778
+              "max": 0.29022277672581104
             },
             "function_solve_iterations": {
               "count": 4,
               "max": 322,
               "values": [
-                310,
-                318,
+                311,
+                319,
                 320,
                 322
               ]
             },
             "gmres_iterations_cap": 64,
-            "gmres_iterations_max": 309,
+            "gmres_iterations_max": 310,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 2204,
+            "gmres_iterations_total": 2206,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 1.2256594245216829e-15,
-            "orthogonality_defect": 7.771561172376096e-15,
+            "hermiticity_defect": 3.9369989637663754e-15,
+            "orthogonality_defect": 8.215650382226158e-15,
             "shift_solve_iterations": {
               "count": 4,
-              "max": 309,
+              "max": 310,
               "values": [
                 173,
                 206,
-                246,
-                309
+                245,
+                310
               ]
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.05348760255564553
+              "max": 0.0534876025570235
             }
           }
         },
@@ -929,46 +929,46 @@
         "hermite_cutoff": 32,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666785798155083,
-        "runtime_ms": 94047,
+        "runtime_ms": 83371,
         "shift_invert": {
-          "error": 0.0028846386256735634,
-          "return_probability": 0.9695632184411819,
+          "error": 0.0028846386256701217,
+          "return_probability": 0.9695632184411784,
           "solver": {
             "cached_components": 23568630,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.24495829288536866
+              "max": 0.24495829288459997
             },
             "function_solve_iterations": {
               "count": 4,
               "max": 361,
               "values": [
-                350,
+                349,
                 359,
                 361,
                 358
               ]
             },
             "gmres_iterations_cap": 64,
-            "gmres_iterations_max": 344,
+            "gmres_iterations_max": 343,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 2458,
+            "gmres_iterations_total": 2456,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 3.284758646429945e-15,
-            "orthogonality_defect": 1.1324274851176597e-14,
+            "hermiticity_defect": 3.663323448594756e-15,
+            "orthogonality_defect": 1.4654943925052066e-14,
             "shift_solve_iterations": {
               "count": 4,
-              "max": 344,
+              "max": 343,
               "values": [
                 189,
                 227,
                 270,
-                344
+                343
               ]
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.044409230853945394
+              "max": 0.044409230855656213
             }
           }
         },
@@ -1018,21 +1018,21 @@
         "hermite_cutoff": 34,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666787398611685,
-        "runtime_ms": 158722,
+        "runtime_ms": 130890,
         "shift_invert": {
-          "error": 0.0028842390109117266,
-          "return_probability": 0.9695629788720802,
+          "error": 0.0028842390108798632,
+          "return_probability": 0.9695629788720483,
           "solver": {
             "cached_components": 35938044,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.20643862441657398
+              "max": 0.20643862444012712
             },
             "function_solve_iterations": {
               "count": 4,
               "max": 400,
               "values": [
-                385,
+                384,
                 396,
                 399,
                 400
@@ -1041,15 +1041,15 @@
             "gmres_iterations_cap": 64,
             "gmres_iterations_max": 378,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 2705,
+            "gmres_iterations_total": 2703,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 4.042478129230352e-15,
-            "orthogonality_defect": 1.021405182655144e-14,
+            "hermiticity_defect": 5.430058175905291e-15,
+            "orthogonality_defect": 1.4876988529977098e-14,
             "shift_solve_iterations": {
               "count": 4,
               "max": 378,
               "values": [
-                207,
+                206,
                 246,
                 294,
                 378
@@ -1057,7 +1057,7 @@
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.03597371768623088
+              "max": 0.0359737176874151
             }
           }
         },
@@ -1107,15 +1107,15 @@
         "hermite_cutoff": 36,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666785142605553,
-        "runtime_ms": 242321,
+        "runtime_ms": 203199,
         "shift_invert": {
-          "error": 0.0028817753089326326,
-          "return_probability": 0.9695602895694879,
+          "error": 0.0028817753089462883,
+          "return_probability": 0.9695602895695016,
           "solver": {
             "cached_components": 53654290,
             "function_solve_error_bounds": {
               "count": 4,
-              "max": 0.1750872569207615
+              "max": 0.17508725692249502
             },
             "function_solve_iterations": {
               "count": 4,
@@ -1123,30 +1123,30 @@
               "values": [
                 419,
                 432,
-                433,
+                434,
                 435
               ]
             },
             "gmres_iterations_cap": 64,
             "gmres_iterations_max": 413,
             "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-            "gmres_iterations_total": 2939,
+            "gmres_iterations_total": 2941,
             "gmres_relative_tolerance": 1e-13,
-            "hermiticity_defect": 4.321689759805855e-15,
-            "orthogonality_defect": 1.9206858326015208e-14,
+            "hermiticity_defect": 3.7645073503611395e-15,
+            "orthogonality_defect": 1.1546319456101628e-14,
             "shift_solve_iterations": {
               "count": 4,
               "max": 413,
               "values": [
                 224,
-                265,
+                266,
                 318,
                 413
               ]
             },
             "shift_solve_residuals": {
               "count": 4,
-              "max": 0.028583184778235984
+              "max": 0.028583184778829058
             }
           }
         },
@@ -1160,7 +1160,7 @@
       }
     ],
     "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; C = 22 ... 28 extend it further to measure the tail's slow decay. Every C >= 16 cell solves to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
-    "runtime_ms": 990260,
+    "runtime_ms": 861177,
     "status": "measured",
     "tail_sweep_fixed_rank_2": [
       {
@@ -1175,12 +1175,12 @@
         "inside_window_error": 0.013855361542169153,
         "projected_action_tail_norms": [
           0.0,
-          1.7866200333785325
+          1.7866200333785334
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9811577855463368,
         "return_probability_window_exact": 0.9673024240041677,
-        "runtime_ms": 21,
+        "runtime_ms": 23,
         "shifts": [
           {
             "im": 5.0,
@@ -1200,7 +1200,7 @@
           "cached_components": 414,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.6427290914684259
+            "max": 0.6427290914684257
           },
           "function_solve_iterations": {
             "count": 2,
@@ -1215,8 +1215,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 24,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.501741966666311e-16,
-          "orthogonality_defect": 2.220446049250313e-16,
+          "hermiticity_defect": 2.404518561831633e-16,
+          "orthogonality_defect": 8.881784197001252e-16,
           "shift_solve_iterations": {
             "count": 2,
             "max": 6,
@@ -1227,12 +1227,12 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.45503501618871534
+            "max": 0.4550350161887157
           }
         },
         "status": "measured",
         "window_labels": 15,
-        "window_tail_norm_max": 1.7866200333785325
+        "window_tail_norm_max": 1.7866200333785334
       },
       {
         "attained_rank": 2,
@@ -1246,12 +1246,12 @@
         "inside_window_error": 0.013219412751014792,
         "projected_action_tail_norms": [
           0.0,
-          1.4001127006943632
+          1.4001127006943614
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 109,
+        "runtime_ms": 110,
         "shifts": [
           {
             "im": 5.0,
@@ -1271,7 +1271,7 @@
           "cached_components": 5940,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.47036079589981317
+            "max": 0.47036079589981195
           },
           "function_solve_iterations": {
             "count": 2,
@@ -1286,8 +1286,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 72,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.804713928593943e-16,
-          "orthogonality_defect": 2.220446049250313e-16,
+          "hermiticity_defect": 8.828861977565451e-17,
+          "orthogonality_defect": 4.440892098500626e-16,
           "shift_solve_iterations": {
             "count": 2,
             "max": 18,
@@ -1298,12 +1298,12 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.31051929108927884
+            "max": 0.3105192910892783
           }
         },
         "status": "measured",
         "window_labels": 70,
-        "window_tail_norm_max": 1.4001127006943632
+        "window_tail_norm_max": 1.4001127006943614
       },
       {
         "attained_rank": 2,
@@ -1317,7 +1317,7 @@
         "inside_window_error": 0.01255600190665307,
         "projected_action_tail_norms": [
           0.0,
-          0.894622612026866
+          0.8946226120268718
         ],
         "requested_rank": 2,
         "return_probability_sirk": 0.9792785784868769,
@@ -1342,14 +1342,14 @@
           "cached_components": 47530,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.37788558931716926
+            "max": 0.3778855893171702
           },
           "function_solve_iterations": {
             "count": 2,
-            "max": 45,
+            "max": 44,
             "values": [
               43,
-              45
+              44
             ]
           },
           "gmres_iterations_cap": 64,
@@ -1357,24 +1357,24 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 169,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 1.8834273642593074e-16,
-          "orthogonality_defect": 2.1094237467877974e-15,
+          "hermiticity_defect": 2.947068785928563e-16,
+          "orthogonality_defect": 2.220446049250313e-15,
           "shift_solve_iterations": {
             "count": 2,
             "max": 43,
             "values": [
-              38,
+              39,
               43
             ]
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.26507383983098515
+            "max": 0.265073839830986
           }
         },
         "status": "measured",
         "window_labels": 210,
-        "window_tail_norm_max": 0.894622612026866
+        "window_tail_norm_max": 0.8946226120268718
       },
       {
         "attained_rank": 2,
@@ -1385,15 +1385,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 16,
-        "inside_window_error": 0.013366146670700463,
+        "inside_window_error": 0.013366146670704793,
         "projected_action_tail_norms": [
           0.0,
-          0.5067381194365786
+          0.5067381194365984
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.9800548839088508,
+        "return_probability_sirk": 0.9800548839088551,
         "return_probability_window_exact": 0.9666887372381503,
-        "runtime_ms": 981,
+        "runtime_ms": 956,
         "shifts": [
           {
             "im": 5.0,
@@ -1413,7 +1413,7 @@
           "cached_components": 253620,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.2907596644742643
+            "max": 0.2907596644742881
           },
           "function_solve_iterations": {
             "count": 2,
@@ -1428,8 +1428,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 315,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 1.740843356843488e-16,
-          "orthogonality_defect": 3.219646771412954e-15,
+          "hermiticity_defect": 2.171232220064174e-16,
+          "orthogonality_defect": 2.6645352591003757e-15,
           "shift_solve_iterations": {
             "count": 2,
             "max": 82,
@@ -1440,12 +1440,12 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.17221095568203715
+            "max": 0.17221095568203987
           }
         },
         "status": "measured",
         "window_labels": 495,
-        "window_tail_norm_max": 0.5067381194365786
+        "window_tail_norm_max": 0.5067381194365984
       },
       {
         "attained_rank": 2,
@@ -1456,15 +1456,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 20,
-        "inside_window_error": 0.013325100788915245,
+        "inside_window_error": 0.01332510078891691,
         "projected_action_tail_norms": [
           0.0,
-          0.31891488024373815
+          0.3189148802441363
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.9800015102784485,
+        "return_probability_sirk": 0.9800015102784502,
         "return_probability_window_exact": 0.9666764094895333,
-        "runtime_ms": 2656,
+        "runtime_ms": 2463,
         "shifts": [
           {
             "im": 5.0,
@@ -1484,7 +1484,7 @@
           "cached_components": 1020140,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.1813800593074467
+            "max": 0.18138005930881146
           },
           "function_solve_iterations": {
             "count": 2,
@@ -1495,28 +1495,28 @@
             ]
           },
           "gmres_iterations_cap": 64,
-          "gmres_iterations_max": 138,
+          "gmres_iterations_max": 139,
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-          "gmres_iterations_total": 527,
+          "gmres_iterations_total": 528,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 1.1680030035040161e-15,
-          "orthogonality_defect": 1.9984014443252818e-15,
+          "hermiticity_defect": 4.588759514600189e-16,
+          "orthogonality_defect": 4.440892098500626e-16,
           "shift_solve_iterations": {
             "count": 2,
-            "max": 138,
+            "max": 139,
             "values": [
               112,
-              138
+              139
             ]
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.0967431644884271
+            "max": 0.09674316448784821
           }
         },
         "status": "measured",
         "window_labels": 1001,
-        "window_tail_norm_max": 0.31891488024373815
+        "window_tail_norm_max": 0.3189148802441363
       },
       {
         "attained_rank": 2,
@@ -1527,15 +1527,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 22,
-        "inside_window_error": 0.013290920471348722,
+        "inside_window_error": 0.013290920471349388,
         "projected_action_tail_norms": [
           0.0,
-          0.2614508279481459
+          0.261450827946896
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.979971827826711,
+        "return_probability_sirk": 0.9799718278267117,
         "return_probability_window_exact": 0.9666809073553623,
-        "runtime_ms": 4446,
+        "runtime_ms": 4045,
         "shifts": [
           {
             "im": 5.0,
@@ -1555,7 +1555,7 @@
           "cached_components": 1888380,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.1411900756073144
+            "max": 0.14119007560725405
           },
           "function_solve_iterations": {
             "count": 2,
@@ -1570,8 +1570,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 658,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 3.0367107439299467e-16,
-          "orthogonality_defect": 8.326672684688674e-15,
+          "hermiticity_defect": 2.004354303480062e-16,
+          "orthogonality_defect": 4.884981308350689e-15,
           "shift_solve_iterations": {
             "count": 2,
             "max": 173,
@@ -1582,12 +1582,12 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.07626081797027921
+            "max": 0.0762608179703642
           }
         },
         "status": "measured",
         "window_labels": 1365,
-        "window_tail_norm_max": 0.2614508279481459
+        "window_tail_norm_max": 0.261450827946896
       },
       {
         "attained_rank": 2,
@@ -1598,15 +1598,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 24,
-        "inside_window_error": 0.013292544972461795,
+        "inside_window_error": 0.01329254497248289,
         "projected_action_tail_norms": [
           0.0,
-          0.2129206971866492
+          0.21292069718407702
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.9799700889651217,
+        "return_probability_sirk": 0.9799700889651428,
         "return_probability_window_exact": 0.9666775439926599,
-        "runtime_ms": 7483,
+        "runtime_ms": 6719,
         "shifts": [
           {
             "im": 5.0,
@@ -1626,7 +1626,7 @@
           "cached_components": 3346434,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.11363551212369885
+            "max": 0.11363551212516773
           },
           "function_solve_iterations": {
             "count": 2,
@@ -1641,8 +1641,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 800,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 8.007486651746931e-16,
-          "orthogonality_defect": 1.199040866595169e-14,
+          "hermiticity_defect": 3.8971525545069937e-16,
+          "orthogonality_defect": 3.6637359812630166e-15,
           "shift_solve_iterations": {
             "count": 2,
             "max": 212,
@@ -1653,12 +1653,12 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.0635847643632606
+            "max": 0.06358476436409732
           }
         },
         "status": "measured",
         "window_labels": 1820,
-        "window_tail_norm_max": 0.2129206971866492
+        "window_tail_norm_max": 0.21292069718407702
       },
       {
         "attained_rank": 2,
@@ -1669,15 +1669,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 26,
-        "inside_window_error": 0.013301292478638427,
+        "inside_window_error": 0.013301292478628879,
         "projected_action_tail_norms": [
           0.0,
-          0.17032660831258625
+          0.17032660831600355
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.9799797928325096,
+        "return_probability_sirk": 0.9799797928325,
         "return_probability_window_exact": 0.9666785003538712,
-        "runtime_ms": 12261,
+        "runtime_ms": 10964,
         "shifts": [
           {
             "im": 5.0,
@@ -1697,39 +1697,39 @@
           "cached_components": 5709480,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.0948661496019705
+            "max": 0.09486614960312037
           },
           "function_solve_iterations": {
             "count": 2,
-            "max": 244,
+            "max": 243,
             "values": [
               241,
-              244
+              243
             ]
           },
           "gmres_iterations_cap": 64,
-          "gmres_iterations_max": 242,
+          "gmres_iterations_max": 241,
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-          "gmres_iterations_total": 917,
+          "gmres_iterations_total": 915,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 1.2523597909632492e-15,
-          "orthogonality_defect": 6.994405055138486e-15,
+          "hermiticity_defect": 4.15618483452004e-16,
+          "orthogonality_defect": 5.440092820663267e-15,
           "shift_solve_iterations": {
             "count": 2,
-            "max": 242,
+            "max": 241,
             "values": [
               190,
-              242
+              241
             ]
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.05422224409677684
+            "max": 0.054222244097489734
           }
         },
         "status": "measured",
         "window_labels": 2380,
-        "window_tail_norm_max": 0.17032660831258625
+        "window_tail_norm_max": 0.17032660831600355
       },
       {
         "attained_rank": 2,
@@ -1740,15 +1740,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 28,
-        "inside_window_error": 0.013309716764981383,
+        "inside_window_error": 0.013309716764980828,
         "projected_action_tail_norms": [
           0.0,
-          0.1337123742146094
+          0.1337123742139957
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.9799888054065607,
+        "return_probability_sirk": 0.9799888054065602,
         "return_probability_window_exact": 0.9666790886415794,
-        "runtime_ms": 20080,
+        "runtime_ms": 17945,
         "shifts": [
           {
             "im": 5.0,
@@ -1768,7 +1768,7 @@
           "cached_components": 9422220,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.08032169311494068
+            "max": 0.08032169311481015
           },
           "function_solve_iterations": {
             "count": 2,
@@ -1783,8 +1783,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 1059,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 7.650560926415753e-16,
-          "orthogonality_defect": 6.217248937900877e-15,
+          "hermiticity_defect": 4.580197460031107e-16,
+          "orthogonality_defect": 8.326672684688674e-15,
           "shift_solve_iterations": {
             "count": 2,
             "max": 281,
@@ -1795,12 +1795,12 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.04566894504582839
+            "max": 0.045668945046178085
           }
         },
         "status": "measured",
         "window_labels": 3060,
-        "window_tail_norm_max": 0.1337123742146094
+        "window_tail_norm_max": 0.1337123742139957
       },
       {
         "attained_rank": 2,
@@ -1811,15 +1811,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 30,
-        "inside_window_error": 0.013315143451109845,
+        "inside_window_error": 0.013315143451112843,
         "projected_action_tail_norms": [
           0.0,
-          0.103653205293834
+          0.10365320529545086
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.9799934319873848,
+        "return_probability_sirk": 0.9799934319873878,
         "return_probability_window_exact": 0.9666782885362749,
-        "runtime_ms": 34537,
+        "runtime_ms": 30880,
         "shifts": [
           {
             "im": 5.0,
@@ -1839,23 +1839,23 @@
           "cached_components": 15098380,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.0673297785797045
+            "max": 0.0673297785806943
           },
           "function_solve_iterations": {
             "count": 2,
-            "max": 319,
+            "max": 320,
             "values": [
-              311,
-              319
+              312,
+              320
             ]
           },
           "gmres_iterations_cap": 64,
           "gmres_iterations_max": 312,
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-          "gmres_iterations_total": 1182,
+          "gmres_iterations_total": 1184,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.9341798756994525e-16,
-          "orthogonality_defect": 1.2656542480726785e-14,
+          "hermiticity_defect": 1.0953834694483372e-15,
+          "orthogonality_defect": 1.509903313490213e-14,
           "shift_solve_iterations": {
             "count": 2,
             "max": 312,
@@ -1866,12 +1866,12 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.03735564204573745
+            "max": 0.0373556420457629
           }
         },
         "status": "measured",
         "window_labels": 3876,
-        "window_tail_norm_max": 0.103653205293834
+        "window_tail_norm_max": 0.10365320529545086
       },
       {
         "attained_rank": 2,
@@ -1882,15 +1882,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 32,
-        "inside_window_error": 0.013316033525200388,
+        "inside_window_error": 0.01331603352521571,
         "projected_action_tail_norms": [
           0.0,
-          0.08017007880954587
+          0.080170078810866
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.9799946133407087,
+        "return_probability_sirk": 0.979994613340724,
         "return_probability_window_exact": 0.9666785798155083,
-        "runtime_ms": 54951,
+        "runtime_ms": 48938,
         "shifts": [
           {
             "im": 5.0,
@@ -1910,39 +1910,39 @@
           "cached_components": 23568630,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.05517535896050165
+            "max": 0.05517535896226396
           },
           "function_solve_iterations": {
             "count": 2,
-            "max": 360,
+            "max": 359,
             "values": [
-              352,
-              360
+              351,
+              359
             ]
           },
           "gmres_iterations_cap": 64,
-          "gmres_iterations_max": 350,
+          "gmres_iterations_max": 351,
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-          "gmres_iterations_total": 1328,
+          "gmres_iterations_total": 1327,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 1.730072243099054e-15,
-          "orthogonality_defect": 1.6653345369377348e-14,
+          "hermiticity_defect": 9.908406494292718e-16,
+          "orthogonality_defect": 1.865174681370263e-14,
           "shift_solve_iterations": {
             "count": 2,
-            "max": 350,
+            "max": 351,
             "values": [
               266,
-              350
+              351
             ]
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.029606803717110657
+            "max": 0.029606803718886517
           }
         },
         "status": "measured",
         "window_labels": 4845,
-        "window_tail_norm_max": 0.08017007880954587
+        "window_tail_norm_max": 0.080170078810866
       },
       {
         "attained_rank": 2,
@@ -1953,15 +1953,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 34,
-        "inside_window_error": 0.013315523375540317,
+        "inside_window_error": 0.013315523375532434,
         "projected_action_tail_norms": [
           0.0,
-          0.06252869257758777
+          0.0625286925768258
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.9799942632367088,
+        "return_probability_sirk": 0.9799942632367009,
         "return_probability_window_exact": 0.9666787398611685,
-        "runtime_ms": 85524,
+        "runtime_ms": 76296,
         "shifts": [
           {
             "im": 5.0,
@@ -1981,7 +1981,7 @@
           "cached_components": 35938044,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.0441321254951659
+            "max": 0.044132125495142095
           },
           "function_solve_iterations": {
             "count": 2,
@@ -1996,8 +1996,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 1459,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 1.2167140120533194e-15,
-          "orthogonality_defect": 2.886579864025407e-15,
+          "hermiticity_defect": 3.5889267367619517e-16,
+          "orthogonality_defect": 6.217248937900877e-15,
           "shift_solve_iterations": {
             "count": 2,
             "max": 385,
@@ -2008,12 +2008,12 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.022899319222996522
+            "max": 0.022899319222890943
           }
         },
         "status": "measured",
         "window_labels": 5985,
-        "window_tail_norm_max": 0.06252869257758777
+        "window_tail_norm_max": 0.0625286925768258
       },
       {
         "attained_rank": 2,
@@ -2024,15 +2024,15 @@
           "t": 0.05
         },
         "hermite_cutoff": 36,
-        "inside_window_error": 0.01331515400139549,
+        "inside_window_error": 0.01331515400140082,
         "projected_action_tail_norms": [
           0.0,
-          0.049484277685910995
+          0.04948427768611227
         ],
         "requested_rank": 2,
-        "return_probability_sirk": 0.9799936682619508,
+        "return_probability_sirk": 0.9799936682619561,
         "return_probability_window_exact": 0.9666785142605553,
-        "runtime_ms": 129928,
+        "runtime_ms": 118090,
         "shifts": [
           {
             "im": 5.0,
@@ -2052,7 +2052,7 @@
           "cached_components": 53654290,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.034672162164351004
+            "max": 0.03467216216499691
           },
           "function_solve_iterations": {
             "count": 2,
@@ -2067,8 +2067,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 1590,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.5279937743124304e-15,
-          "orthogonality_defect": 2.3314683517128287e-14,
+          "hermiticity_defect": 5.512502598087062e-16,
+          "orthogonality_defect": 8.43769498715119e-15,
           "shift_solve_iterations": {
             "count": 2,
             "max": 420,
@@ -2079,12 +2079,12 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.017534174028710416
+            "max": 0.017534174028911647
           }
         },
         "status": "measured",
         "window_labels": 7315,
-        "window_tail_norm_max": 0.049484277685910995
+        "window_tail_norm_max": 0.04948427768611227
       }
     ]
   },
@@ -2108,34 +2108,34 @@
       "status": "comparison fixture",
       "variance": 17.281250000000004
     },
-    "even_seed_inner_excitation": 1.150319524131199,
+    "even_seed_inner_excitation": 1.1503195241312014,
     "inner_excitation_note": "an inner excitation splitting, never the outer vacuum gap",
-    "odd_minus_even": 1.6005817724016564,
-    "odd_seed_inner_excitation": 2.7509012965328554,
+    "odd_minus_even": 1.600581772401669,
+    "odd_seed_inner_excitation": 2.7509012965328705,
     "parity_cells": {
       "even": {
         "parity_conserved": true,
         "phi_parity": 0,
-        "ritz_ground": 1.150319524131199,
+        "ritz_ground": 1.1503195241312014,
         "ritz_values": [
           {
-            "norm": 0.9999999999999998,
-            "residual": 2.804514190782713,
-            "theta": 1.150319524131199
+            "norm": 0.9999999999999997,
+            "residual": 2.8045141907827036,
+            "theta": 1.1503195241312014
           },
           {
             "norm": 1.0000000000000002,
-            "residual": 17.53456079668622,
-            "theta": 13.955915017500248
+            "residual": 17.53456079668621,
+            "theta": 13.955915017500258
           },
           {
-            "norm": 0.9999999999999994,
-            "residual": 46.07610196903526,
-            "theta": 54.62668936822945
+            "norm": 0.9999999999999991,
+            "residual": 46.07610196903516,
+            "theta": 54.62668936822944
           },
           {
-            "norm": 0.9999999999999998,
-            "residual": 101.86052059276079,
+            "norm": 1.0000000000000002,
+            "residual": 101.86052059276082,
             "theta": 157.50848859982455
           }
         ],
@@ -2160,8 +2160,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 114,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.397834206984742e-16,
-          "orthogonality_defect": 8.881784197001252e-16,
+          "hermiticity_defect": 2.3211492144671316e-16,
+          "orthogonality_defect": 1.5543122344752192e-15,
           "shift_solve_iterations": {
             "count": 4,
             "max": 15,
@@ -2184,34 +2184,34 @@
       "odd": {
         "parity_conserved": true,
         "phi_parity": 1,
-        "ritz_ground": 2.7509012965328554,
+        "ritz_ground": 2.7509012965328705,
         "ritz_values": [
           {
-            "norm": 1.0000000000000002,
-            "residual": 6.513999729431373,
-            "theta": 2.7509012965328554
-          },
-          {
-            "norm": 1.0000000000000007,
-            "residual": 20.369808526956348,
-            "theta": 12.839765827909195
-          },
-          {
-            "norm": 1.0,
-            "residual": 39.441499469292204,
-            "theta": 43.115093429480545
+            "norm": 1.0000000000000009,
+            "residual": 6.513999729431422,
+            "theta": 2.7509012965328705
           },
           {
             "norm": 1.0000000000000002,
-            "residual": 79.04739407959609,
-            "theta": 138.46275952838874
+            "residual": 20.369808526956408,
+            "theta": 12.839765827909204
+          },
+          {
+            "norm": 1.0000000000000004,
+            "residual": 39.44149946929221,
+            "theta": 43.11509342948058
+          },
+          {
+            "norm": 1.0000000000000002,
+            "residual": 79.04739407959613,
+            "theta": 138.4627595283889
           }
         ],
         "solver": {
           "cached_components": 1710,
           "function_solve_error_bounds": {
             "count": 4,
-            "max": 0.012605006304948414
+            "max": 0.012605006304950046
           },
           "function_solve_iterations": {
             "count": 4,
@@ -2228,8 +2228,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 80,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 1.503869555937809e-16,
-          "orthogonality_defect": 2.220446049250313e-16,
+          "hermiticity_defect": 1.9382719647248123e-16,
+          "orthogonality_defect": 4.440892098500626e-16,
           "shift_solve_iterations": {
             "count": 4,
             "max": 10,
@@ -2242,7 +2242,7 @@
           },
           "shift_solve_residuals": {
             "count": 4,
-            "max": 0.002182862002849992
+            "max": 0.0021828620028499926
           }
         },
         "status": "measured",
@@ -2250,7 +2250,7 @@
         "window_labels": 35
       }
     },
-    "runtime_ms": 141,
+    "runtime_ms": 134,
     "static_jet": {
       "he2_k2_coupling": 0.0,
       "mean": 2.125,
@@ -2264,7 +2264,7 @@
       "variance": 21.06250000000001
     }
   },
-  "peak_rss_kb": 1193184,
+  "peak_rss_kb": 1193368,
   "rank_sweep": {
     "cells": [
       {
@@ -2279,7 +2279,7 @@
         "inside_window_error": 0.013219412751014792,
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
-        "runtime_ms": 108,
+        "runtime_ms": 105,
         "shifts": [
           {
             "im": 5.0,
@@ -2294,7 +2294,7 @@
           "cached_components": 5940,
           "function_solve_error_bounds": {
             "count": 2,
-            "max": 0.47036079589981317
+            "max": 0.47036079589981195
           },
           "function_solve_iterations": {
             "count": 2,
@@ -2309,8 +2309,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 72,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.804713928593943e-16,
-          "orthogonality_defect": 2.220446049250313e-16,
+          "hermiticity_defect": 8.828861977565451e-17,
+          "orthogonality_defect": 4.440892098500626e-16,
           "shift_solve_iterations": {
             "count": 2,
             "max": 18,
@@ -2321,11 +2321,11 @@
           },
           "shift_solve_residuals": {
             "count": 2,
-            "max": 0.31051929108927884
+            "max": 0.3105192910892783
           }
         },
         "status": "measured",
-        "window_tail_norm_outside_p_window": 1.4001127006943632
+        "window_tail_norm_outside_p_window": 1.4001127006943614
       },
       {
         "attained_rank": 4,
@@ -2336,10 +2336,10 @@
           "m": 4,
           "t": 0.05
         },
-        "inside_window_error": 0.0030742020154712613,
+        "inside_window_error": 0.0030742020154717054,
         "requested_rank": 4,
-        "return_probability_sirk": 0.9698107083302441,
-        "runtime_ms": 112,
+        "return_probability_sirk": 0.9698107083302445,
+        "runtime_ms": 109,
         "shifts": [
           {
             "im": 11.0,
@@ -2362,7 +2362,7 @@
           "cached_components": 5940,
           "function_solve_error_bounds": {
             "count": 4,
-            "max": 0.6613301320520293
+            "max": 0.6613301320520343
           },
           "function_solve_iterations": {
             "count": 4,
@@ -2379,8 +2379,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 144,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 6.502645680425512e-16,
-          "orthogonality_defect": 7.771561172376096e-16,
+          "hermiticity_defect": 5.670542043517719e-16,
+          "orthogonality_defect": 6.661338147750939e-16,
           "shift_solve_iterations": {
             "count": 4,
             "max": 18,
@@ -2393,11 +2393,11 @@
           },
           "shift_solve_residuals": {
             "count": 4,
-            "max": 0.3356081736537874
+            "max": 0.33560817365378787
           }
         },
         "status": "measured",
-        "window_tail_norm_outside_p_window": 2.2779181477858144
+        "window_tail_norm_outside_p_window": 2.277918147785816
       },
       {
         "attained_rank": 6,
@@ -2408,10 +2408,10 @@
           "m": 6,
           "t": 0.05
         },
-        "inside_window_error": 0.0002525224603960874,
+        "inside_window_error": 0.0002525224603955323,
         "requested_rank": 6,
-        "return_probability_sirk": 0.9664839838543767,
-        "runtime_ms": 119,
+        "return_probability_sirk": 0.9664839838543773,
+        "runtime_ms": 114,
         "shifts": [
           {
             "im": 17.0,
@@ -2442,7 +2442,7 @@
           "cached_components": 5940,
           "function_solve_error_bounds": {
             "count": 6,
-            "max": 0.8383292210637246
+            "max": 0.8383292210638849
           },
           "function_solve_iterations": {
             "count": 6,
@@ -2461,8 +2461,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 217,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 3.620787311871059e-16,
-          "orthogonality_defect": 8.881784197001252e-16,
+          "hermiticity_defect": 3.7565557765213e-16,
+          "orthogonality_defect": 1.5543122344752192e-15,
           "shift_solve_iterations": {
             "count": 6,
             "max": 18,
@@ -2477,7 +2477,7 @@
           },
           "shift_solve_residuals": {
             "count": 6,
-            "max": 0.3246627651430385
+            "max": 0.3246627651430382
           }
         },
         "status": "measured",
@@ -2486,7 +2486,7 @@
     ],
     "hermite_cutoff": 8,
     "return_probability_window_exact": 0.9667365063147728,
-    "runtime_ms": 400,
+    "runtime_ms": 389,
     "status": "measured",
     "window_labels": 70
   },
@@ -2494,7 +2494,7 @@
     "analytic_outside_window_squared": 4.500000000000002,
     "attained_rank": 2,
     "converged_inside_plan_interval": true,
-    "dissipative_growth": 3.195620066786414e-16,
+    "dissipative_growth": -6.391240133572824e-16,
     "energy_convention": "H = 1/2 p^2 + 1/2 k^2 phi^2 + lambda/4 (phi^2 - v^2)^2, lambda v^4/4 retained",
     "fixture_seed_moments": {
       "mean": 2.125,
@@ -2520,7 +2520,7 @@
     "return_probability_converged_window": 0.9982986001322911,
     "return_probability_sirk": 0.9978594340244482,
     "return_probability_window_exact": 0.998724351896546,
-    "runtime_ms": 84,
+    "runtime_ms": 88,
     "seed": "outer vacuum with one inner Gaussian, He_0(phi) label",
     "shifts": [
       {
@@ -2536,7 +2536,7 @@
       "cached_components": 80,
       "function_solve_error_bounds": {
         "count": 2,
-        "max": 0.20119237247750588
+        "max": 0.20119237247750585
       },
       "function_solve_iterations": {
         "count": 2,
@@ -2589,33 +2589,33 @@
       "base": {
         "amplitude_bound_dominates_gap": true,
         "amplitude_defect": {
-          "amplitude_bound": 0.00038138697986019363,
-          "defect_action_integral": 0.07124564192499182,
-          "initial_leakage": 5.552193095316979e-16,
-          "overlap_integral": 9.056643870860152e-6,
+          "amplitude_bound": 0.0003813869798601985,
+          "defect_action_integral": 0.0712456419249918,
+          "initial_leakage": 5.551959928281308e-16,
+          "overlap_integral": 9.056643870865608e-6,
           "panels": 512,
-          "probability_bound": 0.0007629194157487941,
-          "replacement_integral": 0.0003723303359887783,
-          "replacement_majorant": 0.0025379707466520757,
+          "probability_bound": 0.0007629194157488039,
+          "replacement_integral": 0.0003723303359887777,
+          "replacement_majorant": 0.002537970746652075,
           "time": 0.05
         },
         "attained_rank": 4,
         "certified_charge": {
           "kind": "2 a + a^2 from the full-action amplitude-overlap bound",
-          "value": 0.0007629194157487941
+          "value": 0.0007629194157488039
         },
         "certified_interval": [
-          0.9659868586147667,
-          0.9675126974462643
+          0.9659868586147654,
+          0.967512697446263
         ],
         "full_action_defect": {
-          "defect_action_envelope": 3.6106905943907766,
+          "defect_action_envelope": 3.610690594390774,
           "defect_frobenius": 118.97915226415859,
-          "defect_seed_action": 0.060927501100105995,
-          "evolution_bound": 0.1805345297195394,
-          "initial_leakage": 5.552193095316979e-16,
+          "defect_seed_action": 0.060927501100105766,
+          "evolution_bound": 0.18053452971953926,
+          "initial_leakage": 5.551959928281308e-16,
           "note": "the envelope is a grid-converged maximum sampled along the returned trajectory (the ||D G||_F ||c|| exp(omega t) product it replaced was shift-scaled and ~100 at this rank); it stays at 1e-1 here, ~23x the true state error and ~600x the true probability error",
-          "state_weighted_bound": 0.1805345297195394,
+          "state_weighted_bound": 0.18053452971953926,
           "status": "charged (sound, wide)"
         },
         "hashimoto": {
@@ -2627,17 +2627,17 @@
         "hermite_cutoff": 8,
         "interval": [
           0.9667365063147728,
-          0.9667630497462583
+          0.9667630497462556
         ],
         "lambda": 1.0,
-        "measured_amplitude_gap": 0.0000355312495022087,
+        "measured_amplitude_gap": 0.000035531249502409716,
         "requested_rank": 4,
-        "return_probability_sirk": 0.9667497780305155,
+        "return_probability_sirk": 0.9667497780305142,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 559,
+        "runtime_ms": 520,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
-          "value": 0.000013271715742724233
+          "value": 0.000013271715741391965
         },
         "shifts": [
           {
@@ -2678,8 +2678,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 114,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.397834206984742e-16,
-          "orthogonality_defect": 8.881784197001252e-16,
+          "hermiticity_defect": 2.3211492144671316e-16,
+          "orthogonality_defect": 1.5543122344752192e-15,
           "shift_solve_iterations": {
             "count": 4,
             "max": 15,
@@ -2698,7 +2698,7 @@
         "state_charge": {
           "kind": "2 eps + eps^2 from the full-action Duhamel state bound",
           "note": "kept for comparison: the state norm cannot see the near-orthogonality that the amplitude overlap does",
-          "value": 0.39366177586013407
+          "value": 0.39366177586013373
         },
         "status": "measured",
         "v": 1.0,
@@ -2708,33 +2708,33 @@
       "coupled": {
         "amplitude_bound_dominates_gap": true,
         "amplitude_defect": {
-          "amplitude_bound": 0.0005116516689499057,
-          "defect_action_integral": 0.08116126362958903,
-          "initial_leakage": 6.750059955786148e-16,
-          "overlap_integral": 0.000012421230972430108,
+          "amplitude_bound": 0.0005116516689498788,
+          "defect_action_integral": 0.08116126362958913,
+          "initial_leakage": 6.665017891273111e-16,
+          "overlap_integral": 0.00001242123097241249,
           "panels": 1024,
-          "probability_bound": 0.0010235651253301505,
-          "replacement_integral": 0.0004992304379768006,
-          "replacement_majorant": 0.0032935753569758256,
+          "probability_bound": 0.0010235651253300967,
+          "replacement_integral": 0.0004992304379767998,
+          "replacement_majorant": 0.0032935753569758334,
           "time": 0.05
         },
         "attained_rank": 4,
         "certified_charge": {
           "kind": "2 a + a^2 from the full-action amplitude-overlap bound",
-          "value": 0.0010235651253301505
+          "value": 0.0010235651253300967
         },
         "certified_interval": [
-          0.9640963192576608,
-          0.9661434495083212
+          0.9640963192576609,
+          0.9661434495083211
         ],
         "full_action_defect": {
-          "defect_action_envelope": 4.089648744249364,
-          "defect_frobenius": 130.74188556574333,
-          "defect_seed_action": 0.07682752873049441,
-          "evolution_bound": 0.20448243721246886,
-          "initial_leakage": 6.750059955786148e-16,
+          "defect_action_envelope": 4.0896487442493745,
+          "defect_frobenius": 130.74188556574344,
+          "defect_seed_action": 0.07682752873049456,
+          "evolution_bound": 0.2044824372124694,
+          "initial_leakage": 6.665017891273111e-16,
           "note": "the envelope is a grid-converged maximum sampled along the returned trajectory (the ||D G||_F ||c|| exp(omega t) product it replaced was shift-scaled and ~100 at this rank); it stays at 1e-1 here, ~23x the true state error and ~600x the true probability error",
-          "state_weighted_bound": 0.20448243721246886,
+          "state_weighted_bound": 0.2044824372124694,
           "status": "charged (sound, wide)"
         },
         "hashimoto": {
@@ -2749,11 +2749,11 @@
           0.9651233600098685
         ],
         "lambda": 1.1,
-        "measured_amplitude_gap": 0.00004771416368701562,
+        "measured_amplitude_gap": 0.00004771416368718058,
         "requested_rank": 4,
         "return_probability_sirk": 0.965119884382991,
         "return_probability_window_exact": 0.9651233600098685,
-        "runtime_ms": 1036,
+        "runtime_ms": 927,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 3.4756268775248955e-6
@@ -2780,7 +2780,7 @@
           "cached_components": 5940,
           "function_solve_error_bounds": {
             "count": 4,
-            "max": 0.012636892388997989
+            "max": 0.012636892388997796
           },
           "function_solve_iterations": {
             "count": 4,
@@ -2797,8 +2797,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 114,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.281757715784344e-16,
-          "orthogonality_defect": 2.3314683517128287e-15,
+          "hermiticity_defect": 1.9090498754751262e-16,
+          "orthogonality_defect": 8.881784197001252e-16,
           "shift_solve_iterations": {
             "count": 4,
             "max": 15,
@@ -2811,13 +2811,13 @@
           },
           "shift_solve_residuals": {
             "count": 4,
-            "max": 0.0006596922924964215
+            "max": 0.000659692292496422
           }
         },
         "state_charge": {
           "kind": "2 eps + eps^2 from the full-action Duhamel state bound",
           "note": "kept for comparison: the state norm cannot see the near-orthogonality that the amplitude overlap does",
-          "value": 0.450777941553289
+          "value": 0.45077794155329026
         },
         "status": "measured",
         "v": 1.0,
@@ -2827,33 +2827,33 @@
       "null_control": {
         "amplitude_bound_dominates_gap": true,
         "amplitude_defect": {
-          "amplitude_bound": 0.00038138697986019363,
-          "defect_action_integral": 0.07124564192499182,
-          "initial_leakage": 5.552193095316979e-16,
-          "overlap_integral": 9.056643870860152e-6,
+          "amplitude_bound": 0.0003813869798601985,
+          "defect_action_integral": 0.0712456419249918,
+          "initial_leakage": 5.551959928281308e-16,
+          "overlap_integral": 9.056643870865608e-6,
           "panels": 512,
-          "probability_bound": 0.0007629194157487941,
-          "replacement_integral": 0.0003723303359887783,
-          "replacement_majorant": 0.0025379707466520757,
+          "probability_bound": 0.0007629194157488039,
+          "replacement_integral": 0.0003723303359887777,
+          "replacement_majorant": 0.002537970746652075,
           "time": 0.05
         },
         "attained_rank": 4,
         "certified_charge": {
           "kind": "2 a + a^2 from the full-action amplitude-overlap bound",
-          "value": 0.0007629194157487941
+          "value": 0.0007629194157488039
         },
         "certified_interval": [
-          0.9659868586147667,
-          0.9675126974462643
+          0.9659868586147654,
+          0.967512697446263
         ],
         "full_action_defect": {
-          "defect_action_envelope": 3.6106905943907766,
+          "defect_action_envelope": 3.610690594390774,
           "defect_frobenius": 118.97915226415859,
-          "defect_seed_action": 0.060927501100105995,
-          "evolution_bound": 0.1805345297195394,
-          "initial_leakage": 5.552193095316979e-16,
+          "defect_seed_action": 0.060927501100105766,
+          "evolution_bound": 0.18053452971953926,
+          "initial_leakage": 5.551959928281308e-16,
           "note": "the envelope is a grid-converged maximum sampled along the returned trajectory (the ||D G||_F ||c|| exp(omega t) product it replaced was shift-scaled and ~100 at this rank); it stays at 1e-1 here, ~23x the true state error and ~600x the true probability error",
-          "state_weighted_bound": 0.1805345297195394,
+          "state_weighted_bound": 0.18053452971953926,
           "status": "charged (sound, wide)"
         },
         "hashimoto": {
@@ -2865,17 +2865,17 @@
         "hermite_cutoff": 8,
         "interval": [
           0.9667365063147728,
-          0.9667630497462583
+          0.9667630497462556
         ],
         "lambda": 1.0,
-        "measured_amplitude_gap": 0.0000355312495022087,
+        "measured_amplitude_gap": 0.000035531249502409716,
         "requested_rank": 4,
-        "return_probability_sirk": 0.9667497780305155,
+        "return_probability_sirk": 0.9667497780305142,
         "return_probability_window_exact": 0.9667365063147728,
         "runtime_ms": 523,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
-          "value": 0.000013271715742724233
+          "value": 0.000013271715741391965
         },
         "shifts": [
           {
@@ -2916,8 +2916,8 @@
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
           "gmres_iterations_total": 114,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.397834206984742e-16,
-          "orthogonality_defect": 8.881784197001252e-16,
+          "hermiticity_defect": 2.3211492144671316e-16,
+          "orthogonality_defect": 1.5543122344752192e-15,
           "shift_solve_iterations": {
             "count": 4,
             "max": 15,
@@ -2936,7 +2936,7 @@
         "state_charge": {
           "kind": "2 eps + eps^2 from the full-action Duhamel state bound",
           "note": "kept for comparison: the state norm cannot see the near-orthogonality that the amplitude overlap does",
-          "value": 0.39366177586013407
+          "value": 0.39366177586013373
         },
         "status": "measured",
         "v": 1.0,
@@ -2946,33 +2946,33 @@
       "spread": {
         "amplitude_bound_dominates_gap": true,
         "amplitude_defect": {
-          "amplitude_bound": 0.005929111898645486,
-          "defect_action_integral": 0.2596530247095201,
-          "initial_leakage": 6.6656396965567415e-16,
-          "overlap_integral": 0.0001259164720460081,
+          "amplitude_bound": 0.005929111898645527,
+          "defect_action_integral": 0.2596530247095199,
+          "initial_leakage": 6.786808767748333e-16,
+          "overlap_integral": 0.00012591647204603015,
           "panels": 2048,
-          "probability_bound": 0.011893378165197631,
-          "replacement_integral": 0.0058031954265988115,
-          "replacement_majorant": 0.033709846620401336,
+          "probability_bound": 0.011893378165197714,
+          "replacement_integral": 0.005803195426598818,
+          "replacement_majorant": 0.033709846620401274,
           "time": 0.05
         },
         "attained_rank": 4,
         "certified_charge": {
           "kind": "2 a + a^2 from the full-action amplitude-overlap bound",
-          "value": 0.011893378165197631
+          "value": 0.011893378165197714
         },
         "certified_interval": [
-          0.8980723479359696,
-          0.9218591042663649
+          0.8980723479359674,
+          0.9218591042663629
         ],
         "full_action_defect": {
-          "defect_action_envelope": 12.586444573885986,
-          "defect_frobenius": 212.0266191513406,
-          "defect_seed_action": 0.33930018282443175,
-          "evolution_bound": 0.6293222286943,
-          "initial_leakage": 6.6656396965567415e-16,
+          "defect_action_envelope": 12.586444573885974,
+          "defect_frobenius": 212.02661915134058,
+          "defect_seed_action": 0.33930018282442936,
+          "evolution_bound": 0.6293222286942994,
+          "initial_leakage": 6.786808767748333e-16,
           "note": "the envelope is a grid-converged maximum sampled along the returned trajectory (the ||D G||_F ||c|| exp(omega t) product it replaced was shift-scaled and ~100 at this rank); it stays at 1e-1 here, ~23x the true state error and ~600x the true probability error",
-          "state_weighted_bound": 0.6293222286943,
+          "state_weighted_bound": 0.6293222286942994,
           "status": "charged (sound, wide)"
         },
         "hashimoto": {
@@ -2983,18 +2983,18 @@
         },
         "hermite_cutoff": 8,
         "interval": [
-          0.9093554547568904,
+          0.9093554547568862,
           0.910575997445444
         ],
         "lambda": 1.0,
-        "measured_amplitude_gap": 0.0003646685872087571,
+        "measured_amplitude_gap": 0.000364668587209816,
         "requested_rank": 4,
-        "return_probability_sirk": 0.9099657261011672,
+        "return_probability_sirk": 0.9099657261011651,
         "return_probability_window_exact": 0.910575997445444,
-        "runtime_ms": 1928,
+        "runtime_ms": 1706,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
-          "value": 0.0006102713442768248
+          "value": 0.0006102713442789343
         },
         "shifts": [
           {
@@ -3018,7 +3018,7 @@
           "cached_components": 5940,
           "function_solve_error_bounds": {
             "count": 4,
-            "max": 0.014523434646987889
+            "max": 0.014523434646987864
           },
           "function_solve_iterations": {
             "count": 4,
@@ -3031,20 +3031,20 @@
             ]
           },
           "gmres_iterations_cap": 64,
-          "gmres_iterations_max": 16,
+          "gmres_iterations_max": 15,
           "gmres_iterations_note": "Arnoldi steps actually taken per solve, recorded by gmres_shift; basis solves and bounded-resolvent solves are reported separately",
-          "gmres_iterations_total": 123,
+          "gmres_iterations_total": 122,
           "gmres_relative_tolerance": 1e-13,
-          "hermiticity_defect": 2.3490641368493466e-16,
-          "orthogonality_defect": 7.771561172376096e-16,
+          "hermiticity_defect": 2.6974120454588754e-16,
+          "orthogonality_defect": 1.7763568394002505e-15,
           "shift_solve_iterations": {
             "count": 4,
-            "max": 16,
+            "max": 15,
             "values": [
               14,
               15,
               15,
-              16
+              15
             ]
           },
           "shift_solve_residuals": {
@@ -3055,7 +3055,7 @@
         "state_charge": {
           "kind": "2 eps + eps^2 from the full-action Duhamel state bound",
           "note": "kept for comparison: the state norm cannot see the near-orthogonality that the amplitude overlap does",
-          "value": 1.654690924917361
+          "value": 1.654690924917359
         },
         "status": "measured",
         "v": 1.0,
@@ -3067,74 +3067,74 @@
       "cell_a": "lambda = 1.0",
       "cell_b": "lambda = 1.1",
       "certified": {
-        "certified_charge": 0.0017864845410789447,
-        "difference": 0.0016298936475245274,
+        "certified_charge": 0.0017864845410789005,
+        "difference": 0.001629893647523195,
         "excludes_zero": false,
         "interval": [
-          -0.00015659089355441738,
-          0.003416378188603472
+          -0.0001565908935557054,
+          0.0034163781886020956
         ]
       },
       "exact": {
         "difference": 0.0016131463049042782,
         "excludes_zero": true,
         "interval": [
-          0.0015963989622840291,
-          0.0016298936475245274
+          0.0015963989622853614,
+          0.001629893647523195
         ],
-        "sharp_charge": 0.000016747342620249128
+        "sharp_charge": 0.00001674734261891686
       },
       "sirk": {
-        "difference": 0.0016298936475245274,
+        "difference": 0.001629893647523195,
         "excludes_zero": true,
         "interval": [
           0.0016131463049042782,
-          0.0016466409901447765
+          0.001646640990142112
         ],
-        "sharp_charge": 0.000016747342620249128
+        "sharp_charge": 0.00001674734261891686
       }
     },
     "momentum_spread_response": {
       "cell_a": "width_k = 1.0",
       "cell_b": "width_k = 1.5",
       "certified": {
-        "certified_charge": 0.012656297580946425,
-        "difference": 0.05678405192934832,
+        "certified_charge": 0.012656297580946519,
+        "difference": 0.0567840519293491,
         "excludes_zero": true,
         "interval": [
-          0.044127754348401896,
-          0.06944034951029475
+          0.04412775434840258,
+          0.06944034951029562
         ]
       },
       "exact": {
         "difference": 0.056160508869328774,
         "excludes_zero": true,
         "interval": [
-          0.055536965809309224,
-          0.05678405192934832
+          0.05553696580930845,
+          0.0567840519293491
         ],
-        "sharp_charge": 0.0006235430600195491
+        "sharp_charge": 0.0006235430600203262
       },
       "sirk": {
-        "difference": 0.05678405192934832,
+        "difference": 0.0567840519293491,
         "excludes_zero": true,
         "interval": [
           0.056160508869328774,
-          0.05740759498936787
+          0.057407594989369426
         ],
-        "sharp_charge": 0.0006235430600195491
+        "sharp_charge": 0.0006235430600203262
       }
     },
     "null_control": {
       "cell_a": "lambda = 1.0, width_k = 1.0",
       "cell_b": "lambda = 1.0, width_k = 1.0",
       "certified": {
-        "certified_charge": 0.0015258388314975883,
+        "certified_charge": 0.0015258388314976078,
         "difference": 0.0,
         "excludes_zero": false,
         "interval": [
-          -0.0015258388314975883,
-          0.0015258388314975883
+          -0.0015258388314976078,
+          0.0015258388314976078
         ]
       },
       "contains_zero": true,
@@ -3142,30 +3142,30 @@
         "difference": 0.0,
         "excludes_zero": false,
         "interval": [
-          -0.000026543431485448465,
-          0.000026543431485448465
+          -0.00002654343148278393,
+          0.00002654343148278393
         ],
-        "sharp_charge": 0.000026543431485448465
+        "sharp_charge": 0.00002654343148278393
       },
       "sirk": {
         "difference": 0.0,
         "excludes_zero": false,
         "interval": [
-          -0.000026543431485448465,
-          0.000026543431485448465
+          -0.00002654343148278393,
+          0.00002654343148278393
         ],
-        "sharp_charge": 0.000026543431485448465
+        "sharp_charge": 0.00002654343148278393
       }
     },
-    "runtime_ms": 4049,
+    "runtime_ms": 3679,
     "status": "measured",
     "time": 0.05
   },
-  "runtime_ms": 994978,
+  "runtime_ms": 865507,
   "schema": "phi4-momentum-sirk-sweep/v1",
   "source_revision": {
     "crate": "fock_sirk",
-    "git_head": "4a7846b6338a1e739d4f8c2d6f2d91024691ef6e",
+    "git_head": "362577e1abd3c76ecd6a7d97fbb8fa4c136472f2",
     "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
     "version": "0.1.0"
   }
