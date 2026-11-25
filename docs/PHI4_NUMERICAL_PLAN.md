@@ -49,7 +49,7 @@ for different Hamiltonians.
 ## 3. Next fibre experiment — enclose a return response
 
 1. **Reproduce the baseline before changing the solver.** Replay the scalar unit tests,
-   the six momentum SIRK tests and the release evidence runner using the commands in the
+   the seven momentum SIRK tests and the release evidence runner using the commands in the
    replay record. Save source and fixture digests. Preserve the unit rational table,
    parity sectors, empty-vacuum action and $0,c,2c$ shifts as regression checks.
    [Evidence runner](../fock_sirk/examples/phi4_momentum_sirk.rs)
