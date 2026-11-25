@@ -4,6 +4,7 @@
 //! unfer_node serve  --config node.json  [--ready ready.json]
 //! unfer_node submit --config client.json --to 127.0.0.1:17001 --id 7 --tx tx.json
 //! unfer_node digest --config node.json
+//! unfer_node job    --config node.json --job settle-auction
 //! ```
 //!
 //! `serve` owns exactly one state directory (locked for its lifetime), one
@@ -50,6 +51,7 @@ fn run() -> Result<(), String> {
     let mut to: Option<String> = None;
     let mut tx: Option<PathBuf> = None;
     let mut id: Option<u64> = None;
+    let mut job: Option<String> = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -59,6 +61,7 @@ fn run() -> Result<(), String> {
             "--ready" => ready = Some(PathBuf::from(value)),
             "--to" => to = Some(value),
             "--tx" => tx = Some(PathBuf::from(value)),
+            "--job" => job = Some(value),
             "--id" => {
                 id = Some(
                     value
@@ -77,8 +80,9 @@ fn run() -> Result<(), String> {
             .ok_or_else(|| "missing --tx".to_owned())?, id
             .ok_or_else(|| "missing --id".to_owned())?),
         "digest" => digest(&config),
+        "job" => job_state(&config, &job.ok_or_else(|| "missing --job".to_owned())?),
         other => Err(format!(
-            "unknown command `{other}`; expected serve, submit or digest"
+            "unknown command `{other}`; expected serve, submit, digest or job"
         )),
     }
 }
@@ -158,6 +162,16 @@ fn submit(
         }
         Ok(())
     })
+}
+
+#[cfg(feature = "network")]
+#[cfg(feature = "network")]
+fn job_state(config: &std::path::Path, job: &str) -> Result<(), String> {
+    use unfer_consensus::net::{NodeConfig, state_dir_job};
+
+    let config = NodeConfig::load(config)?;
+    println!("{}", state_dir_job(&config.state_dir, job)?);
+    Ok(())
 }
 
 #[cfg(feature = "network")]

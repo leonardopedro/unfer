@@ -538,6 +538,19 @@ impl JobQueue {
     /// unknown), and when the fence space for the job is exhausted — a claim
     /// that cannot be ordered is not issued.
     pub fn claim(&mut self, job: &str, holder: &str) -> Result<JobClaim, Diagnostic> {
+        let deployment = self.deployment.clone();
+        self.claim_in(&deployment, job, holder)
+    }
+
+    /// Claim under an explicit deployment (the replicated path, where the
+    /// deployment travels with the signed command rather than living in one
+    /// node's constructor).
+    pub fn claim_in(
+        &mut self,
+        deployment: &str,
+        job: &str,
+        holder: &str,
+    ) -> Result<JobClaim, Diagnostic> {
         // The fence is asked first: for a job someone already holds, the honest
         // answer is "that resource is held", not "this job is not queued" — the
         // second reads like the caller is late, and the first tells it who owns
@@ -545,7 +558,7 @@ impl JobQueue {
         // check below, and the issued fence is rolled back so nothing is
         // published that no job backs.
         let before = self.fences.clone();
-        let fence = self.fences.claim(&self.deployment, job, holder)?;
+        let fence = self.fences.claim(deployment, job, holder)?;
         if self.jobs.get(job) != Some(&JobState::Queued) {
             self.fences = before;
             return Err(stale(
@@ -558,6 +571,66 @@ impl JobQueue {
             job: job.to_string(),
             fence,
         })
+    }
+
+    /// Re-arm the claim named by `job` and `fence`, constructing the claim
+    /// token from the replicated command rather than from a caller's local
+    /// value. The named fence must be exactly current.
+    pub fn renew_at(&mut self, job: &str, fence: &Fence) -> Result<JobClaim, Diagnostic> {
+        let claim = JobClaim {
+            job: job.to_string(),
+            fence: fence.clone(),
+        };
+        if !self.valid_claim(&claim) {
+            return Err(self.stale_claim(&claim, "renew"));
+        }
+        let next = self.fences.renew(fence)?;
+        Ok(JobClaim {
+            job: claim.job,
+            fence: next,
+        })
+    }
+
+    /// Release the claim named by `job` and `fence` and re-queue the job.
+    pub fn unclaim_at(&mut self, job: &str, fence: &Fence) -> Result<(), Diagnostic> {
+        let claim = JobClaim {
+            job: job.to_string(),
+            fence: fence.clone(),
+        };
+        if !self.valid_claim(&claim) {
+            return Err(self.stale_claim(&claim, "unclaim"));
+        }
+        self.fences.release(fence)?;
+        self.jobs.insert(job.to_string(), JobState::Queued);
+        Ok(())
+    }
+
+    /// Mark the claim named by `job` and `fence` fired.
+    pub fn mark_fired_at(&mut self, job: &str, fence: &Fence) -> Result<(), Diagnostic> {
+        let claim = JobClaim {
+            job: job.to_string(),
+            fence: fence.clone(),
+        };
+        if !self.valid_claim(&claim) {
+            return Err(self.stale_claim(&claim, "mark_fired"));
+        }
+        self.fences.release(fence)?;
+        self.jobs.insert(job.to_string(), JobState::Fired);
+        Ok(())
+    }
+
+    /// Disable the claim named by `job` and `fence`.
+    pub fn disable_at(&mut self, job: &str, fence: &Fence) -> Result<(), Diagnostic> {
+        let claim = JobClaim {
+            job: job.to_string(),
+            fence: fence.clone(),
+        };
+        if !self.valid_claim(&claim) {
+            return Err(self.stale_claim(&claim, "disable"));
+        }
+        self.fences.release(fence)?;
+        self.jobs.insert(job.to_string(), JobState::Disabled);
+        Ok(())
     }
 
     /// Re-arm the claim: a new fence for the same job and holder.
@@ -767,6 +840,49 @@ fn stale(kind: &str, message: String) -> Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replicated_fenced_operations_require_the_current_fence() {
+        let mut q = JobQueue::with_deployment("dep");
+        q.enqueue("job");
+        let claim = q.claim_in("dep", "job", "worker").expect("claim");
+        let stale = Fence::new("dep", "job", 1, 2);
+        assert!(q.renew_at("job", &stale).is_err(), "renew needs current");
+        assert!(q.unclaim_at("job", &stale).is_err(), "release needs current");
+        assert!(
+            q.mark_fired_at("job", &stale).is_err(),
+            "fire needs current"
+        );
+        assert!(
+            q.disable_at("job", &stale).is_err(),
+            "disable needs current"
+        );
+        assert_eq!(q.state("job"), Some(JobState::Claimed));
+
+        let renewed = q.renew_at("job", claim.fence()).expect("renew");
+        assert_eq!(renewed.fence().generation, 2);
+        assert!(
+            q.mark_fired_at("job", claim.fence()).is_err(),
+            "the superseded fence cannot fire"
+        );
+        q.mark_fired_at("job", renewed.fence()).expect("fire");
+        assert_eq!(q.state("job"), Some(JobState::Fired));
+    }
+
+    #[test]
+    fn replicated_release_requeues_for_a_newer_claim() {
+        let mut q = JobQueue::with_deployment("dep");
+        q.enqueue("job");
+        let first = q.claim_in("dep", "job", "worker-a").expect("claim");
+        q.unclaim_at("job", first.fence()).expect("release");
+        assert_eq!(q.state("job"), Some(JobState::Queued));
+        let second = q.claim_in("dep", "job", "worker-b").expect("reclaim");
+        assert_eq!(second.fence().generation, 2);
+        assert!(
+            q.mark_fired_at("job", first.fence()).is_err(),
+            "the stale release does not authorize the old worker"
+        );
+    }
 
     #[test]
     fn claim_fire_mark_fired_roundtrip() {
