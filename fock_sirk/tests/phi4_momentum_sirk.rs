@@ -167,37 +167,26 @@ impl WindowOperator {
     }
 }
 
-/// Bit pattern of one amplitude, for the `to_bits()` pins.
-fn bits(value: C) -> (u64, u64) {
-    (value.re.to_bits(), value.im.to_bits())
+/// Largest amplitude difference over the union of the two supports.
+fn vector_gap(a: &NestedVector, b: &NestedVector) -> f64 {
+    let zero = C::new(0.0, 0.0);
+    let left: BTreeMap<&JointOuterBasis, &C> = a.iter().collect();
+    let right: BTreeMap<&JointOuterBasis, &C> = b.iter().collect();
+    left.keys().chain(right.keys()).fold(0.0_f64, |gap, label| {
+        let x = left.get(label).copied().copied().unwrap_or(zero);
+        let y = right.get(label).copied().copied().unwrap_or(zero);
+        gap.max((x - y).norm())
+    })
 }
 
-/// Compare two nested vectors exactly, ignoring stored zeros (the map walk
-/// deletes them, the coordinate backend keeps them until it converts back).
-fn assert_same_vector(a: &NestedVector, b: &NestedVector, label: &str) {
-    let stored = |v: &NestedVector| -> Vec<(JointOuterBasis, (u64, u64))> {
-        v.iter()
-            .filter(|(_, value)| **value != C::new(0.0, 0.0))
-            .map(|(basis, value)| (basis.clone(), bits(*value)))
-            .collect()
-    };
-    let left = stored(a);
-    let right = stored(b);
-    assert_eq!(left.len(), right.len(), "{label}: support size");
-    for ((basis_left, value_left), (basis_right, value_right)) in left.iter().zip(&right) {
-        assert_eq!(basis_left, basis_right, "{label}: label order");
-        assert_eq!(
-            value_left, value_right,
-            "{label}: amplitude at {basis_left:?}"
-        );
-    }
-}
-
-fn assert_same_matrix(a: &DMatrix<C>, b: &DMatrix<C>, label: &str) {
-    assert_eq!(a.shape(), b.shape(), "{label}: shape");
-    for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
-        assert_eq!(bits(*x), bits(*y), "{label}: entry {i}");
-    }
+/// Largest entry difference, relative to the larger matrix norm.
+fn matrix_gap(a: &DMatrix<C>, b: &DMatrix<C>) -> f64 {
+    assert_eq!(a.shape(), b.shape());
+    let gap = a
+        .iter()
+        .zip(b.iter())
+        .fold(0.0_f64, |gap, (x, y)| gap.max((*x - *y).norm()));
+    gap / a.norm().max(b.norm()).max(1.0)
 }
 
 fn assert_close(actual: f64, expected: f64, tolerance: f64, label: &str) {
@@ -207,12 +196,14 @@ fn assert_close(actual: f64, expected: f64, tolerance: f64, label: &str) {
     );
 }
 
-/// The coordinate backend of §5.10 is the *same* arithmetic as the map walk,
-/// not a nearby one: every amplitude and every solve diagnostic of the two
-/// paths agrees on `to_bits()`. The map path is kept behind
+/// The coordinate backend of §5.10 reproduced the map walk on `to_bits()`.
+/// §5.11 replaced its per-step dense SVD with Givens rotations, so the two
+/// paths now round differently in the least-squares stage: this asserts they
+/// agree to solver precision instead — same rank, same Arnoldi counts, and
+/// every diagnostic and amplitude within `1e-12`. The map path is kept behind
 /// `dense_window_solve: false` precisely so this stays checkable.
 #[test]
-fn dense_window_solve_is_bit_identical_to_the_map_walk() {
+fn window_solve_matches_the_map_walk_at_solver_precision() {
     let t = 0.01;
     let model = ScalarMomCont::unit();
     let window = ScalarMomCont::window_labels(12);
@@ -235,9 +226,20 @@ fn dense_window_solve_is_bit_identical_to_the_map_walk() {
     // The solves must have run, converged, and taken the same steps.
     assert!(!map.shift_solve_iterations.is_empty());
     assert_eq!(
-        map.shift_solve_iterations, dense.shift_solve_iterations,
-        "Arnoldi steps per shift solve"
+        map.shift_solve_iterations.len(),
+        dense.shift_solve_iterations.len(),
+        "one step count per shift solve"
     );
+    for (left, right) in map
+        .shift_solve_iterations
+        .iter()
+        .zip(&dense.shift_solve_iterations)
+    {
+        assert!(
+            left.abs_diff(*right) <= 1,
+            "Arnoldi steps: {left} against {right} (the least-squares rounding decides the last step)"
+        );
+    }
     assert_eq!(map.rank(), dense.rank(), "Krylov rank");
     assert_eq!(map.cached_components, dense.cached_components);
     for (left, right) in map
@@ -245,24 +247,25 @@ fn dense_window_solve_is_bit_identical_to_the_map_walk() {
         .iter()
         .zip(&dense.shift_solve_error_bounds)
     {
-        assert_eq!(left.to_bits(), right.to_bits(), "shift solve bound");
+        assert_close(*right, *left, 1e-12 * left.max(1.0), "shift solve bound");
     }
     for (left, right) in map
         .projected_action_tail_norms
         .iter()
         .zip(&dense.projected_action_tail_norms)
     {
-        assert_eq!(left.to_bits(), right.to_bits(), "action tail");
+        assert_close(*right, *left, 1e-12, "action tail");
     }
     for (left, right) in map.scales.iter().zip(&dense.scales) {
-        assert_eq!(left.to_bits(), right.to_bits(), "unit-norm scale");
+        assert_close(*right, *left, 1e-12, "unit-norm scale");
     }
 
     // The forward sequence is where a shifted solve's output lands, so this is
-    // the end-to-end pin on the solution itself.
+    // the end-to-end check on the solution itself.
     assert_eq!(map.sequence.len(), dense.sequence.len());
     for (k, (left, right)) in map.sequence.iter().zip(&dense.sequence).enumerate() {
-        assert_same_vector(left, right, &format!("forward sequence {k}"));
+        let gap = vector_gap(left, right);
+        assert_close(gap, 0.0, 1e-12, &format!("forward sequence {k}"));
     }
     for (k, (left, right)) in map
         .orthonormal_basis
@@ -270,36 +273,46 @@ fn dense_window_solve_is_bit_identical_to_the_map_walk() {
         .zip(&dense.orthonormal_basis)
         .enumerate()
     {
-        assert_same_vector(left, right, &format!("orthonormal basis {k}"));
+        let gap = vector_gap(left, right);
+        assert_close(gap, 0.0, 1e-12, &format!("orthonormal basis {k}"));
     }
 
-    assert_same_matrix(&map.gram, &dense.gram, "Gram matrix");
-    assert_same_matrix(&map.h_proj, &dense.h_proj, "H_proj");
-    assert_same_matrix(
-        &map.function_generator,
-        &dense.function_generator,
+    assert_close(matrix_gap(&map.gram, &dense.gram), 0.0, 1e-12, "Gram");
+    assert_close(matrix_gap(&map.h_proj, &dense.h_proj), 0.0, 1e-12, "H_proj");
+    assert_close(
+        matrix_gap(&map.function_generator, &dense.function_generator),
+        0.0,
+        1e-12,
         "function generator",
     );
     match (&map.projected_resolvent, &dense.projected_resolvent) {
-        (Some(left), Some(right)) => {
-            assert_same_matrix(left, right, "bounded-resolvent compression")
-        }
+        (Some(left), Some(right)) => assert_close(
+            matrix_gap(left, right),
+            0.0,
+            1e-12,
+            "bounded-resolvent compression",
+        ),
         (None, None) => {}
         _ => panic!("bounded-resolvent compression present on one path only"),
     }
-    assert_eq!(
-        map.orthogonality_defect.to_bits(),
-        dense.orthogonality_defect.to_bits()
+    assert_close(
+        dense.orthogonality_defect,
+        map.orthogonality_defect,
+        1e-12,
+        "orthogonality defect",
     );
-    assert_eq!(
-        map.hermiticity_defect.to_bits(),
-        dense.hermiticity_defect.to_bits()
+    assert_close(
+        dense.hermiticity_defect,
+        map.hermiticity_defect,
+        1e-12,
+        "hermiticity defect",
     );
     for time in [t, 2.0 * t, 5.0 * t] {
-        assert_eq!(
-            return_probability(&map, &initial, time).to_bits(),
-            return_probability(&dense, &initial, time).to_bits(),
-            "return probability at t = {time}"
+        assert_close(
+            return_probability(&dense, &initial, time),
+            return_probability(&map, &initial, time),
+            1e-13,
+            &format!("return probability at t = {time}"),
         );
     }
 }
@@ -946,7 +959,7 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .collect();
     assert_eq!(
         cutoffs,
-        vec![4, 8, 12, 16, 20, 22, 24, 26, 28],
+        vec![4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32],
         "sweep cutoffs"
     );
     let sizes: Vec<u64> = tails
@@ -955,7 +968,7 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .collect();
     assert_eq!(
         sizes,
-        vec![15, 70, 210, 495, 1001, 1365, 1820, 2380, 3060],
+        vec![15, 70, 210, 495, 1001, 1365, 1820, 2380, 3060, 3876, 4845],
         "window sizes"
     );
     let tail_values: Vec<f64> = tails
@@ -976,12 +989,20 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         "pushing to C = 24 must keep shrinking the tail: {tail_values:?}"
     );
     assert!(
-        tail_values[last - 1] < 0.85 * tail_values[6],
+        tail_values[last - 3] < 0.85 * tail_values[last - 4],
         "pushing to C = 26 must keep shrinking the tail: {tail_values:?}"
     );
     assert!(
-        tail_values[last] < 0.95 * tail_values[last - 1],
+        tail_values[last - 2] < 0.85 * tail_values[last - 3],
         "pushing to C = 28 must keep shrinking the tail: {tail_values:?}"
+    );
+    assert!(
+        tail_values[last - 1] < 0.85 * tail_values[last - 2],
+        "pushing to C = 30 must keep shrinking the tail: {tail_values:?}"
+    );
+    assert!(
+        tail_values[last] < 0.85 * tail_values[last - 1],
+        "pushing to C = 32 must keep shrinking the tail: {tail_values:?}"
     );
     let tail_steps: Vec<u64> = tails
         .iter()

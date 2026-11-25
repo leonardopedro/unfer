@@ -945,7 +945,7 @@ struct GmresProfile {
     axpy_calls: usize,
     dot: std::time::Duration,
     dot_calls: usize,
-    svd: std::time::Duration,
+    lstsq: std::time::Duration,
 }
 
 impl GmresProfile {
@@ -961,7 +961,7 @@ impl GmresProfile {
             return;
         }
         eprintln!(
-            "PROFILE steps={steps} matvec={:.2}s axpy={:.2}s ({} calls, {:.3} ms/call) dot={:.2}s ({} calls, {:.3} ms/call) svd={:.2}s",
+            "PROFILE steps={steps} matvec={:.2}s axpy={:.2}s ({} calls, {:.3} ms/call) dot={:.2}s ({} calls, {:.3} ms/call) lstsq={:.2}s",
             self.matvec.as_secs_f64(),
             self.axpy.as_secs_f64(),
             self.axpy_calls,
@@ -969,7 +969,7 @@ impl GmresProfile {
             self.dot.as_secs_f64(),
             self.dot_calls,
             self.dot.as_secs_f64() / self.dot_calls.max(1) as f64 * 1e3,
-            self.svd.as_secs_f64()
+            self.lstsq.as_secs_f64()
         );
     }
 }
@@ -1040,7 +1040,7 @@ where
             .svd(true, true)
             .solve(&target, 1e-14)
             .map_err(|e| JointSirkError::Invalid(format!("GMRES least squares: {e}")))?;
-        profile.svd += clock.elapsed();
+        profile.lstsq += clock.elapsed();
         let estimated = (&small * &coefficients - &target).norm() / beta;
         if estimated <= tolerance || k + 1 == iterations || next_norm <= 1e-14 {
             let mut solution = NestedVector::new();
@@ -1073,6 +1073,25 @@ where
         residual: last_residual,
         iterations,
     })
+}
+
+/// One complex Givens rotation `(c, s)`, with `c` real, such that
+/// `[[c, s], [-conj(s), c]] [top; bottom] = [rotated; 0]`. `rotated` keeps the
+/// phase of `top`, so the rotation is not just a modulus operation.
+fn givens_rotation(top: C, bottom: C) -> (f64, C, C) {
+    let zero = C::new(0.0, 0.0);
+    let bottom_norm = bottom.norm();
+    if bottom_norm == 0.0 {
+        return (1.0, zero, top);
+    }
+    let top_norm = top.norm();
+    if top_norm == 0.0 {
+        return (0.0, bottom.conj() / bottom_norm, C::new(bottom_norm, 0.0));
+    }
+    let radius = top_norm.hypot(bottom_norm);
+    let c = top_norm / radius;
+    let s = top / top_norm * bottom.conj() / radius;
+    (c, s, top / top_norm * C::new(radius, 0.0))
 }
 
 /// The same GMRES as `gmres_shift`, in coordinates of the declared window.
@@ -1135,6 +1154,10 @@ where
     )?;
     let mut basis: Vec<Vec<C>> = vec![first];
     let mut h = DMatrix::<C>::zeros(iterations + 1, iterations);
+    // Rotations accumulated so far, and the rotated right-hand side.
+    let mut rotations: Vec<(f64, C)> = Vec::new();
+    let mut transformed = DVector::<C>::zeros(iterations + 1);
+    transformed[0] = C::new(beta, 0.0);
     let mut last_residual = f64::INFINITY;
     for k in 0..iterations {
         let clock = std::time::Instant::now();
@@ -1160,18 +1183,48 @@ where
         profile.axpy += clock.elapsed();
         let next_norm = coords_norm(&w);
         h[(k + 1, k)] = C::new(next_norm, 0.0);
-        let small = h.view((0, 0), (k + 2, k + 1)).into_owned();
-        let mut target = DVector::<C>::zeros(k + 2);
-        target[0] = C::new(beta, 0.0);
+        // Incremental least squares (§5.11): the Hessenberg column is rotated
+        // into upper triangular form by one Givens rotation per step, and the
+        // transformed right-hand side carries the residual estimate in its last
+        // entry. The dense SVD this replaced cost `k³` per step -- 56 % of the
+        // `C = 26` solve -- and only ever produced the same three things: the
+        // residual estimate, the acceptance test's coefficients, and nothing
+        // the loop used again.
         let clock = std::time::Instant::now();
-        let coefficients = small
-            .clone()
-            .svd(true, true)
-            .solve(&target, 1e-14)
-            .map_err(|e| JointSirkError::Invalid(format!("GMRES least squares: {e}")))?;
-        profile.svd += clock.elapsed();
-        let estimated = (&small * &coefficients - &target).norm() / beta;
+        for (i, &(c, s)) in rotations.iter().enumerate() {
+            let top = h[(i, k)];
+            let bottom = h[(i + 1, k)];
+            h[(i, k)] = C::new(c, 0.0) * top + s * bottom;
+            h[(i + 1, k)] = -s.conj() * top + C::new(c, 0.0) * bottom;
+        }
+        let (c, s, rotated) = givens_rotation(h[(k, k)], h[(k + 1, k)]);
+        rotations.push((c, s));
+        h[(k, k)] = rotated;
+        h[(k + 1, k)] = zero;
+        let (top, bottom) = (transformed[k], transformed[k + 1]);
+        transformed[k] = C::new(c, 0.0) * top + s * bottom;
+        transformed[k + 1] = -s.conj() * top + C::new(c, 0.0) * bottom;
+        profile.lstsq += clock.elapsed();
+        let estimated = transformed[k + 1].norm() / beta;
         if estimated <= tolerance || k + 1 == iterations || next_norm <= 1e-14 {
+            // Back-substitute the rotated triangular system for the same
+            // coefficients the SVD returned.
+            let clock = std::time::Instant::now();
+            let mut coefficients = vec![zero; k + 1];
+            for i in (0..=k).rev() {
+                let mut accumulated = transformed[i];
+                for j in (i + 1)..=k {
+                    accumulated -= h[(i, j)] * coefficients[j];
+                }
+                let diagonal = h[(i, i)];
+                if diagonal.norm() == 0.0 {
+                    return Err(JointSirkError::Invalid(
+                        "singular Hessenberg diagonal in the GMRES least squares".into(),
+                    ));
+                }
+                coefficients[i] = accumulated / diagonal;
+            }
+            profile.lstsq += clock.elapsed();
             let mut coordinates = vec![zero; n];
             for (j, &c) in coefficients.iter().enumerate() {
                 coords_axpy(&mut coordinates, &basis[j], c, limits)?;

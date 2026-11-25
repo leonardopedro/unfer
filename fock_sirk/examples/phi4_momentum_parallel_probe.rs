@@ -156,6 +156,7 @@ fn main() {
             max_iterations: 1024,
         },
         max_cached_components: budget,
+        action_limits: limits,
         ..JointSirkOptions::default()
     };
     let started = Instant::now();
