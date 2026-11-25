@@ -878,8 +878,12 @@ steps in total:
 | — the inner product inside it | `1.05 s` | `1.93 s` | `1.96 s` | `2.05 s` | `6.99 s` | `15.6 %` |
 | Givens least squares | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.03 %` |
 
-The four phases account for `44.24 s`; the remaining `0.7 s` (`1.5 %`) is the
-`coords`/`from_coords` round-trip at the two ends of each solve. The `gemv` is
+Read the table as nested, not additive: the inner-product row sits inside the
+MGS block and the block's clock contains it (§5.12 note below). The disjoint
+phases account for `37.27 s`; the remaining `7.63 s` (`17.0 %`) is everything
+outside them — the `coords`/`from_coords` round-trip at the two ends of each
+solve (`~0.7 s`), each step's image construction, and the norm of every new
+basis vector. The `gemv` is
 `20.9 ms` per step by construction: `H_proj` is `4845²` complex entries,
 `375.6 MB`, streamed once per Arnoldi step. That is `18.0 GB/s`, so it is
 bandwidth-bound, not arithmetic-bound — the flop count (`~9.4e7` per step) would
@@ -895,8 +899,15 @@ is a floor, not an estimate in the other direction: the map route also pays a
 reserialisation per step (`map_clone_ms = 1.06` here) that the coordinate loop does not. So the
 `gemv` is not a tax on the solve — it is the *cheap* action, already `8×` below
 the sparse one, and it only reaches `62 %` because §5.11 made everything else
-free. Removing the remaining `15.6 %` inner products and `21 %` axpys, even to
-zero, would leave a `17.1 s` solve — the `gemv` is where a wider window pays.
+free. Removing the `gemv` leaves a `17.1 s` solve; removing every *other* term
+leaves `7.7 s`. Either way the `gemv` is where a wider window pays.
+
+One accounting caveat on the `PROFILE` line, because it is easy to misread the
+split: the `axpy=` figure is the **whole Gram–Schmidt block**, not the axpys
+alone — its clock starts before the two passes and stops after them, so it
+contains the `dot=` figure. The disjoint split of the `44.9 s` solve is
+therefore `61.9 %` `gemv`, `15.6 %` inner products, `5.5 %` real axpys and
+`17.0 %` everything else (norm, image construction, the Givens stage).
 
 Three other removals were considered and are reported as *not* done. Storing
 `H_proj` in `f32` halves the stream to `188 MB` (`~10.5 ms` per step, a `~31 s`
@@ -945,22 +956,74 @@ of `917` — but it pushes the reorthogonalisation defect to the pin's edge:
 `orthonormal basis 3: got 1.0004e-12, expected 0 (tolerance 1e-12)`. Two passes
 are what hold that defect two orders below the tolerance, so the pass count is
 not a free parameter and nothing here was adopted; `joint_sirk.rs` is unchanged.
-The `36 %` is therefore reducible only by an explicitly SIMD complex kernel
-(no such dependency in the tree) or by moving the whole loop to a device — which
-this host cannot run (§5.12, GPU note below).
+So the only lever left on that `36.6 %` is an explicitly SIMD complex kernel —
+which needs no new dependency (the target's intrinsics are in `core::arch`) —
+or moving the loop to a device.
 
-**The GPU `gemv` is not measured, and the host is the reason.** This machine has
-no CUDA device: no `nvidia-smi`, no `/dev/nvidia*`, no `nvcc`, and
-`examples/debug_cuda.rs` reports that the binary was built without the `cuda`
-feature. The `cuda` feature additionally needs `nvcc` at build time, so the
-project's own triage line cannot be produced here either. What can be said without a device
-is arithmetic, not measurement: the `C = 32` step streams `375.6 MB` from host
-DRAM in `20.9 ms`, while a device-resident matrix would be read at device
-bandwidth (order `0.4 ms` at `1 TB/s`), and the per-step host↔device traffic
-for the one `4845`-vector (`77.5 KB` each way) is order `10 µs` — so a
-device-resident `gemv` is plausible, not demonstrated. Even a free `gemv` would
-leave the `36.6 %` `axpy`/inner-product work on the host, i.e. a `~17.1 s`
-solve (§5.12), unless those kernels move with it. No speedup is claimed.
+**An explicit NEON kernel: `2.5×` on the axpy, `3.75×` on the inner product,
+`12.6 %` off the solve — and still not adopted.** This host is `aarch64`
+(Qualcomm Oryon, 12 cores, NEON + `fcma`), so "explicit SIMD" here means NEON,
+not AVX2. `examples/phi4_kernel_simd_probe.rs` rebuilds both kernels with
+`core::arch::aarch64` intrinsics — deinterleaving the array-of-structs pairs
+with `vuzp1q/vuzp2q`, four independent accumulators for the inner product so
+the dependent-add chain is broken — and times them against the committed shape:
+
+| measurement | scalar | NEON | ratio |
+|---|---|---|---|
+| `axpy`, microbenchmark (`n = 2380`) | `2.31 us` | `0.93 us` | `2.48x` |
+| `dot`, microbenchmark (`n = 2380`) | `1.44–2.81 us` | `1.39 us` | `1.03–2.07x` |
+| `dot`, in the `C = 26` solve | `1.65 s` | `0.44 s` | `3.75x` |
+| whole `C = 26` solve | `9.760 s` | `8.528 s` | `12.6 %` |
+
+The `dot` microbenchmark row is a range on purpose: LLVM vectorises the
+*scalar reference* in some compilation contexts and not others, so the
+microbenchmark cannot settle that kernel. The solver can, and does — there the
+scalar accumulator is latency-bound, which is why the end-to-end gain (`3.75×`)
+exceeds the microbenchmark's. `matvec` was identical in both runs of that A/B
+(`4.63 s` vs `4.62 s`), which is the control showing the two runs are
+comparable. Correctness is unaffected in kind: `axpy` agrees to `2.2e-16` and
+`dot` to `1.9e-14` relative.
+
+It is **not adopted**, for two reasons that are project decisions rather than
+measurement questions: it reorders the inner product, so the solve's last bits
+move (`probability` differs at `1.6e-16`, `917` vs `915` iterations) and the
+frozen sweep record would have to be regenerated to stay a record of a real
+run; and it is `aarch64`-only, so an x86 host would keep the scalar path and
+produce different digits from the same commit. The prototype is kept as a probe
+so the number stays re-measurable.
+
+**The device `gemv` is now runnable, and the host still cannot run it.**
+`examples/phi4_gemv_device_bench.rs` builds the real `C = 32` window operator
+and times the same dense product both ways; its CPU leg reproduces the solve's
+per-step figure exactly (`20.868 ms/step` here against the profile's `20.9 ms`),
+which is what makes the comparison meaningful rather than a proxy. On this host
+the device leg stops after the CPU leg and prints the project's own triage line:
+
+```text
+cutoff=32 labels=4845 matrix_mb=375.6 reps=5
+cpu gemv: 20.868 ms/step (checksum 3.050567e0)
+UK-GPU-OTHER → see the candle error below (…) (candle: the candle crate has not been built with cuda support)
+device leg not run: no usable CUDA device.
+```
+
+To get the device number, run it where a driver and toolkit are installed
+(`nvcc` is needed at build time; the CSR also has no CUDA device):
+
+```text
+PROBE_CUTOFF=32 cargo run -q -p fock_sirk --release --features cuda \
+    --example phi4_gemv_device_bench
+```
+
+Two caveats are printed with the result rather than buried: the device leg
+uploads the complex matrix as its real `2n × 2n` block form in `f32`, i.e. four
+times the real multiplies of the complex product (conservative *against* the
+device), and it times one `gemv` per step, so the per-step host↔device transfer
+of the `4845`-complex vector (`77.5 KB` each way, order `10 µs` at PCIe rates)
+is not included. Until that run exists, what the host side supports is
+arithmetic only: the step streams `375.6 MB` in `20.9 ms`, a device-resident
+matrix would be read at device bandwidth (order `0.4 ms` at `1 TB/s`), and the
+transfer is negligible — plausible, **not** demonstrated, and no speedup is
+claimed.
 
 **The regeneration is a clean one.** Unlike the §5.11 re-record, nothing moved:
 comparing the new fixture with the previous one leaf by leaf, the only
