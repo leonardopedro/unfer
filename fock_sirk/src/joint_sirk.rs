@@ -54,6 +54,12 @@ pub struct JointSirkOptions {
     /// Optional independently declared finite basis window. Tail action is
     /// measured against the full operator, including omitted basis labels.
     pub basis_window: Option<BTreeSet<JointOuterBasis>>,
+    /// Run the inner shift solves in coordinates of the cached window rather
+    /// than in the nested maps. Every operation keeps the map path's per-label
+    /// arithmetic and label order, so the result is bit-identical
+    /// (`docs/VERIFY_PHI4_MOMENTUM.md` §5.10); `false` keeps the map walk as
+    /// the reference implementation the pin test compares against.
+    pub dense_window_solve: bool,
 }
 
 impl Default for JointSirkOptions {
@@ -70,6 +76,7 @@ impl Default for JointSirkOptions {
             unit_norm_steps: true,
             occupation_cutoff: None,
             basis_window: None,
+            dense_window_solve: true,
         }
     }
 }
@@ -232,6 +239,104 @@ impl FiniteWindowAction {
         }
         Ok(out)
     }
+
+    /// Coordinates of `state` over `self.labels`. Identical to the vector
+    /// `projected` builds internally: one lookup per stored entry, so this is
+    /// the only label comparison the inner solve pays per vector.
+    fn coords(&self, state: &NestedVector) -> Result<Vec<C>, ActionError> {
+        let mut coordinates = vec![C::new(0.0, 0.0); self.labels.len()];
+        for (b, &a) in state {
+            coordinates[*self.indices.get(b).ok_or(ActionError::UnsupportedBasis)?] = a;
+        }
+        Ok(coordinates)
+    }
+
+    /// Inverse of `coords`, with the same component guard and the same
+    /// zero-dropping rule `projected` applies to its image.
+    fn from_coords(
+        &self,
+        coordinates: &[C],
+        limits: ActionLimits,
+    ) -> Result<NestedVector, ActionError> {
+        let mut out = NestedVector::new();
+        for (b, &a) in self.labels.iter().zip(coordinates) {
+            if !a.re.is_finite() || !a.im.is_finite() {
+                return Err(ActionError::NonFiniteAmplitude);
+            }
+            if a != C::new(0.0, 0.0) {
+                if out.len() >= limits.max_components {
+                    return Err(ActionError::ComponentLimit {
+                        limit: limits.max_components,
+                    });
+                }
+                out.insert(b.clone(), a);
+            }
+        }
+        Ok(out)
+    }
+
+    /// `P H P` as coordinates. This is the same `gemv` `projected` performs on
+    /// the same matrix, so the single entry point is bit-identical; it simply
+    /// keeps the result in coordinates instead of re-serialising a map.
+    fn image_coords(&self, coordinates: &[C], limits: ActionLimits) -> Result<Vec<C>, ActionError> {
+        if self.matrix.len() > limits.max_work {
+            return Err(ActionError::WorkLimit {
+                limit: limits.max_work,
+            });
+        }
+        let image = &self.matrix * DVector::from_column_slice(coordinates);
+        if image.iter().any(|a| !a.re.is_finite() || !a.im.is_finite()) {
+            return Err(ActionError::NonFiniteAmplitude);
+        }
+        Ok(image.as_slice().to_vec())
+    }
+}
+
+// The coordinate forms of `joint_inner_product`, `joint_norm` and
+// `joint_axpy`. All three skip exactly the labels the map walk never visits
+// (the map stores no zero amplitudes), and visit the rest in the same
+// ascending label order, so each label receives the same arithmetic in the
+// same sequence: these are bit-identical to the map operations, not merely
+// close (`tests/joint_map_ops.rs` and the solver pin in
+// `tests/phi4_momentum_sirk.rs`).
+fn coords_inner_product(a: &[C], b: &[C]) -> C {
+    let zero = C::new(0.0, 0.0);
+    let mut sum = zero;
+    for (x, y) in a.iter().zip(b) {
+        if *x == zero || *y == zero {
+            continue;
+        }
+        sum += x.conj() * y;
+    }
+    sum
+}
+fn coords_norm(a: &[C]) -> f64 {
+    let zero = C::new(0.0, 0.0);
+    a.iter()
+        .filter(|x| **x != zero)
+        .fold(0.0_f64, |norm, x| norm.hypot(x.re).hypot(x.im))
+}
+fn coords_axpy(a: &mut [C], b: &[C], scale: C, limits: ActionLimits) -> Result<(), ActionError> {
+    if b.len() > limits.max_work {
+        return Err(ActionError::WorkLimit {
+            limit: limits.max_work,
+        });
+    }
+    if !scale.re.is_finite() || !scale.im.is_finite() {
+        return Err(ActionError::NonFiniteAmplitude);
+    }
+    let zero = C::new(0.0, 0.0);
+    for (slot, value) in a.iter_mut().zip(b) {
+        if *value == zero {
+            continue;
+        }
+        let updated = *slot + scale * value;
+        if !updated.re.is_finite() || !updated.im.is_finite() {
+            return Err(ActionError::NonFiniteAmplitude);
+        }
+        *slot = updated;
+    }
+    Ok(())
 }
 
 pub fn joint_inner_product(a: &NestedVector, b: &NestedVector) -> C {
@@ -498,6 +603,7 @@ pub fn solve_joint_sirk(
         let mut result = solve_joint_sirk_with_actions(
             |v| cache.full(v, options.action_limits),
             |v| cache.projected(v, options.action_limits),
+            Some(&cache),
             initial,
             shifts,
             options,
@@ -525,6 +631,7 @@ where
     solve_joint_sirk_with_actions(
         &matvec,
         |v| Ok(project_joint(&matvec(v)?, options).0),
+        None,
         initial,
         shifts,
         options,
@@ -534,6 +641,7 @@ where
 fn solve_joint_sirk_with_actions<F, P>(
     matvec: F,
     projected_matvec: P,
+    window: Option<&FiniteWindowAction>,
     initial: &NestedVector,
     shifts: &[C],
     options: &JointSirkOptions,
@@ -599,9 +707,10 @@ where
                 relative_tolerance,
                 max_iterations,
             } => {
-                let (solution, bound, used) = gmres_shift(
+                let (solution, bound, used) = shift_solve(
                     &matvec,
                     &projected_matvec,
+                    window,
                     &sequence[k],
                     shift,
                     options,
@@ -751,9 +860,10 @@ where
             let mut bounds = Vec::new();
             let mut iterations_used = Vec::new();
             for j in 0..rank {
-                let (inverse, bound, used) = gmres_shift(
+                let (inverse, bound, used) = shift_solve(
                     &matvec,
                     &projected_matvec,
+                    window,
                     &orthonormal[j],
                     shift,
                     options,
@@ -963,6 +1073,169 @@ where
         residual: last_residual,
         iterations,
     })
+}
+
+/// The same GMRES as `gmres_shift`, in coordinates of the declared window.
+///
+/// The map path re-serialises every `w` (image, shifted vector, each MGS
+/// subtraction) into a `BTreeMap`, and each entry then pays a label descent.
+/// `docs/VERIFY_PHI4_MOMENTUM.md` §5.9 measured that at `52 %` of the whole
+/// `C = 26` cell. Here the basis stays in flat coordinates and the projected
+/// action is the cached `gemv`, so no label is compared inside the loop at
+/// all.
+///
+/// This is not an approximation: the projection is the same `gemv`
+/// `FiniteWindowAction::projected` performs, and `coords_inner_product`,
+/// `coords_norm` and `coords_axpy` apply the map operations' arithmetic in the
+/// same label order (§5.10). The map path is therefore kept as the reference
+/// implementation, and `solve_joint_sirk` with
+/// `dense_window_solve: false` returns solutions identical on `to_bits()`.
+fn gmres_shift_window<F>(
+    cache: &FiniteWindowAction,
+    matvec: &F,
+    rhs: &NestedVector,
+    shift: C,
+    options: &JointSirkOptions,
+    tolerance: f64,
+    iterations: usize,
+) -> Result<(NestedVector, f64, usize), JointSirkError>
+where
+    F: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
+{
+    if !tolerance.is_finite()
+        || tolerance <= 0.0
+        || tolerance >= 1.0
+        || iterations == 0
+        || shift.im == 0.0
+    {
+        return Err(JointSirkError::Invalid(
+            "nonreal shifts, positive solve tolerance and iteration budget required".into(),
+        ));
+    }
+    let beta = joint_norm(rhs);
+    if beta == 0.0 {
+        return Ok((NestedVector::new(), 0.0, 0));
+    }
+    let limits = options.action_limits;
+    let zero = C::new(0.0, 0.0);
+    let n = cache.labels.len();
+    if n > limits.max_components {
+        return Err(ActionError::ComponentLimit {
+            limit: limits.max_components,
+        }
+        .into());
+    }
+    let mut profile = GmresProfile::new();
+    let mut first = vec![zero; n];
+    coords_axpy(
+        &mut first,
+        &cache.coords(rhs)?,
+        C::new(1.0 / beta, 0.0),
+        limits,
+    )?;
+    let mut basis: Vec<Vec<C>> = vec![first];
+    let mut h = DMatrix::<C>::zeros(iterations + 1, iterations);
+    let mut last_residual = f64::INFINITY;
+    for k in 0..iterations {
+        let clock = std::time::Instant::now();
+        let image = cache.image_coords(&basis[k], limits)?;
+        profile.matvec += clock.elapsed();
+        let clock = std::time::Instant::now();
+        // `joint_axpy(&mut w, &image, 1.0)` is an exact copy on the map path,
+        // so the image can be moved straight in.
+        let mut w = image;
+        coords_axpy(&mut w, &basis[k], -shift, limits)?;
+        // Two passes of modified Gram-Schmidt, preserving tiny support entries.
+        for _ in 0..2 {
+            for j in 0..=k {
+                let dot_clock = std::time::Instant::now();
+                let coefficient = coords_inner_product(&basis[j], &w);
+                profile.dot += dot_clock.elapsed();
+                profile.dot_calls += 1;
+                h[(j, k)] += coefficient;
+                coords_axpy(&mut w, &basis[j], -coefficient, limits)?;
+                profile.axpy_calls += 1;
+            }
+        }
+        profile.axpy += clock.elapsed();
+        let next_norm = coords_norm(&w);
+        h[(k + 1, k)] = C::new(next_norm, 0.0);
+        let small = h.view((0, 0), (k + 2, k + 1)).into_owned();
+        let mut target = DVector::<C>::zeros(k + 2);
+        target[0] = C::new(beta, 0.0);
+        let clock = std::time::Instant::now();
+        let coefficients = small
+            .clone()
+            .svd(true, true)
+            .solve(&target, 1e-14)
+            .map_err(|e| JointSirkError::Invalid(format!("GMRES least squares: {e}")))?;
+        profile.svd += clock.elapsed();
+        let estimated = (&small * &coefficients - &target).norm() / beta;
+        if estimated <= tolerance || k + 1 == iterations || next_norm <= 1e-14 {
+            let mut coordinates = vec![zero; n];
+            for (j, &c) in coefficients.iter().enumerate() {
+                coords_axpy(&mut coordinates, &basis[j], c, limits)?;
+            }
+            let solution = cache.from_coords(&coordinates, limits)?;
+            let mut residual = matvec(&solution)?;
+            joint_axpy(&mut residual, &solution, -shift, limits)?;
+            joint_axpy(&mut residual, rhs, C::new(-1.0, 0.0), limits)?;
+            let full_norm = joint_norm(&residual);
+            let compressed = project_joint(&residual, options).0;
+            last_residual = joint_norm(&compressed) / beta;
+            if last_residual <= tolerance {
+                profile.report(k + 1);
+                return Ok((solution, full_norm / shift.im.abs(), k + 1));
+            }
+            if next_norm <= 1e-14 {
+                break;
+            }
+        }
+        if next_norm == 0.0 || !next_norm.is_finite() {
+            break;
+        }
+        let mut normalized = vec![zero; n];
+        coords_axpy(&mut normalized, &w, C::new(1.0 / next_norm, 0.0), limits)?;
+        basis.push(normalized);
+    }
+    profile.report(iterations);
+    Err(JointSirkError::ShiftSolve {
+        residual: last_residual,
+        iterations,
+    })
+}
+
+/// One shift solve, in the window's coordinates when a cached window is
+/// available (and `dense_window_solve` is set), otherwise on the nested maps.
+#[allow(clippy::too_many_arguments)]
+fn shift_solve<F, P>(
+    matvec: &F,
+    projected_matvec: &P,
+    window: Option<&FiniteWindowAction>,
+    rhs: &NestedVector,
+    shift: C,
+    options: &JointSirkOptions,
+    tolerance: f64,
+    iterations: usize,
+) -> Result<(NestedVector, f64, usize), JointSirkError>
+where
+    F: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
+    P: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
+{
+    match window {
+        Some(cache) if options.dense_window_solve => {
+            gmres_shift_window(cache, matvec, rhs, shift, options, tolerance, iterations)
+        }
+        _ => gmres_shift(
+            matvec,
+            projected_matvec,
+            rhs,
+            shift,
+            options,
+            tolerance,
+            iterations,
+        ),
+    }
 }
 
 #[derive(Debug)]

@@ -39,7 +39,7 @@
         "hermite_cutoff": 4,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9673024240041677,
-        "runtime_ms": 34,
+        "runtime_ms": 36,
         "shift_invert": {
           "error": 0.0008017726890894306,
           "return_probability": 0.9681041966932571,
@@ -128,7 +128,7 @@
         "hermite_cutoff": 8,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 180,
+        "runtime_ms": 177,
         "shift_invert": {
           "error": 0.0030742020154721494,
           "return_probability": 0.969810708330245,
@@ -217,7 +217,7 @@
         "hermite_cutoff": 12,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9667225765802239,
-        "runtime_ms": 790,
+        "runtime_ms": 612,
         "shift_invert": {
           "error": 0.0024296540890390572,
           "return_probability": 0.9691522306692629,
@@ -306,7 +306,7 @@
         "hermite_cutoff": 16,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666887372381503,
-        "runtime_ms": 4286,
+        "runtime_ms": 1921,
         "shift_invert": {
           "error": 0.0027333609351456456,
           "return_probability": 0.9694220981732959,
@@ -395,7 +395,7 @@
         "hermite_cutoff": 20,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666764094895333,
-        "runtime_ms": 25628,
+        "runtime_ms": 7066,
         "shift_invert": {
           "error": 0.0029888798241072267,
           "return_probability": 0.9696652893136405,
@@ -484,7 +484,7 @@
         "hermite_cutoff": 22,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666809073553623,
-        "runtime_ms": 56768,
+        "runtime_ms": 13573,
         "shift_invert": {
           "error": 0.0028994061486972145,
           "return_probability": 0.9695803135040595,
@@ -573,7 +573,7 @@
         "hermite_cutoff": 24,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666775439926599,
-        "runtime_ms": 107324,
+        "runtime_ms": 27054,
         "shift_invert": {
           "error": 0.002847765066681829,
           "return_probability": 0.9695253090593418,
@@ -662,7 +662,7 @@
         "hermite_cutoff": 26,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666785003538712,
-        "runtime_ms": 187542,
+        "runtime_ms": 42841,
         "shift_invert": {
           "error": 0.00284232410092522,
           "return_probability": 0.9695208244547964,
@@ -751,7 +751,7 @@
         "hermite_cutoff": 28,
         "requested_rank": 4,
         "return_probability_window_exact": 0.9666790886415794,
-        "runtime_ms": 334730,
+        "runtime_ms": 75508,
         "shift_invert": {
           "error": 0.0028602675805967648,
           "return_probability": 0.9695393562221761,
@@ -804,7 +804,7 @@
       }
     ],
     "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; C = 22 ... 28 extend it further to measure the tail's slow decay. Every C >= 16 cell solves to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
-    "runtime_ms": 1116699,
+    "runtime_ms": 268445,
     "status": "measured",
     "tail_sweep_fixed_rank_2": [
       {
@@ -824,7 +824,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9811577855463359,
         "return_probability_window_exact": 0.9673024240041677,
-        "runtime_ms": 21,
+        "runtime_ms": 22,
         "shifts": [
           {
             "im": 5.0,
@@ -895,7 +895,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 118,
+        "runtime_ms": 114,
         "shifts": [
           {
             "im": 5.0,
@@ -966,7 +966,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9792785784868768,
         "return_probability_window_exact": 0.9667225765802239,
-        "runtime_ms": 493,
+        "runtime_ms": 395,
         "shifts": [
           {
             "im": 5.0,
@@ -1037,7 +1037,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9800548839088506,
         "return_probability_window_exact": 0.9666887372381503,
-        "runtime_ms": 2493,
+        "runtime_ms": 1198,
         "shifts": [
           {
             "im": 5.0,
@@ -1108,7 +1108,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9800015102784486,
         "return_probability_window_exact": 0.9666764094895333,
-        "runtime_ms": 13965,
+        "runtime_ms": 4116,
         "shifts": [
           {
             "im": 5.0,
@@ -1179,7 +1179,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799718278267168,
         "return_probability_window_exact": 0.9666809073553623,
-        "runtime_ms": 29932,
+        "runtime_ms": 8015,
         "shifts": [
           {
             "im": 5.0,
@@ -1250,7 +1250,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799700889651135,
         "return_probability_window_exact": 0.9666775439926599,
-        "runtime_ms": 58848,
+        "runtime_ms": 14998,
         "shifts": [
           {
             "im": 5.0,
@@ -1321,7 +1321,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799797928325029,
         "return_probability_window_exact": 0.9666785003538712,
-        "runtime_ms": 104791,
+        "runtime_ms": 25960,
         "shifts": [
           {
             "im": 5.0,
@@ -1392,7 +1392,7 @@
         "requested_rank": 2,
         "return_probability_sirk": 0.9799888054065552,
         "return_probability_window_exact": 0.9666790886415794,
-        "runtime_ms": 188670,
+        "runtime_ms": 44761,
         "shifts": [
           {
             "im": 5.0,
@@ -1610,7 +1610,7 @@
         "window_labels": 35
       }
     },
-    "runtime_ms": 151,
+    "runtime_ms": 136,
     "static_jet": {
       "he2_k2_coupling": 0.0,
       "mean": 2.125,
@@ -1624,7 +1624,7 @@
       "variance": 21.06250000000001
     }
   },
-  "peak_rss_kb": 1012332,
+  "peak_rss_kb": 301332,
   "rank_sweep": {
     "cells": [
       {
@@ -1639,7 +1639,7 @@
         "inside_window_error": 0.013219412751014792,
         "requested_rank": 2,
         "return_probability_sirk": 0.9799559190657876,
-        "runtime_ms": 112,
+        "runtime_ms": 106,
         "shifts": [
           {
             "im": 5.0,
@@ -1699,7 +1699,7 @@
         "inside_window_error": 0.0030742020154721494,
         "requested_rank": 4,
         "return_probability_sirk": 0.969810708330245,
-        "runtime_ms": 125,
+        "runtime_ms": 110,
         "shifts": [
           {
             "im": 11.0,
@@ -1771,7 +1771,7 @@
         "inside_window_error": 0.0002525224603955323,
         "requested_rank": 6,
         "return_probability_sirk": 0.9664839838543773,
-        "runtime_ms": 141,
+        "runtime_ms": 117,
         "shifts": [
           {
             "im": 17.0,
@@ -1846,7 +1846,7 @@
     ],
     "hermite_cutoff": 8,
     "return_probability_window_exact": 0.9667365063147728,
-    "runtime_ms": 437,
+    "runtime_ms": 392,
     "status": "measured",
     "window_labels": 70
   },
@@ -1880,7 +1880,7 @@
     "return_probability_converged_window": 0.9982986001322911,
     "return_probability_sirk": 0.9978594340244482,
     "return_probability_window_exact": 0.998724351896546,
-    "runtime_ms": 84,
+    "runtime_ms": 88,
     "seed": "outer vacuum with one inner Gaussian, He_0(phi) label",
     "shifts": [
       {
@@ -1994,7 +1994,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9667497780305179,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 542,
+        "runtime_ms": 519,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 0.000013271715745055701
@@ -2113,7 +2113,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9651198843829879,
         "return_probability_window_exact": 0.9651233600098685,
-        "runtime_ms": 953,
+        "runtime_ms": 921,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 3.47562688063352e-6
@@ -2232,7 +2232,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9667497780305179,
         "return_probability_window_exact": 0.9667365063147728,
-        "runtime_ms": 540,
+        "runtime_ms": 522,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 0.000013271715745055701
@@ -2351,7 +2351,7 @@
         "requested_rank": 4,
         "return_probability_sirk": 0.9099657261011699,
         "return_probability_window_exact": 0.910575997445444,
-        "runtime_ms": 1766,
+        "runtime_ms": 1711,
         "sharp_charge": {
           "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
           "value": 0.0006102713442741603
@@ -2517,15 +2517,15 @@
         "sharp_charge": 0.000026543431490111402
       }
     },
-    "runtime_ms": 3805,
+    "runtime_ms": 3676,
     "status": "measured",
     "time": 0.05
   },
-  "runtime_ms": 1121366,
+  "runtime_ms": 272784,
   "schema": "phi4-momentum-sirk-sweep/v1",
   "source_revision": {
     "crate": "fock_sirk",
-    "git_head": "3faccd6b14bec90657a8e421a0403aeb82eb3add",
+    "git_head": "fca4862c4d301ba6f63d995080328ad637d63411",
     "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
     "version": "0.1.0"
   }

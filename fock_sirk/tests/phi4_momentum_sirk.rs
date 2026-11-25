@@ -167,11 +167,141 @@ impl WindowOperator {
     }
 }
 
+/// Bit pattern of one amplitude, for the `to_bits()` pins.
+fn bits(value: C) -> (u64, u64) {
+    (value.re.to_bits(), value.im.to_bits())
+}
+
+/// Compare two nested vectors exactly, ignoring stored zeros (the map walk
+/// deletes them, the coordinate backend keeps them until it converts back).
+fn assert_same_vector(a: &NestedVector, b: &NestedVector, label: &str) {
+    let stored = |v: &NestedVector| -> Vec<(JointOuterBasis, (u64, u64))> {
+        v.iter()
+            .filter(|(_, value)| **value != C::new(0.0, 0.0))
+            .map(|(basis, value)| (basis.clone(), bits(*value)))
+            .collect()
+    };
+    let left = stored(a);
+    let right = stored(b);
+    assert_eq!(left.len(), right.len(), "{label}: support size");
+    for ((basis_left, value_left), (basis_right, value_right)) in left.iter().zip(&right) {
+        assert_eq!(basis_left, basis_right, "{label}: label order");
+        assert_eq!(
+            value_left, value_right,
+            "{label}: amplitude at {basis_left:?}"
+        );
+    }
+}
+
+fn assert_same_matrix(a: &DMatrix<C>, b: &DMatrix<C>, label: &str) {
+    assert_eq!(a.shape(), b.shape(), "{label}: shape");
+    for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+        assert_eq!(bits(*x), bits(*y), "{label}: entry {i}");
+    }
+}
+
 fn assert_close(actual: f64, expected: f64, tolerance: f64, label: &str) {
     assert!(
         (actual - expected).abs() <= tolerance,
         "{label}: got {actual}, expected {expected} (tolerance {tolerance})"
     );
+}
+
+/// The coordinate backend of §5.10 is the *same* arithmetic as the map walk,
+/// not a nearby one: every amplitude and every solve diagnostic of the two
+/// paths agrees on `to_bits()`. The map path is kept behind
+/// `dense_window_solve: false` precisely so this stays checkable.
+#[test]
+fn dense_window_solve_is_bit_identical_to_the_map_walk() {
+    let t = 0.01;
+    let model = ScalarMomCont::unit();
+    let window = ScalarMomCont::window_labels(12);
+    let initial = seed(&model, &vacuum_support());
+    let shifts = physical_shifts(t, 30.0, 5.0, 4);
+    let hamiltonian = model.hamiltonian();
+
+    let mut map_options = options(window.clone(), shift_invert());
+    map_options.dense_window_solve = false;
+    let map = solve_joint_sirk(&hamiltonian, &initial, &shifts, &map_options)
+        .expect("map-walk window solve");
+    let dense = solve_joint_sirk(
+        &hamiltonian,
+        &initial,
+        &shifts,
+        &options(window, shift_invert()),
+    )
+    .expect("coordinate window solve");
+
+    // The solves must have run, converged, and taken the same steps.
+    assert!(!map.shift_solve_iterations.is_empty());
+    assert_eq!(
+        map.shift_solve_iterations, dense.shift_solve_iterations,
+        "Arnoldi steps per shift solve"
+    );
+    assert_eq!(map.rank(), dense.rank(), "Krylov rank");
+    assert_eq!(map.cached_components, dense.cached_components);
+    for (left, right) in map
+        .shift_solve_error_bounds
+        .iter()
+        .zip(&dense.shift_solve_error_bounds)
+    {
+        assert_eq!(left.to_bits(), right.to_bits(), "shift solve bound");
+    }
+    for (left, right) in map
+        .projected_action_tail_norms
+        .iter()
+        .zip(&dense.projected_action_tail_norms)
+    {
+        assert_eq!(left.to_bits(), right.to_bits(), "action tail");
+    }
+    for (left, right) in map.scales.iter().zip(&dense.scales) {
+        assert_eq!(left.to_bits(), right.to_bits(), "unit-norm scale");
+    }
+
+    // The forward sequence is where a shifted solve's output lands, so this is
+    // the end-to-end pin on the solution itself.
+    assert_eq!(map.sequence.len(), dense.sequence.len());
+    for (k, (left, right)) in map.sequence.iter().zip(&dense.sequence).enumerate() {
+        assert_same_vector(left, right, &format!("forward sequence {k}"));
+    }
+    for (k, (left, right)) in map
+        .orthonormal_basis
+        .iter()
+        .zip(&dense.orthonormal_basis)
+        .enumerate()
+    {
+        assert_same_vector(left, right, &format!("orthonormal basis {k}"));
+    }
+
+    assert_same_matrix(&map.gram, &dense.gram, "Gram matrix");
+    assert_same_matrix(&map.h_proj, &dense.h_proj, "H_proj");
+    assert_same_matrix(
+        &map.function_generator,
+        &dense.function_generator,
+        "function generator",
+    );
+    match (&map.projected_resolvent, &dense.projected_resolvent) {
+        (Some(left), Some(right)) => {
+            assert_same_matrix(left, right, "bounded-resolvent compression")
+        }
+        (None, None) => {}
+        _ => panic!("bounded-resolvent compression present on one path only"),
+    }
+    assert_eq!(
+        map.orthogonality_defect.to_bits(),
+        dense.orthogonality_defect.to_bits()
+    );
+    assert_eq!(
+        map.hermiticity_defect.to_bits(),
+        dense.hermiticity_defect.to_bits()
+    );
+    for time in [t, 2.0 * t, 5.0 * t] {
+        assert_eq!(
+            return_probability(&map, &initial, time).to_bits(),
+            return_probability(&dense, &initial, time).to_bits(),
+            "return probability at t = {time}"
+        );
+    }
 }
 
 #[test]
