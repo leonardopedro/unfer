@@ -65,3 +65,8 @@ budgeted above 900 s (currently `temper-4` and `hitrun-5000`) is skipped by the
 default sweep, which is why the checker now prints a `not selected:` line for
 every row it left out, with the flag that would select it. The `alt` rows
 (`cn-exact-dense-12k` and the two `qk` alternates) need `--alts`.
+
+Measured on 2026-11-25 on the local 12-core machine: `--all` = 13 rows /
+6,645 s / ~1 h 55 m, `--all --alts` = 16 rows / 8,349 s / ~2 h 20 m, both
+reproducing every summary line (exit 0). Those are the numbers the scheduled
+lane's `timeout-minutes` is sized against.
