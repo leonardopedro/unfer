@@ -859,6 +859,15 @@ pub enum ContractError {
     SnapshotPublishedBeforeSync,
     /// A damaged snapshot was reset to a default instead of refused.
     SilentResetOnDamage,
+    /// A storage boundary claims a monotone publish but declares no rule for
+    /// it, so a stale writer could replace a newer published state.
+    NoMonotonePublishRule,
+    /// A writer offered a snapshot whose sequence is below the last one it
+    /// published; publishing it would move the durable state backwards.
+    StaleSnapshot {
+        published: u64,
+        offered: u64,
+    },
     /// One replica claims more than one engine view; a restart would then read
     /// a decided log the node never wrote to.
     NotSingleView {
@@ -919,6 +928,13 @@ impl fmt::Display for ContractError {
             ContractError::SilentResetOnDamage => {
                 f.write_str("a damaged snapshot must be refused, not reset to an empty state")
             }
+            ContractError::NoMonotonePublishRule => f.write_str(
+                "a monotone snapshot needs a publish rule, and this contract declares none",
+            ),
+            ContractError::StaleSnapshot { published, offered } => write!(
+                f,
+                "snapshot sequence {offered} is older than the published sequence {published}"
+            ),
             ContractError::NotSingleView { views } => {
                 write!(f, "a replica has one engine view at a time, not {views}")
             }
