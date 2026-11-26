@@ -83,7 +83,8 @@ cargo test -p fock_sirk --test phi4_momentum_sirk   # 7 tests; ~5 s release
 # 0.55 s, 1.5 s, 4.0 s, 6.7 s, 11.3 s, 18.6 s, 30.8 s, 52.3 s, 83.2 s, 131 s,
 # 202 s, 308 s, 470 s, 717 s and 1183 s at m = 4; it peaks at 4.20 GB RSS.
 # These are wall clocks on a shared host and the recorded run was loaded (see
-# section 5.12), so they are upper bounds; the debug build is impractical here)
+# section 5.12); two reruns measure the spread at <= 12 %, so they are upper
+# bounds by that much; the debug build is impractical here)
 cargo run -p fock_sirk --release --example phi4_momentum_sirk
 
 # the measurements of section 5.5 (serial, then default workers), plus the
@@ -1021,14 +1022,36 @@ is `14950` labels, i.e. `2.235e8` before the span images;
 `C = 44` cell also sets the record's memory: `4.20 GB` peak RSS, up from
 `2.29 GB` at `C = 40` and `1.19 GB` at `C = 36`.
 
-**These cell times are wall clock on a loaded host.** The run that produced this
-record shared the 12-core host with other repositories' jobs and sampled a load
-average of `9.6` at the end (`30.7` at peak), so the `s` columns moved by up to
-`±12 %` against the previous quiet run in both directions (`C = 32`'s `48.9 s →
-54.5 s`, `C = 40`'s `535 s → 470 s`), and the two new rows are upper bounds
-rather than bench figures. The ratios between neighbouring rows and every
-physics leaf are unaffected — the thirty pre-existing cells reproduce their step
-counts, tails, errors and probabilities exactly (extension note below).
+**These cell times are wall clock on a loaded host, and the spread is now
+measured rather than guessed.** The run that produced this record shared the
+12-core host with other repositories' jobs and sampled a load average of `9.6`
+at the end (`30.7` at peak), so the `s` columns moved by up to `±12 %` against
+the previous quiet run in both directions (`C = 32`'s `48.9 s → 54.5 s`,
+`C = 40`'s `535 s → 470 s`). Two full reruns were then made to replace that
+guessed band with a measured one. This host did not offer the ~`80 min` window
+a sweep needs: the first rerun completed in `80.1 min` (`4535 s` of CPU) with
+the load unsampled, the second in `1:23:49` (`4755 s` of CPU) with the load
+sampled every `30 s` — median `6.0`, minimum `1.7`, maximum `10.9`, `139` of
+its `168` samples above `4.0`. So the reruns are measurements of the same
+contended host, not of a quiet one, and they say how far this record can be
+from a quiet figure: `19` of the `34` cells reproduce within `3 %` and none is
+further than `12 %` away. The pattern is the load, not the code — the first
+rerun started while the host was still busy and its small `m = 2` windows
+(`C ≤ 20`) came out `5–10 %` slower, while the three `m = 2` cells at `C = 32`,
+`34`, `36` and the `C = 44` `m = 4` cell came out `4–12 %` **faster** in both
+reruns (`C = 44` at `m = 4`: `1183 s` recorded, `1036 s` and `1088 s` rerun);
+the load-sampled rerun, run under the heavier median (`6.0`), is the one that
+put the `C = 38 … 42` `m = 4` cells `8–11 %` above the record. The record keeps
+the slowest of the three runs on purpose:
+with no quiet window available, a conservative figure with a measured band is
+worth more than a fast one that cannot be reproduced, so the `s` columns stand
+as upper bounds **by at most `12 %`**, that ceiling being measured here. The
+ratios between neighbouring rows and every physics leaf are unaffected — all
+three runs reproduce the step counts and every tail, error and probability
+exactly, and the reruns differ only in `runtime_ms` and in the
+`amplitude_defect` fields, which the current tree rounds to twelve significant
+digits (`6f0d9c6`) and this record still stores at full precision (extension
+note below).
 
 **Trying to cut the other `36 %`, and failing.** Three variants were measured
 against the §5.11 `C = 26` baseline (`axpy 2.21 s`, `dot 1.63 s`, solve
@@ -1170,7 +1193,8 @@ quiet run. The physics is load-invariant — every one of the thirty pre-existin
 cells is identical leaf for leaf — which is the same conclusion the earlier
 loaded/quiet pair reached (`3593560` loaded against `2158332` quiet for the
 `15 × 2` record, with no physics difference). So treat the new cell times as
-upper bounds, and compare ratios inside the record, not against another machine.
+upper bounds — by at most `12 %`, once two reruns measured the spread (§5.12) —
+and compare ratios inside the record, not against another machine.
 
 ## 6. Limitations — read this before quoting a number
 
@@ -1377,9 +1401,12 @@ upper bounds, and compare ratios inside the record, not against another machine.
   at `717 s` and `1183 s` per `m = 4` cell. The thirty pre-existing cells are
   unchanged leaf for leaf (thirteen `runtime_ms` values and the record's `note`
   are the only other differences); the record is `17 × 2` cells in `83.0 min`
-  and `4.20 GB` peak RSS. The run was loaded (load average `9.6`, peak `30.7`),
-  so its cell times are upper bounds, `±12 %` against the previous quiet run
-  (§5.12).
+  and `4.20 GB` peak RSS. The generating run was loaded (load average `9.6`,
+  peak `30.7`), and two further reruns — one with the load sampled every
+  `30 s`, median `6.0`, minimum `1.7` — keep every cell within `12 %` of it
+  (`19` within `3 %`), the `C = 44` `m = 4` cell `8–12 %` lower, so the `s`
+  columns are upper bounds by at most `12 %`, that ceiling measured rather than
+  assumed. The record keeps the slowest run (§5.12).
 * Measured: the scalar fallback is not asserted to reproduce the `aarch64`
   record, it is run. Cross-compiled for `x86_64-unknown-linux-gnu` (GCC `16.2.0`,
   glibc `2.44`) and executed under `qemu-x86_64` `11.1.2`, all seven tests of
