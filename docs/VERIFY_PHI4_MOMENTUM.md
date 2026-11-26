@@ -52,8 +52,10 @@ The operator keeps the full nonnegative square including `λv⁴/4`, forms the
 
 The whole record comes from that one run: `source_revision.git_head` and the
 digest above are the run's own. It was produced natively on an **`x86_64`
-host**, where the inner products take the scalar fallback rather than the
-`aarch64` NEON kernel of §5.12. The per-cell rows of §5.2 are this record's,
+host**, on the scalar inner-product fallback: the AVX2 kernel of §5.12 postdates
+it, so the record's last bits are the scalar path's and a live solve on this
+host now differs from them at `~1e-15` (which the suite's `1e-12` checks
+absorb). The per-cell rows of §5.2 are this record's,
 and the profile measurements of §§5.5–5.12 were re-run on the same `x86_64`
 host; the tables that remain the earlier `aarch64` campaign's are labelled as
 such in place. The run is the first record to apply the
@@ -461,14 +463,15 @@ Measured with `fock_sirk/examples/phi4_momentum_parallel_probe.rs`:
 
 | quantity (`C = 20`, 1001 labels) | serial | parallel | ratio |
 |---|---|---|---|
-| `d_gamma` on a dense window state, three runs | `77.57 / 79.29 / 81.52 ms` | `51.11 / 51.58 / 52.16 ms` | **1.51–1.56×** |
-| `m = 2` Krylov solve | `1.760 / 1.814 / 1.860 s` | `2.498 / 2.643 / 2.655 s` | `0.68–0.73×` |
-| total Arnoldi steps | `528` | `528` | — |
-| return probability | `9.80001510278455834e-1` | identical to all 17 digits | — |
+| `d_gamma` on a dense window state, three runs | `72.60 / 76.54 / 78.05 ms` | `46.12 / 47.36 / 49.00 ms` | **1.48–1.69×** |
+| `m = 2` Krylov solve | `1.766 / 1.768 / 1.779 s` | `2.491 / 2.498 / 2.565 s` | `0.69–0.71×` |
+| total Arnoldi steps | `527` | `527` | — |
+| return probability | `9.80001510278452170e-1` | identical to all 17 digits | — |
 
-All six runs report the same probability, and it is exactly the checked-in
-record's `C = 20` value (`0.9800015102784558`), which is the end-to-end check that
-the split really is order-preserving and not merely accurate. The solve column is
+All six runs report the same probability, which is the end-to-end check that
+the split really is order-preserving and not merely accurate; the checked-in
+record, generated on the scalar kernel, stores `0.9800015102784558` for this
+cell, so the AVX2 reassociation moves it by `3.7e-15` and nothing else. The solve column is
 `0.68–0.73×` rather than `1.00×` because a fork/join is not free at this size: the
 same probe's window build, which applies one action per label, costs `0.060 s`
 serial against `0.779 s` parallel — ≈ `0.7 ms` of per-call overhead — and the
@@ -516,21 +519,21 @@ was rejected on the measurement, not on taste. (§5.11 later did exactly that,
 because by then the SVD was 56 % of the solve; the statement above is about the
 map-walk distribution, not the coordinate one.)
 
-`x86_64`, current coordinate solver — the same four solves of that cell
-(`112`, `138`, `138`, `140` steps, `2.724 s` total):
+`x86_64`, current coordinate solver with both AVX2 kernels — the same four
+solves of that cell (`112`, `138`, `137`, `140` steps, `2.669 s` total):
 
-| phase | 112-step | 138-step | 138-step | 140-step | total | share |
+| phase | 112-step | 138-step | 137-step | 140-step | total | share |
 |---|---|---|---|---|---|---|
-| action `gemv` | `0.20 s` | `0.24 s` | `0.24 s` | `0.24 s` | `0.92 s` | `33.8 %` |
-| MGS `axpy` (contains the dot) | `0.07 s` | `0.10 s` | `0.11 s` | `0.11 s` | `0.39 s` | `14.3 %` |
-| — the inner product inside it | `0.03 s` | `0.05 s` | `0.05 s` | `0.05 s` | `0.18 s` | `6.6 %` |
+| action `gemv` | `0.19 s` | `0.23 s` | `0.23 s` | `0.24 s` | `0.89 s` | `33.3 %` |
+| MGS `axpy` (contains the dot) | `0.03 s` | `0.04 s` | `0.04 s` | `0.04 s` | `0.15 s` | `5.6 %` |
+| — the inner product inside it | `0.01 s` | `0.01 s` | `0.01 s` | `0.01 s` | `0.04 s` | `1.5 %` |
 | Givens least squares | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.4 %` |
 
-The remaining `1.41 s` (`51.8 %`) is the same "everything else" as in §5.12: the
+The remaining `1.63 s` (`61.1 %`) is the same "everything else" as in §5.12: the
 `coords`/`from_coords` round-trip at the ends of each solve, each step's image
 construction and the norm of each new basis vector. At 1001 labels the fixed
 per-solve overhead dominates, which is why its share falls steadily as the window
-grows (`51.8 %` here, `26.5 %` at `C = 26`, `21.0 %` at `C = 28`, `15.4 %` at
+grows (`61.1 %` here, `29.4 %` at `C = 26`, `23.4 %` at `C = 28`, `17.0 %` at
 `C = 32`).
 
 Both map operations were also doing gratuitous work (`aarch64` measurements of
@@ -616,30 +619,30 @@ with compilation on the same machine, reproduced the shares within `3 %` and the
 wall clock at `202.1 s`. (The same probe measured `104.0 s` after §5.9 and
 `22.5 s` after §5.10, for the same steps and the same probability.)
 
-`x86_64`, current solver — the same cell on this host (`190`, `242`, `241`, `243`
-steps, `916` total, `16.205 s` solve):
+`x86_64`, current solver with both AVX2 kernels — the same cell on this host
+(`190`, `241`, `241`, `243` steps, `915` total, `13.586 s` solve):
 
-| phase | 190-step | 242-step | 241-step | 243-step | total | share of the solve |
+| phase | 190-step | 241-step | 241-step | 243-step | total | share of the solve |
 |---|---|---|---|---|---|---|
-| action `gemv` | `1.85 s` | `2.38 s` | `2.37 s` | `2.46 s` | `9.06 s` | **55.9 %** |
-| MGS `axpy` (contains the dot) | `0.47 s` | `0.79 s` | `0.77 s` | `0.82 s` | `2.85 s` | `17.6 %` |
-| — the inner product inside it | `0.23 s` | `0.38 s` | `0.38 s` | `0.40 s` | `1.39 s` | `8.6 %` |
+| action `gemv` | `1.76 s` | `2.24 s` | `2.23 s` | `2.23 s` | `8.46 s` | **62.3 %** |
+| MGS `axpy` (contains the dot) | `0.19 s` | `0.31 s` | `0.31 s` | `0.32 s` | `1.13 s` | `8.3 %` |
+| — the inner product inside it | `0.07 s` | `0.12 s` | `0.12 s` | `0.13 s` | `0.44 s` | `3.2 %` |
 | Givens least squares | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.1 %` |
 
-The probability is `9.79979792832510244e-1`, which is the checked-in `x86_64`
-record's `C = 26` value; the solve is `1.66×` the `aarch64` `9.77 s` after §5.11,
-and the `gemv` is `2.0×` its `4.65 s`, the same ratio as the per-step bench in
-§5.12.
+The probability is `9.79979792832510244e-1`, within `4e-17` of the checked-in
+`x86_64` record's `C = 26` value; the solve is `1.39×` the `aarch64` `9.77 s`
+after §5.11, and the `gemv` is `1.82×` its `4.65 s`, close to the per-step ratio
+the bench in §5.12 reports.
 
 Under the map walk the per-call cost grew roughly with the label count, not
 faster (`aarch64`): `axpy` `0.76–0.81 ms` against `0.26–0.29 ms` at `C = 20`,
 `dot` `0.25–0.26 ms` against `0.08–0.09 ms`, for `2.38×` the labels. On the
 current path the two representations must be kept apart: the probe's standalone
-`dot_ms = 0.149 ms` / `axpy_ms = 0.255 ms` at 2380 labels are the *nested-map*
-operations, while the solve's `PROFILE dot=` is `0.006 ms` per call because it is
-the coordinate kernel over cached labels. Quote the `PROFILE` shares for the
-solve's cost and the probe numbers for the map operations in isolation; the
-`x86_64` probe happens to print the map dot at `≈ 25×` the coordinate one.
+`dot_ms = 0.141 ms` / `axpy_ms = 0.196 ms` at 2380 labels are the *nested-map*
+operations, while the solve's `PROFILE dot=` is `0.0024 ms` per call because it
+is the AVX2 coordinate kernel over cached labels. Quote the `PROFILE` shares for
+the solve's cost and the probe numbers for the map operations in isolation; the
+`x86_64` probe prints the map dot at `≈ 60×` the coordinate one.
 
 **What changed is not the solver but the cell.** The recorded `C = 26` cell was
 `406.4 s` then (`104.8 s` after §5.8 and §5.9, `26.0 s` after §5.10), and the
@@ -655,14 +658,18 @@ beside every solve:
 | not individually timed (window, seed, residual bookkeeping, run variance) | `≈ 34 s` | `8 %` |
 
 With the seed column the split is the same two halves but the reference is no
-longer one of them. `x86_64`, current solver, the checked-in record's `19.575 s`
-cell:
+longer one of them. `x86_64`, current solver (AVX2), both halves measured in the
+same probe run:
 
-| cell at `C = 26` | time | share of the `19.575 s` cell |
+| cell at `C = 26` | time | share of the `16.805 s` sum |
 |---|---|---|
-| Krylov solve (4 shifts, 916 steps) | `16.205 s` | `82.8 %` |
-| exact reference: seed-column build / Lanczos `exp` | `1.887 s` / `1.420 s` | `16.9 %` |
-| not individually timed (window, seed, residual bookkeeping, run variance) | `≈ 0.06 s` | `0.3 %` |
+| Krylov solve (4 shifts, 915 steps) | `13.586 s` | `80.8 %` |
+| exact reference: seed-column build / Lanczos `exp` | `1.867 s` / `1.353 s` | `19.2 %` |
+
+The checked-in record's cell is `19.575 s`; it predates both AVX2 kernels, and
+its solve is the scalar `16.205 s` measured for that section. With the kernels
+committed the same cell is `16.8 s`, which is what the regenerated record now
+carries.
 
 Under the dense reference the Padé exponential is `2380 × 2380`, so it grows like `n³`:
 the same probe at `C = 20` (`1001` labels) measures `0.73 s` to build and
@@ -677,7 +684,7 @@ exponential) or a decision to record the sharp tier on a subsample of cutoffs.
 
 The two halves are measured by different programs — the cell figure is the
 record's, the split is the probe's — and they sum to `373 s` against `406 s`
-under the dense reference, and to `19.512 s` against the checked-in `19.575 s`
+under the dense reference, and to `18.401 s` against the record's `19.575 s`
 now, so the third row is a residual, not an attribution.
 
 The parallel map operations still lose at this size, by more than at `C = 20`
@@ -897,7 +904,8 @@ section):
 Those are the pre-§5.11 cells. The checked-in `x86_64` record's coordinate cells
 are `19.575 s` (`C = 26`, `m = 2`), `33.239 s` (`C = 28`, `m = 2`), `36.050 s`
 (`C = 26`, `m = 4`) and `58.829 s` (`C = 28`, `m = 4`) — the same cutoffs, on the
-scalar fallback, after §5.11 and §5.12 had also removed the SVD.
+scalar fallback that generated the record, after §5.11 and §5.12 had also
+removed the SVD.
 
 The in-loop operations fell by more than the cells because the reference and the
 bookkeeping do not move: `dot` is `0.007 ms` per call at 2380 labels against
@@ -955,10 +963,11 @@ the profile's print resolution (`aarch64`):
 | — the inner product inside it | `1.65 s` | `1.63 s` | `17 %` |
 | per-step least squares | `12.66 s` | `< 0.02 s` | **`< 0.2 %`** |
 
-Re-measured on `x86_64` with the same Givens stage, that cell's solve is
-`16.205 s`: `55.9 %` `gemv`, `17.6 %` MGS `axpy`, `8.6 %` inner product, `< 0.1 %`
-least squares. The `gemv` is `2.0×` the `aarch64` figure and the other phases
-scale with it, so the shares move and the structure does not.
+Re-measured on `x86_64` with the same Givens stage and both AVX2 kernels, that
+cell's solve is `13.586 s`: `62.3 %` `gemv`, `8.3 %` MGS `axpy`, `3.2 %` inner
+product, `< 0.1 %` least squares. The `gemv` is `1.82×` the `aarch64` figure and
+the SIMD share is far smaller because its kernels are committed here (the dot
+reassociates, the axpy does not); the shares move and the structure does not.
 
 The matvec is unchanged to the second decimal, which is the point: the saving is
 entirely the stage that was removed. Whole-solve wall clock `22.5 s → 9.77 s` at
@@ -1030,66 +1039,68 @@ record under `shift_solve_iterations`.
 
 §5.11 left the least-squares stage below print resolution, so the next question
 is what a `C = 32` solve actually spends its time on. `PHI4_PROFILE=1` at
-`C = 32` (`PROBE_CUTOFF=32`, budget `2.5e7`), four shift solves, `1327` Arnoldi
+`C = 32` (`PROBE_CUTOFF=32`, budget `2.5e7`), four shift solves, `1328` Arnoldi
 steps in total, on this `x86_64` host at load average `0.5` on 12 cores. This is
-the host of the checked-in record, and it builds the **scalar** `dot` fallback
-rather than the `aarch64` NEON kernel of §5.12 below; its per-step `gemv` lands
-on the standalone bench's `41.301 ms/step`:
+the host of the checked-in record; it dispatches both map operations to **AVX2**
+kernels rather than the `aarch64` NEON kernels below, and its per-step `gemv`
+(`38.44 ms`) sits inside the spread of the standalone bench's
+`41.301 ms/step`:
 
-| phase | 266 | 350 | 351 | 360 | total | share of the `79.35 s` solve |
+| phase | 266 | 350 | 352 | 360 | total | share of the `67.80 s` solve |
 |---|---|---|---|---|---|---|
-| action `gemv` | `11.34 s` | `14.85 s` | `14.15 s` | `14.43 s` | `54.77 s` | **`69.0 %`** |
-| MGS `axpy` | `2.03 s` | `3.59 s` | `3.24 s` | `3.50 s` | `12.36 s` | `15.6 %` |
-| — the inner product inside it | `0.98 s` | `1.74 s` | `1.58 s` | `1.70 s` | `6.00 s` | `7.6 %` |
+| action `gemv` | `10.23 s` | `13.46 s` | `13.54 s` | `13.81 s` | `51.04 s` | **`75.3 %`** |
+| MGS `axpy` | `0.88 s` | `1.43 s` | `1.47 s` | `1.43 s` | `5.21 s` | `7.7 %` |
+| — the inner product inside it | `0.36 s` | `0.62 s` | `0.63 s` | `0.65 s` | `2.26 s` | `3.3 %` |
 | Givens least squares | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.01 s` | `< 0.02 %` |
 
 **Every row here is a clock from this run**, on an idle host (load average
-`0.52` when it started). The `aarch64`/NEON run measured the same cell at
+`0.5` when it started; the same cell is `67.80–70.62 s` across two runs of this
+build and `74.83–75.43 s` with the `axpy` dispatch removed, see the A/B below). The `aarch64`/NEON run measured the same cell at
 `39.383 s` with `20.98 ms/step`, `70.7 %` `gemv` and `3.5 %` inner products.
 The two host tables are separate measurements, not a normalisation of one
-another: this host's `gemv` is `2.0×` the NEON host's (`41.27` against
-`20.98 ms/step`, `9.1` against `17.9 GB/s`) and its scalar inner product `4.3×`
-(`6.00` against `1.38 s`), which is the whole of the `2.0×` solve difference.
-The Arnoldi counts (`266/350/351/360` against `266/351/351/359`) and the
-probability (`9.79994613340706922e-1` against `9.79994613340724019e-1`) agree;
-the one-step difference at the second solve is the known last-place sensitivity
-of the `1e-13` stop test, not a different algorithm.
+another: this host's `gemv` is `2.0×` the NEON host's (`41.0` against
+`20.98 ms/step`, `9.2` against `17.9 GB/s`) and its AVX2 inner product `1.7×`
+(`2.36` against `1.38 s`), which together account for the `1.9×` solve
+difference (`74.8` against `39.4 s`).
+The Arnoldi counts (`266/350/352/360` against `266/351/351/359`) and the
+probability (`9.79994613340702814e-1` against `9.79994613340724019e-1`) agree;
+the one-step differences are the known last-place sensitivity of the `1e-13`
+stop test, not a different algorithm.
 
 Read the table as nested, not additive: the inner-product row sits inside the
 MGS block and the block's clock contains it (§5.12 note below). Against the
-`79.35 s` solve the disjoint phases account for `67.13 s`; the remaining
-`12.22 s` (`15.4 %`) is everything outside them — the `coords`/`from_coords`
-round-trip at the two ends of each solve (`1.6936 ms` per clone here), each
-step's image construction, and the norm of every new basis vector. The `gemv` is
-`41.27 ms` per step by construction: `H_proj` is `4845²` complex entries,
-`375.6 MB`, streamed once per Arnoldi step. That is `9.1 GB/s`, so it is
+`67.80 s` solve the disjoint phases account for `56.25 s`; the remaining
+`11.55 s` (`17.0 %`) is everything outside them — the `coords`/`from_coords`
+round-trip at the two ends of each solve (`1.66 ms` per clone at this cutoff),
+each step's image construction, and the norm of every new basis vector. The
+`gemv` is `38.44 ms` per step: `H_proj` is `4845²` complex entries,
+`375.6 MB`, streamed once per Arnoldi step. That is `9.8 GB/s`, so it is
 bandwidth-bound, not arithmetic-bound — the flop count (`~9.4e7` per step) would
 finish an order of magnitude sooner.
 
 **What removing it would cost, measured.** There is exactly one way to keep the
 window solve and not multiply by `n²` per step, and it is to go back to the
 sparse nested action: the same probe times one `d_gamma` on the same dense
-window state at `321.012 ms`, **`7.77×`** the `gemv`'s `41.30 ms`.
-Substituted into the same `1327` steps that is `~426 s` of action instead of
-`54.8 s`, i.e. a `~450 s` solve and a `~467 s` cell instead of the probe's own
-`79.4 s` and `96.2 s` (the record's cell is `96.7 s`). That is a floor, not an
-estimate in the other direction:
-the map route also pays a reserialisation per step (`map_clone_ms = 1.6936`
-here, `13 %` above the earlier quiet run's `1.50`) that the coordinate loop does
-not. So the
-`gemv` is not a tax on the solve — it is the *cheap* action, already `7.8×` below
-the sparse one, and it only reaches `69 %` because §5.11 made everything else
-free. Removing the `gemv` leaves a `24.6 s` solve; removing every *other* term
-leaves `54.8 s`. Either way the `gemv` is where a wider window pays.
+window state at `287.986 ms`, **`7.5×`** the `gemv`'s `38.44 ms`.
+Substituted into the same `1328` steps that is `~382 s` of action instead of
+`51.0 s`, i.e. a `~399 s` solve and a `~416 s` cell instead of the probe's own
+`67.8 s` and `84.9 s` (reference `17.128 s` included; the record's pre-AVX2
+cell is `96.7 s`). That is a floor, not an estimate in the other direction:
+the map route also pays a reserialisation per step (`map_clone_ms = 1.6594`)
+that the coordinate loop does not. So the
+`gemv` is not a tax on the solve — it is the *cheap* action, already `7×` below
+the sparse one, and it reaches `75 %` because §5.11 made everything else
+free. Removing the `gemv` leaves a `16.8 s` solve; removing every *other* term
+leaves `51.0 s`. Either way the `gemv` is where a wider window pays.
 
 One accounting caveat on the `PROFILE` line, because it is easy to misread the
 split: the `axpy=` figure is the **whole Gram–Schmidt block**, not the axpys
 alone — its clock starts before the two passes and stops after them, so it
-contains the `dot=` figure. The disjoint split of the `79.35 s` solve is
-therefore `69.0 %` `gemv`, `7.6 %` inner products, `8.0 %` real axpys and
-`15.4 %` everything else (norm, image construction, the Givens stage).
+contains the `dot=` figure. The disjoint split of the `67.80 s` solve is
+therefore `75.3 %` `gemv`, `3.3 %` inner products, `4.4 %` real axpys (`2.95 s`)
+and `17.0 %` everything else (norm, image construction, the Givens stage).
 
-**The kernel comparison, and what this host cannot run.** On the `aarch64`
+**The kernel comparison, and what the SIMD rows buy.** On the `aarch64`
 campaign host the pre-NEON table read `61.9 %` `gemv`, `21.0 %` Gram–Schmidt
 (which contains the inner products), `15.6 %` inner products and `17.0 %` other
 on a `44.9 s` solve; after the NEON kernel it read `70.7 %` / `9.5 %` / `3.5 %` /
@@ -1098,23 +1109,70 @@ kernel does not touch — the `gemv` (`27.79 s` before the kernel, `27.84 s`
 after), the real
 axpys (`2.44 s` against `2.35 s`) and everything else (`7.63 s` against
 `7.81 s`) — so the `5.5 s` between those solves **is** the inner product:
-`6.99 s → 1.38 s` (`5.07×`, on `1327` steps rather than `1328`). This `x86_64`
-build has no NEON path, so its inner-product row (`7.6 %`, `6.00 s`) sits where
-the scalar `aarch64` run's `15.6 %` did: the kernel is a host capability, not a
-portable assumption. The `aarch64` campaign record agreed independently before
-it was replaced by this host's: the adopted kernel took the `C = 32` rank-2
-cell from `55.0 s` to `48.9 s` (`−11.1 %`).
+`6.99 s → 1.38 s` (`5.07×`, on `1327` steps rather than `1328`).
+
+The `x86_64` counterparts are the two AVX2 kernels, measured the same way. The
+inner product first: the `C = 26` in-solve dot goes `1.39 s → 0.50 s` and the
+solve `16.205 s → 15.027 s` (`−7.3 %`), and at `C = 32` the dot `6.00 s →
+2.36 s` and the solve `79.35 s → 74.81 s` (`−5.7 %`). The microbenchmark
+(`examples/phi4_kernel_simd_probe.rs`) reports `2.18–2.76×` across `n = 2380`
+and `4845` over two runs each — the range is the scalar reference's, not the
+kernel's — with agreement to `7.3e-15` and `3.2e-15` relative. It helps less
+than NEON's `3.75×` because LLVM already auto-vectorises this scalar loop on
+`x86_64` (`2.98–3.44 us` against `1.25 us` in the probe), whereas the `aarch64`
+scalar reference is not vectorised at all. The reassociation moves the solve's
+last bits — the `C = 20` probability by `3.7e-15` and the `C = 32` one in its
+17th digit — which is why the record's digits are the scalar path's. The
+`aarch64` campaign record agreed independently before it was replaced: that
+kernel took the `C = 32` rank-2 cell from `55.0 s` to `48.9 s` (`−11.1 %`).
+
+The `axpy` came next, and it is the better of the two because it reassociates
+nothing: unfused multiply and add in the scalar loop's order give a
+**bit-identical** result (`max |diff| 0.000e0` in the probe), with the same
+zero-skip and the same in-loop non-finiteness report — any four-element block
+holding a zero `b` entry, or one whose result would be non-finite, falls back to
+the scalar loop for those elements. It is `2.65–2.76×` at `n = 2380` and
+`2.43–2.47×` at `4845` (`6.79–7.01 us → 2.54–2.56 us`, `13.71–14.56 us →
+5.56–5.98 us`).
+
+The in-solve A/B is a link swap and nothing else: same binary otherwise, same
+steps, same probability to the last printed digit (`9.79994613340702814e-1` at
+`C = 32`, `9.79979792832510244e-1` at `26`, `9.79988805406569519e-1` at `28`),
+which the bit-identity guarantees. The Gram–Schmidt block, which is the only
+place the kernel runs, moves as follows:
+
+| cutoff | steps | MGS block, scalar `axpy` | MGS block, AVX2 `axpy` | ratio | solve, scalar | solve, AVX2 |
+|---|---|---|---|---|---|---|
+| `C = 20` | `527` | `0.23 s` | `0.15 s` | `1.53×` | — | `2.41–2.67 s` |
+| `C = 26` | `915` | `1.74 s` | `1.13 s` | `1.54×` | `14.02–16.02 s` | `13.59–14.54 s` |
+| `C = 28` | `1061` | `3.25 s` | `2.13 s` | `1.53×` | `24.92–28.59 s` | `23.80–26.55 s` |
+| `C = 32` | `1328` | `8.03–8.05 s` | `5.18–5.30 s` | `1.52–1.55×` | `74.83–75.43 s` | `67.80–70.62 s` |
+
+The block is a clean `1.5×` at every size, and it is also the honest ceiling on
+the solve gain: `2.8 s` of a `1328`-step solve at `C = 32`, `0.6 s` at `C = 26`.
+The solve ranges above are two runs each (three at `C = 26`) on a 12-core host
+whose run-to-run spread at this size is `±5 %`, so at `C = 26` and `C = 28` the
+two arms overlap and only the block separates them; at `C = 32` the arms do not
+overlap (`75.43/74.83` against `70.62/67.80`), but the wider gap is partly a
+slower `gemv` in the scalar runs (`54.9–55.2 s` against `51.0–52.1 s`) and no
+part of it is claimed as an `axpy` effect. Because the kernel is exact, these
+solves differ from the scalar ones only through the inner product that was
+already in the tree: the `C = 32` probability moves in its 16th significant
+digit (`0.9799946133407069 → 0.9799946133407028`), which is the AVX2 `dot`'s
+reassociation and nothing else. So the record regenerated below on this path is
+an arithmetic match of the previous fixture up to that kernel, not a
+re-baselining.
 
 Three other removals were considered and are reported as *not* done. Storing
-`H_proj` in `f32` halves the stream to `188 MB` (`~20.7 ms` per step at this
-host's measured `9.1 GB/s`, a `~52 s` solve), but `f32` rounding is `~1e-7`
+`H_proj` in `f32` halves the stream to `188 MB` (`~20.4 ms` per step at this
+host's measured `9.2 GB/s`, a `~27 s` solve), but `f32` rounding is `~1e-7`
 relative against a `1e-10` solve target,
 so the recorded residual would stop describing the arithmetic. A device-resident
 `gemv` is not measured: the loop's `axpy`s, inner products and vectors would all
 have to move with the matrix, and `fock_sirk`'s Krylov loop is CPU `nalgebra`
 today, so no claim is made that it would win. And there is no sparsity to
 exploit: `H_proj = W† H_raw W` is dense in a `4845`-dimensional window basis by
-construction; dropping the projection *is* the map walk, i.e. the `7.77×` above.
+construction; dropping the projection *is* the map walk, i.e. the `7.03×` above.
 
 **Six more cutoffs.** With the per-step cost known, the sweep now runs `C = 34`,
 `36`, `38`, `40`, `42` and `44` (`SWEEP_CUTOFFS`, `SWEEP_COMPONENT_BUDGET =
@@ -1179,13 +1237,15 @@ are what hold that defect two orders below the tolerance, so the pass count is
 not a free parameter and nothing here was adopted; `joint_sirk.rs` is unchanged.
 So the only lever left on that `36.6 %` is an explicitly SIMD complex kernel —
 which needs no new dependency (the target's intrinsics are in `core::arch`) —
-or moving the loop to a device.
+or moving the loop to a device. Both were taken: NEON on `aarch64` (below) and
+AVX2 on `x86_64` (the profile above).
 
 **An explicit NEON kernel: `2.5×` on the axpy, `3.75×` on the inner product,
 `12.6 %` off the `C = 26` solve — adopted, record regenerated.** The campaign
 host is `aarch64` (Qualcomm Oryon, 12 cores, NEON + `fcma`), so "explicit SIMD"
-there means NEON, not AVX2; this `x86_64` host builds the scalar fallback and
-its `C = 26` inner-product phase is the `6.00 s` / `7.6 %` of the profile above.
+there means NEON, not AVX2; this `x86_64` host dispatches to the AVX2 kernel
+instead, and its `C = 26` inner-product phase is the `0.50 s` / `3.3 %` of the
+profile above.
 `examples/phi4_kernel_simd_probe.rs` rebuilds both kernels with
 `core::arch::aarch64` intrinsics — deinterleaving the array-of-structs pairs
 with `vuzp1q/vuzp2q`, four independent accumulators for the inner product so
@@ -1208,9 +1268,10 @@ comparable. Correctness is unaffected in kind: `axpy` agrees to `2.2e-16` and
 `dot` to `1.9e-14` relative.
 
 It is **adopted**: `coords_inner_product` dispatches to this kernel on
-`aarch64` and keeps the scalar loop as the fallback everywhere else. The two
-objections that stood in the way were resolved rather than argued down. The
-record was regenerated on the `aarch64` host: the `C = 26` rank-2 cell went
+`aarch64` and keeps the scalar loop as the fallback everywhere else; the
+`x86_64` counterpart dispatches to AVX2 on the same terms. The two objections
+that stood in the way were resolved rather than argued down. The record was
+regenerated on the `aarch64` host: the `C = 26` rank-2 cell went
 `12.261 s → 10.964 s` (`−10.6 %`) with `917 → 915` bounded-resolvent steps, the
 `C = 32` cell `55.0 s → 48.9 s`, and the whole `13 × 2` sweep
 `994.978 s → 865.507 s` (`14.4 min`, previous `16.5 min`) at the same `1.19 GB`
@@ -1244,7 +1305,8 @@ the fallback.
 `examples/phi4_gemv_device_bench.rs` builds the real `C = 32` window operator
 and times the same dense product both ways; its CPU leg reproduces the solve's
 per-step figure (`41.301 ms/step` on `x86_64` against the profile's
-`41.27 ms`; the `aarch64` host ran the same leg at `20.868 ms` against
+`40.96–41.27 ms` across runs; the `aarch64` host ran the same leg at `20.868 ms`
+against
 `20.98 ms`), which is what makes the comparison meaningful rather than a proxy.
 On this host the device leg stops after the CPU leg and prints the project's own
 triage line:
@@ -1306,8 +1368,9 @@ loaded/quiet pair reached (`3593560` loaded against `2158332` quiet for the
 upper bounds, and compare ratios inside the record, not against another machine.
 
 **Record provenance: the checked-in record is now the native `x86_64` run.** The
-fixture was regenerated at `93cccfc` on the `x86_64` host of this note, which
-compiles the scalar `dot` fallback rather than the NEON kernel above, and with
+fixture was regenerated at `93cccfc` on the `x86_64` host of this note, which at
+that revision compiled the scalar `dot` fallback (the AVX2 kernel was added
+after the record) rather than the NEON kernel above, and with
 the change-of-basis control of §5.3 in the schema. All `17 × 2` cells completed
 in `9737331 ms` (`162.3 min`) at `4239900 kB` peak RSS. The physics reproduces
 the previous `aarch64` record cell for cell: every
@@ -1316,7 +1379,8 @@ the previous `aarch64` record cell for cell: every
 the tails by at most `8.6e-12`, and twelve solver step-count entries across the
 sweep differ, all by exactly one. Cell times are `1.95×` the `aarch64` run in
 total and rise more at the widest windows (`C = 44`, `m = 4`: `1183 s → 2309 s`),
-the direction the scalar fallback and the different memory system predict. The
+the direction the scalar fallback it used and the different memory system
+predict. The
 record is also the first to apply the twelve-digit reporting of §2: its
 `responses.cells.*.amplitude_defect` fields are stored rounded
 (`4.44253523451e-16` for the base `initial_leakage`). The performance tables of
@@ -1495,13 +1559,13 @@ labelled as such in place.
   raises the limit with the window instead of charging the same `gemv` less
   work. The record is `11 × 2` cells in `6.3 min` and `0.60 GB` (§5.11).
 * Measured: at `C = 32` the projected
-  `gemv` is `69.0 %` of the `79.35 s` solve on the `x86_64` host of the record
-  (`54.77 s` of `1327` steps, `41.27 ms` per step, `9.1 GB/s` on a `375.6 MB`
-  matrix), against `15.6 %` Gram–Schmidt, `7.6 %` inner products and `< 0.02 %`
+  `gemv` is `75.3 %` of the `67.80 s` solve on the `x86_64` host of the record
+  (`51.04 s` of `1328` steps, `38.44 ms` per step, `9.8 GB/s` on a `375.6 MB`
+  matrix), against `7.7 %` Gram–Schmidt, `3.3 %` inner products and `< 0.02 %`
   least squares; the `aarch64` NEON host measured `70.7 %` of a `39.4 s` solve
   at `20.98 ms/step` (§5.12). Removing it is only possible by
-  going back to the sparse nested action, measured at `321.012 ms` per step
-  (`7.77×` the `gemv`, a `~467 s` cell instead of the probe's `96.2 s`), so the
+  going back to the sparse nested action, measured at `287.986 ms` per step
+  (`7.5×` the `gemv`, a `~416 s` cell instead of the probe's `84.9 s`), so the
   removal is a regression, not a saving. `f32` storage and a GPU `gemv` are reported as
   considered and not done — the first contradicts the recorded `1e-10`
   residual, the second is unmeasured (§5.12).
