@@ -28,8 +28,13 @@ use fock_sirk::joint_sirk::{
     solve_joint_sirk,
 };
 use fock_sirk::sm_defect::{defect_terms, reduced_growth};
-use nested_fock_algebra::exact_inner::{ActionLimits, InnerExpr, JointOuterBasis, NestedVector};
-use nested_fock_algebra::phi4_momentum::{ScalarMomCont, frozen_jet_comparison, occupations_of};
+use nested_fock_algebra::exact_inner::{
+    ActionLimits, InnerExpr, InnerVector, JointInnerBasis, JointOuterBasis, NestedVector,
+};
+use nested_fock_algebra::phi4_momentum::{
+    ScalarMomCont, frozen_jet_comparison, occupations_of, phase_rotate_inner,
+    phase_rotate_nested, phase_rotated_quadratures,
+};
 use nested_fock_algebra::phi4_scalar::ScalarGrid;
 use num_complex::Complex64 as C;
 use serde_json::{Map, Value, json};
@@ -52,6 +57,14 @@ fn seed(model: &ScalarMomCont, support: &[([u32; 4], f64)]) -> NestedVector {
 fn physical_shifts(t: f64, n_phys: f64, h_phys: f64, m: usize) -> Vec<C> {
     hashimoto_unitary_shifts(t, n_phys * t, h_phys * t, m).expect("valid Hashimoto schedule")
 }
+
+/// Per-mode angles of the change-of-basis control. The momentum angles are
+/// generic (not symmetry angles), so the transported Hamiltonian is a
+/// genuinely different matrix. `theta[0] = 0` keeps the φ-angle zero: the seed
+/// is one φ quantum with no momentum quanta, so a nonzero φ-angle would only
+/// multiply it by a global phase — physically unobservable and rejected by the
+/// unit-amplitude reference tier.
+const CHANGE_OF_BASIS_THETA: [f64; 4] = [0.0, 0.3, -0.45, 1.1];
 
 fn shift_invert() -> JointKrylovMethod {
     JointKrylovMethod::ShiftInvert {
@@ -521,6 +534,136 @@ fn response_cell(lam: f64, width_k: f64, t: f64) -> Value {
     })
 }
 
+/// `||a - b||` for two inner vectors, tolerating labels present in only one.
+fn inner_vector_difference(a: &InnerVector, b: &InnerVector) -> f64 {
+    let mut labels: BTreeSet<&JointInnerBasis> = a.keys().collect();
+    labels.extend(b.keys());
+    labels
+        .into_iter()
+        .map(|label| {
+            let left = a.get(label).copied().unwrap_or_default();
+            let right = b.get(label).copied().unwrap_or_default();
+            (left - right).norm_sqr()
+        })
+        .sum::<f64>()
+        .sqrt()
+}
+
+/// One arm of the change-of-basis control: same solver, window, rank and
+/// shifts as a response cell, so only the transported representation differs.
+fn conjugated_response_cell(
+    h: &InnerExpr,
+    initial: &NestedVector,
+    window: &BTreeSet<JointOuterBasis>,
+    shifts: &[C],
+    t: f64,
+) -> Value {
+    let started = Instant::now();
+    let result = solve(h, initial, shifts, window, shift_invert());
+    let p_sirk = return_probability(&result, initial, t);
+    let p_exact = WindowOperator::build(h, window).reference_return(initial, t);
+    let discrepancy = (p_sirk - p_exact).abs();
+    json!({
+        "status": "measured",
+        "return_probability_sirk": p_sirk,
+        "return_probability_window_exact": p_exact,
+        "sharp_charge": {
+            "kind": "measured compressed-flow discrepancy |p_sirk - p_exact|",
+            "value": discrepancy,
+        },
+        "attained_rank": result.rank(),
+        "solver": solver_health(&result),
+        "runtime_ms": started.elapsed().as_millis() as u64,
+    })
+}
+
+/// Change-of-basis null control (`docs/PHI4_NUMERICAL_PLAN.md` §3.4).
+///
+/// The same physical seed, operator and observable are transported together by
+/// the diagonal phase unitary `U = exp(i Σ_m θ_m n_m)`: `h → U h U†` and
+/// `ψ → Uψ`. The return probability is invariant, so the exact response is
+/// zero — unlike changing the packet width at fixed Hamiltonian, which is a
+/// different physical state. The seed is one field quantum in an odd-φ window,
+/// and the transport rotates the momentum quadratures: the written matrices
+/// differ by a Frobenius norm of order 10² while the return probability is
+/// unchanged. The record carries that matrix difference so the control cannot
+/// pass by the transported operator accidentally equalling the base one.
+fn change_of_basis_control(t: f64) -> Value {
+    let started = Instant::now();
+    let theta = CHANGE_OF_BASIS_THETA;
+    let model = ScalarMomCont::unit();
+    let window = ScalarMomCont::window_labels_of_parity(8, 1);
+    let shifts = physical_shifts(t, 250.0, 50.0, 4);
+    let support = [([1, 0, 0, 0], 1.0)];
+    let initial = seed(&model, &support);
+
+    let h = model.hamiltonian();
+    let (quadratures, momenta) = phase_rotated_quadratures(theta);
+    let h_rotated = model.hamiltonian_with(&quadratures, &momenta);
+    let initial_rotated = phase_rotate_nested(&initial, theta);
+
+    // Independent check that the tree substitution really conjugates by `U`:
+    // `h' Γ(U)ψ = Γ(U) h ψ` must hold on the seed before any solve runs.
+    let inner = model.hermite_state(&support);
+    let image = h
+        .apply(&inner, ActionLimits::default())
+        .expect("finite action");
+    let transported_image = h_rotated
+        .apply(&phase_rotate_inner(&inner, theta), ActionLimits::default())
+        .expect("finite action");
+    let expected_image = phase_rotate_inner(&image, theta);
+    let conjugation_defect = inner_vector_difference(&transported_image, &expected_image);
+
+    // How different the two operators actually are inside the window: a
+    // nontrivial basis change, not an invariance of the written tree.
+    let operator_matrix_difference = (WindowOperator::build(&h, &window).matrix()
+        - WindowOperator::build(&h_rotated, &window).matrix())
+        .norm();
+
+    let base = conjugated_response_cell(&h, &initial, &window, &shifts, t);
+    let transported = conjugated_response_cell(&h_rotated, &initial_rotated, &window, &shifts, t);
+
+    let read = |cell: &Value, key: &str| cell[key].as_f64().unwrap();
+    let charge = |cell: &Value| cell["sharp_charge"]["value"].as_f64().unwrap();
+    let exact_difference = read(&base, "return_probability_window_exact")
+        - read(&transported, "return_probability_window_exact");
+    let sirk_difference = read(&base, "return_probability_sirk")
+        - read(&transported, "return_probability_sirk");
+    let sirk_budget = charge(&base) + charge(&transported);
+
+    json!({
+        "status": "measured",
+        "transport": "U = exp(i sum_m theta_m n_m): q_m -> cos(theta_m) q_m + 2 sin(theta_m) p_m, p_m -> cos(theta_m) p_m - sin(theta_m) q_m / 2; h -> U h U^dagger, seed -> U seed",
+        "theta": theta,
+        "seed": "one field quantum He_1(phi), phi-parity-1 window; theta_phi = 0 leaves it bit-identical, so the transport acts on the momentum basis",
+        "seed_is_invariant": initial_rotated == initial,
+        "operator_matrix_difference": operator_matrix_difference,
+        "operator_matrix_difference_kind": "Frobenius norm of P H' P - P H P on the declared window",
+        "hermite_cutoff": 8,
+        "window_labels": window.len(),
+        "requested_rank": 4,
+        "hashimoto": { "N": 250.0, "h": 50.0, "m": 4, "t": t },
+        "conjugation_defect": conjugation_defect,
+        "conjugation_is_exact": conjugation_defect <= 1e-12,
+        "exact": {
+            "difference": exact_difference,
+            "kind": "base minus transported, exact seed-column evolution of each window",
+            "is_zero": exact_difference.abs() <= 1e-12,
+            "note": "must be zero: the transported tuple is unitarily equivalent to the base tuple",
+        },
+        "sirk": {
+            "difference": sirk_difference,
+            "sharp_charge": sirk_budget,
+            "interval": [sirk_difference - sirk_budget, sirk_difference + sirk_budget],
+            "excludes_zero": sirk_difference - sirk_budget > 0.0
+                || sirk_difference + sirk_budget < 0.0,
+            "note": "the two arms are different matrices and different Krylov bases, so each carries its own compressive defect; the exact arm is the zero-response statement",
+        },
+        "cells": { "base": base, "transported": transported },
+        "runtime_ms": started.elapsed().as_millis() as u64,
+    })
+}
+
 fn response_pairs() -> Value {
     let started = Instant::now();
     let t = 0.05;
@@ -528,6 +671,7 @@ fn response_pairs() -> Value {
     let control = response_cell(1.0, 1.0, t);
     let coupled = response_cell(1.1, 1.0, t);
     let spread = response_cell(1.0, 1.5, t);
+    let change_of_basis = change_of_basis_control(t);
 
     let read = |cell: &Value, key: &str| cell[key].as_f64().unwrap();
     let charge = |cell: &Value| cell["sharp_charge"]["value"].as_f64().unwrap();
@@ -579,6 +723,7 @@ fn response_pairs() -> Value {
             "sirk": interval(&base, &spread, "return_probability_sirk"),
             "certified": certified_interval(&base, &spread, "return_probability_sirk"),
         },
+        "change_of_basis_control": change_of_basis,
         "cells": { "base": base, "null_control": control, "coupled": coupled, "spread": spread },
         "runtime_ms": started.elapsed().as_millis() as u64,
     })
