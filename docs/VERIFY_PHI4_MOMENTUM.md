@@ -1090,9 +1090,22 @@ peak RSS. A handful of per-cutoff step counts moved by one — the rows updated 
 `1.4e-14` (`C = 36`: `0.9695602895694879 → 0.9695602895695016`), below the
 precision at which §5.2–§5.4 quote them, so no quoted probability in this
 document changed. The target dependence is now a stated property of the commit
-rather than a reason to refuse it: an x86 host compiles the scalar fallback and
-would reproduce the previous digits, the frozen record is the `aarch64` run, and
-its `source_revision` pins the commit that produced it. The prototype stays as
+rather than a reason to refuse it, and it is measured instead of assumed: the
+scalar fallback is cross-compiled for `x86_64-unknown-linux-gnu` (GCC `16.2.0`,
+glibc `2.44`) and run under `qemu-x86_64` `11.1.2`, where all seven tests in
+`tests/phi4_momentum_sirk.rs` pass — including
+`recorded_cutoff_sweep_matches_the_live_model`, which recomputes the `C = 12`
+cell live and compares it against this record at `1e-12`. The digits are **not**
+bit-identical and it would be wrong to say they are: of the `23` numbers the
+suite prints under `--nocapture`, `15` differ, by at most `3.1e-15` absolute and
+`2.7e-15` relative on the `O(1)` values — the summation-order difference between
+four NEON accumulators and the serial scalar loop. One *discrete* number moves
+too: the rank-2 Krylov count at `C = 8` is `18` on `aarch64` and `19` under
+emulation, one extra iteration because the `1e-13` stop test sits on the
+boundary the last-place difference crosses; the error it converges to agrees to
+`1e-15`. The fallback therefore reproduces the record to solver precision but
+not to the bit, the frozen record stays the `aarch64` run, and its
+`source_revision` pins the commit that produced it. The prototype stays as
 `examples/phi4_kernel_simd_probe.rs` so the number remains re-measurable against
 the fallback.
 
@@ -1366,6 +1379,15 @@ upper bounds, and compare ratios inside the record, not against another machine.
   are the only other differences); the record is `17 × 2` cells in `83.0 min`
   and `4.20 GB` peak RSS. The run was loaded (load average `9.6`, peak `30.7`),
   so its cell times are upper bounds, `±12 %` against the previous quiet run
+  (§5.12).
+* Measured: the scalar fallback is not asserted to reproduce the `aarch64`
+  record, it is run. Cross-compiled for `x86_64-unknown-linux-gnu` (GCC `16.2.0`,
+  glibc `2.44`) and executed under `qemu-x86_64` `11.1.2`, all seven tests of
+  `tests/phi4_momentum_sirk.rs` pass — `recorded_cutoff_sweep_matches_the_live_model`
+  included, which pins the live `C = 12` cell to this record at `1e-12`. The
+  printed digits differ from this host's by at most `3.1e-15` absolute and
+  `2.7e-15` relative on the `O(1)` values, and the `C = 8` rank-2 Krylov count
+  moves `18 → 19` where the `1e-13` stop test sits on the crossed boundary
   (§5.12).
 * Corrected: the rank-4 `C = 28` step row of §5.2 had been quoting that cell's
   shift-solve counts under a bounded-resolvent heading. It now shows the
