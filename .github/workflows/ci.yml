@@ -49,10 +49,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - name: install LLVM coverage tools (H11 per-file coverage gate)
         run: rustup component add llvm-tools-preview
+      # No --locked here, deliberately. Both siblings path-dep this checkout, so
+      # their committed lock files are stale the moment a dependency pin here
+      # changes (this run: prob_kernel's nanoda_lib pin), and `--locked` turned
+      # that into `cannot update the lock file ... because --locked was passed`
+      # (exit 101) before smoke_gate ever ran. Refreshing the lock of a throwaway
+      # sibling checkout is what makes these two builds test the coupling they
+      # exist for; reproducibility of the sibling's own tree is that repo's CI's
+      # job, not this step's.
       - name: build the sibling binaries smoke_gate exercises
         run: |
-          cargo build --locked --manifest-path ../velysterm/Cargo.toml -p kernel_client --bin unfer_agent
-          cargo build --locked --manifest-path ../australVM/safestos/cranelift/Cargo.toml \
+          cargo build --manifest-path ../velysterm/Cargo.toml -p kernel_client --bin unfer_agent
+          cargo build --manifest-path ../australVM/safestos/cranelift/Cargo.toml \
             --no-default-features --features unfer-kernel --bin modhost
       - name: run scripts/verify-invariants
         run: bash scripts/verify-invariants
@@ -343,10 +351,17 @@ jobs:
           cargo build --locked --manifest-path ../dynamic-arctic/Cargo.toml --no-default-features
           cargo test  --locked --manifest-path ../dynamic-arctic/Cargo.toml --no-default-features
 
+      # `--locked` is dropped on the two sibling steps that path-dep this
+      # checkout. Their lock files go stale whenever a pin here moves (running
+      # this job found velysterm's still naming an older nanoda_lib, so
+      # prob_kernel failed to compile against it: `Config` has no field
+      # `stack_size_bytes`). Regenerating the sibling's lock inside the
+      # throwaway checkout is the point -- the coupling under test is the API,
+      # not the sibling's lock hygiene.
       - name: velysterm (document engine emthin path-deps)
         id: velysterm
         run: |
-          cargo test --locked --manifest-path ../velysterm/Cargo.toml \
+          cargo test --manifest-path ../velysterm/Cargo.toml \
             -p mathed_core -p mathed_mini
 
       # australVM, in two steps because the coupling is in two languages.
@@ -361,7 +376,7 @@ jobs:
       - name: "australVM (JIT bridge: five unfer path deps + dynamic-arctic)"
         id: australvm-rs
         run: |
-          cargo test --locked --manifest-path ../australVM/safestos/cranelift/Cargo.toml
+          cargo test --manifest-path ../australVM/safestos/cranelift/Cargo.toml
 
       # The OCaml half: the plugin/Why3-gate suite, through the X4b wrapper so
       # the bridge .so is loaded by a loader that can actually load it.
@@ -509,6 +524,14 @@ jobs:
       # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
       - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
         run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+      # Both siblings are needed, not just the one cargo *compiles* against:
+      # fock_sirk path-deps ../australVM/safestos/gpu (optional `avm-gpu`), and
+      # a missing path-dep manifest fails `cargo build` at workspace load with
+      # exit 101 before any crate is compiled. That was this job's only failure.
+      - name: checkout australVM as sibling (fock_sirk path dep)
+        run: |
+          # master, not main: australVM's only remote branch is `master`.
+          git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - name: cargo build
@@ -639,10 +662,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
-      # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
-      # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
-      - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
-        run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+      # Both siblings are needed even though `-p` names a single crate: cargo
+      # loads every workspace member's manifest, and fock_sirk path-deps
+      # ../australVM/safestos/gpu. Without them the first `cargo test` dies at
+      # workspace load with exit 101 before compiling anything.
+      - name: checkout the two sibling path deps
+        run: |
+          git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+          # master, not main: australVM's only remote branch is `master`
+          git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - name: unfer_edge audit console tests
@@ -691,10 +719,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
-      # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
-      # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
-      - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
-        run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+      # Both siblings, for the same reason as the test job: `-p unfer_ffi` still
+      # resolves the whole workspace, and fock_sirk's avm-gpu path dep is a
+      # missing-manifest error (exit 101) before any crate builds.
+      - name: checkout the two sibling path deps
+        run: |
+          git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+          # master, not main: australVM's only remote branch is `master`
+          git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p unfer_ffi
@@ -765,12 +797,17 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "4.13"
-      - name: install australVM OCaml deps
+      # OCaml + dune come from australVM's own flake -- the toolchain its CI runs
+      # -- not from ocaml/setup-ocaml. Every e2e job died inside that action
+      # (`opam` exit code 31) before a single module was compiled, and the flake
+      # is the one OCaml environment already proven in this workflow: the
+      # cross-repo job runs australVM's `make bridge && make test` through
+      # `nix develop`. `tools/module_builder` has a `nix develop` branch for the
+      # Austral compiler build, so the script and the shell now agree.
+      - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703  # nixbuild/nix-quick-install-action@v30
+      - name: warm the australVM devShell (OCaml + dune)
         working-directory: australVM
-        run: opam install . --deps-only --yes || true
+        run: nix develop -c bash -c 'dune --version'
       - name: run end-to-end demo (via module_builder)
         working-directory: unfer
         run: bash tools/module_builder run demo_module
@@ -805,12 +842,17 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "4.13"
-      - name: install australVM OCaml deps
+      # OCaml + dune come from australVM's own flake -- the toolchain its CI runs
+      # -- not from ocaml/setup-ocaml. Every e2e job died inside that action
+      # (`opam` exit code 31) before a single module was compiled, and the flake
+      # is the one OCaml environment already proven in this workflow: the
+      # cross-repo job runs australVM's `make bridge && make test` through
+      # `nix develop`. `tools/module_builder` has a `nix develop` branch for the
+      # Austral compiler build, so the script and the shell now agree.
+      - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703  # nixbuild/nix-quick-install-action@v30
+      - name: warm the australVM devShell (OCaml + dune)
         working-directory: australVM
-        run: opam install . --deps-only --yes || true
+        run: nix develop -c bash -c 'dune --version'
       - name: run qfm_module (via module_builder)
         working-directory: unfer
         run: bash tools/module_builder run qfm_module
@@ -841,12 +883,17 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "4.13"
-      - name: install australVM OCaml deps
+      # OCaml + dune come from australVM's own flake -- the toolchain its CI runs
+      # -- not from ocaml/setup-ocaml. Every e2e job died inside that action
+      # (`opam` exit code 31) before a single module was compiled, and the flake
+      # is the one OCaml environment already proven in this workflow: the
+      # cross-repo job runs australVM's `make bridge && make test` through
+      # `nix develop`. `tools/module_builder` has a `nix develop` branch for the
+      # Austral compiler build, so the script and the shell now agree.
+      - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703  # nixbuild/nix-quick-install-action@v30
+      - name: warm the australVM devShell (OCaml + dune)
         working-directory: australVM
-        run: opam install . --deps-only --yes || true
+        run: nix develop -c bash -c 'dune --version'
       - name: run qfm_tomo_module (via module_builder)
         working-directory: unfer
         run: bash tools/module_builder run qfm_tomo_module
@@ -877,12 +924,17 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "4.13"
-      - name: install australVM OCaml deps
+      # OCaml + dune come from australVM's own flake -- the toolchain its CI runs
+      # -- not from ocaml/setup-ocaml. Every e2e job died inside that action
+      # (`opam` exit code 31) before a single module was compiled, and the flake
+      # is the one OCaml environment already proven in this workflow: the
+      # cross-repo job runs australVM's `make bridge && make test` through
+      # `nix develop`. `tools/module_builder` has a `nix develop` branch for the
+      # Austral compiler build, so the script and the shell now agree.
+      - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703  # nixbuild/nix-quick-install-action@v30
+      - name: warm the australVM devShell (OCaml + dune)
         working-directory: australVM
-        run: opam install . --deps-only --yes || true
+        run: nix develop -c bash -c 'dune --version'
       - name: run bayes_update_module (via module_builder)
         working-directory: unfer
         run: bash tools/module_builder run bayes_update_module
@@ -913,12 +965,17 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "4.13"
-      - name: install australVM OCaml deps
+      # OCaml + dune come from australVM's own flake -- the toolchain its CI runs
+      # -- not from ocaml/setup-ocaml. Every e2e job died inside that action
+      # (`opam` exit code 31) before a single module was compiled, and the flake
+      # is the one OCaml environment already proven in this workflow: the
+      # cross-repo job runs australVM's `make bridge && make test` through
+      # `nix develop`. `tools/module_builder` has a `nix develop` branch for the
+      # Austral compiler build, so the script and the shell now agree.
+      - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703  # nixbuild/nix-quick-install-action@v30
+      - name: warm the australVM devShell (OCaml + dune)
         working-directory: australVM
-        run: opam install . --deps-only --yes || true
+        run: nix develop -c bash -c 'dune --version'
       - name: run iterated_bayes_module (via module_builder)
         working-directory: unfer
         run: bash tools/module_builder run iterated_bayes_module
@@ -954,12 +1011,17 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "4.13"
-      - name: install australVM OCaml deps
+      # OCaml + dune come from australVM's own flake -- the toolchain its CI runs
+      # -- not from ocaml/setup-ocaml. Every e2e job died inside that action
+      # (`opam` exit code 31) before a single module was compiled, and the flake
+      # is the one OCaml environment already proven in this workflow: the
+      # cross-repo job runs australVM's `make bridge && make test` through
+      # `nix develop`. `tools/module_builder` has a `nix develop` branch for the
+      # Austral compiler build, so the script and the shell now agree.
+      - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703  # nixbuild/nix-quick-install-action@v30
+      - name: warm the australVM devShell (OCaml + dune)
         working-directory: australVM
-        run: opam install . --deps-only --yes || true
+        run: nix develop -c bash -c 'dune --version'
       - name: type-check zenodo_store_module
         working-directory: unfer
         run: bash tools/module_builder tc zenodo_store_module
@@ -1073,12 +1135,17 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "4.13"
-      - name: install australVM OCaml deps
+      # OCaml + dune come from australVM's own flake -- the toolchain its CI runs
+      # -- not from ocaml/setup-ocaml. Every e2e job died inside that action
+      # (`opam` exit code 31) before a single module was compiled, and the flake
+      # is the one OCaml environment already proven in this workflow: the
+      # cross-repo job runs australVM's `make bridge && make test` through
+      # `nix develop`. `tools/module_builder` has a `nix develop` branch for the
+      # Austral compiler build, so the script and the shell now agree.
+      - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703  # nixbuild/nix-quick-install-action@v30
+      - name: warm the australVM devShell (OCaml + dune)
         working-directory: australVM
-        run: opam install . --deps-only --yes || true
+        run: nix develop -c bash -c 'dune --version'
       # `run` = Austral compile through the CPS-JIT with the manifest's grants
       # authorized (positive) + the stripped-manifest denial (UK-4001). The
       # local verification of record for this exact command is

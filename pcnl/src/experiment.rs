@@ -410,7 +410,7 @@ pub struct VariantReport {
     /// R0.5 — the steps the four diagnostics above were computed on, and
     /// whether that window is a stationary chain (default: it is not).
     pub window: Window,
-    /// R0.6 — hash of the frozen Task-A anchor `θ_A` this arm adapted from.
+    /// R0.6 — hash of the frozen Task-A anchor `θ_A` this arm was fitted to.
     pub anchor_hash: u64,
     /// R0.6 — hash of the materialised Task-B data the potential sums over.
     pub data_hash: u64,
@@ -1883,7 +1883,7 @@ mod tests {
         let report = run_experiment(&cfg);
         let text = report.render();
         assert_eq!(report.variants.len(), 2);
-        // Every arm the report publishes adapted from the *shared* anchor, so a
+        // Every arm the report publishes is fitted to the *shared* anchor, so a
         // second caller (`examples/subspace_adaptation.rs`) that builds its own
         // through `AnchorSetup` gets the same identity and a comparable table.
         let shared = AnchorSetup::new(&cfg).pretrain(&cfg, Variant::Cosine).0;

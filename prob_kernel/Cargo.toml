@@ -23,5 +23,10 @@ thiserror = { workspace = true }
 candle-core = { workspace = true }
 sha2 = "0.10"
 hex = "0.4"
-nanoda_lib = { git = "https://github.com/ammkrn/nanoda_lib" }
+# Pinned to the revision Cargo.lock records. Unpinned, every workspace that
+# path-deps prob_kernel resolves its own HEAD of this git dependency: velysterm's
+# lock (../../velysterm/Cargo.lock) still names an older commit whose
+# `nanoda_lib::Config` has no `stack_size_bytes`, so building `unfer_agent`
+# against this tree failed with E0560 (`Config` has no field `stack_size_bytes`).
+nanoda_lib = { git = "https://github.com/ammkrn/nanoda_lib", rev = "0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929" }
 logos = { path = "../logos" }
