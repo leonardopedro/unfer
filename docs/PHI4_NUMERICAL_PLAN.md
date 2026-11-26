@@ -82,6 +82,11 @@ for different Hamiltonians.
    excludes it after *all* charges. Add a change-of-basis control that transports
    the same physical seed, operator and observable together. Its exact response
    is zero, unlike changing the physical packet spread at fixed Hamiltonian.
+   *Implemented*: the diagonal phase unitary `U = exp(iΣ_m θ_m n_m)` in
+   [`ScalarMomCont::hamiltonian_with`](../nested_fock_algebra/src/phi4_momentum.rs)
+   with the seed rotated by the same phases; the record's exact response is zero
+   and the operator's window matrix differs (see
+   [§5.3](VERIFY_PHI4_MOMENTUM.md)).
 
 ## 4. First numerical test of a quartic coupling distinct momenta
 
