@@ -26,13 +26,13 @@ non-claims below.
 background at `(0.1,0.1,-0.2)` with widths `0.8/0.9/0.6`; colours `1,5` against
 background `3`, so both nonzero `f^{abc}` act):
 
-* nonabelian magnetic cross `3.544786217144068i` (zero at `gs=0`, zero for a
+* nonabelian magnetic cross `3.54478621714i` (zero at `gs=0`, zero for a
   colour commuting with the background);
-* gauge–Higgs (weak) cross `−3.305613851640738i` between realified components
+* gauge–Higgs (weak) cross `−3.30561385164i` between realified components
   `0` and `2` (zero when the cross term is removed);
-* Yukawa transfer `5.076730859768365 + 1.4504945313623903i`;
-* transferred-momentum integral `7.252472656811951`, changing to
-  `7.016000284088793` under the reversed transfer;
+* Yukawa transfer `5.07673085977 + 1.45049453136i`;
+* transferred-momentum integral `7.25247265681`, changing to
+  `7.01600028409` under the reversed transfer;
 * retained Higgs constant `λv⁴/4 = 1.19021e8`;
 * independent spatial checks: free Dirac entry `2.448458` with the left-handed
   chirality its exact negative, the transverse projector exactly zero on a
@@ -40,8 +40,16 @@ background `3`, so both nonzero `f^{abc}` act):
   `dΓ(cI)` gives `0` on the outer vacuum, `c` on one quantum and `2c` on two,
   and `dΓ(B²) ≠ dΓ(B)²` on a two-quantum state (the ordered-product check).
 
+Measured evaluator outputs (the elements above, the mutation controls and the
+evolution cell) are stored at twelve significant digits via
+`sm_bridge::reported_residual`; declared inputs — parameters, packet centres and
+widths, `2π`, the lifted `inner_constant` — keep full precision. The one raw
+measured field is the Yukawa-adjoint control, which `sm_momentum_validation`
+pins at `1e-12` absolute, stricter than twelve digits, so rounding it would
+weaken a check rather than normalize a record.
+
 **Mutation controls** (each flips one convention): omitting `2π` changes the
-magnetic element to `0.5641702486624991i`; flipping the nonabelian sign negates
+magnetic element to `0.564170248662i`; flipping the nonabelian sign negates
 it; removing the Higgs cross gives exactly zero; reversing the transfer changes
 the integral; conjugating the Yukawa element gives `5.07673 − 1.45049i`.
 
@@ -141,7 +149,9 @@ independent Cadabra import. It binds:
   0/1/2, left/right chirality, one and two outer universes, and mixed graded parity.
   Each cell records the state spec, support, norm, `state_sha256` and
   `action_sha256`; the native digest must match exactly and the imported action
-  must match in support-independent norm.
+  must match in support-independent norm. `norm` is the only measured float in
+  this fixture and is stored at twelve significant digits; the two digests are
+  taken over the unrounded state/image amplitudes, so they stay bit-exact.
 
 The negative controls are hard test failures: mutated/deleted form weight, deleted
 term, moved or renamed Higgs slot, omitted matter entry, action-budget refusal, a
@@ -311,10 +321,12 @@ projected window.
   `artifact.finite_ce_quotient` in the same bridge. The cochain dimensions are
   `[12, 144, 792, 2640]`, the differential ranks `[11, 132, 660]`, the measured
   `Q^2` residual `6.66e-16`, the representation-closure residual `4.71e-16`, and
-  the cohomology dimensions `[1, 1, 0]` (degrees 0..2). Harmonic representatives
-  come from an SVD at tolerance `1e-9`, so these are measurements, not interval
-  enclosures. This is a finite adjoint CE quotient, **not** the field-theoretic
-  BRST complex.
+  the cohomology dimensions `[1, 1, 0]` (degrees 0..2). The ranks are SVD
+  measurements at tolerance `1e-9`; the harmonic representatives come from the
+  canonical reduced-row-echelon kernel of the stacked `[Q_k ; Q_{k-1}^†]`, whose
+  free columns give a basis independent of any singular-vector rotation. These
+  are measurements, not interval enclosures. This is a finite adjoint CE
+  quotient, **not** the field-theoretic BRST complex.
 - **Field-level truncation audit.** The ghost-only restriction of the joint
   charge is finite at ghost degree ≤3 and computes Lie-algebra homology, not
   physical BRST cohomology. A direct probe of the full field-level
@@ -742,10 +754,10 @@ identity under `matrix_skew_proof` (`H_hermitian`, `A_skew`). Its
 | `fock_sirk/lean/SmDefectSkew.lean` | `acc3dfc49fad2760020f33617e2ff72e3d74b999a4643046ae6efd2d149afc53` | N8 finite fixture: `H` Hermitian, `A = iH` skew-adjoint (Mathlib) |
 | `docs/fixtures/sm_defect_analytic_proof.ndjson.gz` | `ccddf3b7c83edfed0d44aa6d9b9ae81080bff7fc04b04ded4829f65028f96445` | gzip nanoda payload; raw sha256 `83e3571e…14ed31`; 38,336 declarations |
 | `docs/fixtures/sm_defect_skew_proof.ndjson.gz` | `eeb92d5b0fc588851ee4600b692c092a3d8e0a982b509b1947c38bc32c7dd9aa` | gzip nanoda payload; raw sha256 `498ae454…db528cc`; 7,540 declarations |
-| `docs/fixtures/sm_defect_bridge.json` | `bde3f770ef0ed8ffae28c680e08f09872883059a61e60fdba7bc20f9910a64bd` | bridge file with the kernel-verified `matrix_skew_proof` and its parsed-source provenance check; record digest `77dec777…1816ca`. Carries both `evolution_bound=1.0109852165754634` (sampled) and `frobenius_product_bound=1.060938397590336` (the value this table's older digest recorded as `evolution_bound`) |
-| `fock_sirk/src/sm_brst_fock.rs` | `9651f9a92451d1399b7945849bb9736554e03e9a6e3c4ad1ce109f09d4500dee` | matter and jet-inclusive finite BRST windows; block-graded harmonic quotients |
-| `docs/fixtures/sm_constraints_bridge.json` | `5b5030dbf007f6083f057d3ec58afd7b4725f2ef50ff5957ffb8278f7b278c68` | N10 finite constraint + finite CE + finite Fock BRST bridge, including the jet record; record digest `977bfca9…2e231cb` |
-| `docs/fixtures/sm_brst_jet_window.json` | `b9da23547f6046b04d10ebc37c64c3f764b10f8463ec261fedab04a090425052` | measured jet-inclusive window: 36,207 states, cohomology `[1,19,35,689]` |
+| `docs/fixtures/sm_defect_bridge.json` | `af7e105ab19c432c49611e5f446477b64644f0ef1a29bf43220bbc2a313d4dd7` | bridge file with the kernel-verified `matrix_skew_proof` and its parsed-source provenance check; record digest `f1224414…fcf7d51d`. Carries both `evolution_bound=1.01098521658` (sampled) and `frobenius_product_bound=1.06093839759` (the value this table's older digest recorded as `evolution_bound`); the measured certificate fields are reported at twelve significant digits, the directed `interval_terms` endpoints are not rounded |
+| `fock_sirk/src/sm_brst_fock.rs` | `a6535958139893f16600cf74555caa28f0be6b4c2abb441f20df5022af12b07b` | matter and jet-inclusive finite BRST windows; block-graded harmonic quotients (the `H^1` fingerprint is the canonical augmented-RREF left nullspace, not raw singular vectors) |
+| `docs/fixtures/sm_constraints_bridge.json` | `0dd581b134e64df8ecd117355a7e694ad709281d7b8e5452adf3a523af175999` | N10 finite constraint + finite CE + finite Fock BRST bridge, including the jet record; record digest `05d08915…d60ee2a6`; residuals reported to twelve significant digits |
+| `docs/fixtures/sm_brst_jet_window.json` | `7288181b9cd70c77174428f61a5621c3bbb78b6ae12eaaaed5e4e5c9ca65fab5` | measured jet-inclusive window: 36,207 states, cohomology `[1,19,35,689]` |
 | `fock_sirk/tests/sm_brst_jet_window.rs` | `92c923d12f70ed07f81e25170c4f87e8785ab8bcdcfedc8958f0ff9233b9e704` | pins the jet fixture and its verified payload |
 | `../timepiece/BookProof/Sm/ChapterSmBrstQuotient.lean` | `bff21dc424b11e32b6425759d0cfa866060820aa717d3ec785b6491abb169165` | finite-window dimensions plus the jet block-matrix `Q² = 0` identity |
 | `docs/fixtures/sm_brst_finite_window_proof.ndjson.gz` | `e25d796a16b99689a23bb756324ec261ba08f3ccbf8a6026d7de814b810d7ffa` | gzip nanoda payload; raw sha256 `bedf7935…a881664a`; 20,241 declarations |
@@ -906,6 +918,84 @@ coordinates. The spatial derivative here acts at fixed collective coordinates;
 NS/QG momentum-convolution elimination is not applied to redefine this operator.
 A total-jet derivative interpretation would require its separate representation
 map and extra terms; it is not silently substituted for E1.
+
+### Full-dictionary kernel and its cross-check
+
+`nested_fock_algebra/src/sm_dictionary.rs` parses every `SM_LATEX` row of the
+export and evaluates all **1,241** component expressions as kernels on smeared
+packet states, in two separate representations of the same E1 operator:
+
+```text
+coordinate:  <bra| P(q, -i d/dq) |ket>      with q-hat multiplication
+momentum:    <bra| P((i/2 pi) d/dk, 2 pi k) |ket>   with p-hat = 2 pi k
+```
+
+Both are exact closed-form Gaussian moments (degree <= 2), so their agreement
+is a roundoff-level Plancherel check of the parser, the coefficient algebra
+(full complex 3x3 Yukawa matrices), the `q`/`p` routing and the Fourier
+constants. No term in the dictionary mixes `q` and `p`, so normal ordering is
+never ambiguous. The measured fixture is
+`docs/fixtures/sm_dictionary_kernel.json` (regenerate with
+`cargo run -p fock_sirk --example sm_dictionary_kernel`) and the acceptance
+test is `fock_sirk/tests/sm_dictionary_validation.rs`: 1,241/1,241 rows,
+worst relative gap 2.3e-13 on `wall`, and a mutated `2 pi` changes exactly the
+232 rows that carry a jet momentum.
+
+### Per-mode 3D kernel and its relation to the collective one
+
+`three_d_kernel` / `three_d_coordinate_kernel` evaluate every row as a **3D
+field-mode** kernel instead (the routing of `sm_momentum.rs`): `q_n` inserts a
+3D packet and product terms transfer momentum `k−l`, while `p_m` acts as
+`−i∂_{axis(m)}` on the ket. The axis is the named layout's own — `m mod 3` for
+`x`, `G`/`dG`, `W`/`dW`, `B`/`dB` (every block base is divisible by three), and
+the declared profile axis `m mod 3` for the four scalar Higgs momenta.
+
+That kernel is cross-checked two ways. It is Plancherel-consistent with its own
+coordinate route on all 1,241 rows (worst relative gap 8.9e-15), and its
+**derivative terms** — the 40 kinetic rows plus every `p` term of the 232
+p-bearing rows — are related to the collective kernel by an exact identity:
+because each packet's per-axis parameters depend on the axis only through
+`a mod 3`, `collective = three_d · O_0^54 · O_1^53 · O_2^53` with `O_j` the
+term's one-axis overlap on residue `j` (the derivative factor cancels). `q`-bearing
+terms are deliberately not compared this way: `q` is a coordinate
+multiplication in the collective kernel and a field insertion with momentum
+transfer in the 3D kernel, so they are different operators.
+
+`q`-bearing rows are therefore cross-checked inside each route, over **every**
+q-bearing term of the dictionary (3,394 terms; no term mixes `q` and `p`, so each
+one is compared against an integrand rebuilt from the term and the packet layout
+rather than from the closed-form polynomial — a wrong mode, axis or weight
+disagrees). Each closed-form value is compared with a trapezoid evaluation of its
+own integrand. Measured: worst collective gap `1.3e-16` (`wall`), worst 3D gap
+`3.2e-15` (`magG31`), recorded as `q_bearing_quadrature` in the fixture. This is
+an integration cross-check of the insertion, not an equality between the two
+kernels.
+
+A mutation test (`a_mutated_field_axis_map_is_caught_by_the_q_bearing_check`)
+permutes which packet coordinate feeds which spatial axis and requires the check
+to reject every one of the 376 mutated evaluations (4 permutations x the 94-term
+per-family subset) with a gap above `1e-6`, so the sensitivity claimed above is
+measured rather than asserted. A second counter-assertion
+(`a_mutated_collective_mode_index_is_caught_by_the_q_bearing_check`) shifts every
+single-mode `q_n` to coordinate `(n+1) mod 163` and requires the collective
+quadrature to disagree with the unmutated closed form above `1e-6` in every
+case, so the check is sensitive to which collective mode is inserted and not
+only to the 3D axis map.
+
+Every measured gap in the fixture (`relative_gap`, the `worst` and `three_d`
+worst gaps, and the `q_bearing_quadrature` gaps) is written at twelve significant
+digits through `sm_bridge::reported_residual`, so last-digit toolchain noise
+cannot change the checked-in record. The kernel values themselves stay at full
+precision: the acceptance test pins them to `1e-12` relative, which is stricter
+than the reporting rule.
+
+The symbolic companion `docs/sm_momentum_nested.cdb` (8 CHECK rows, in
+`scripts/check-sm-symbolic`) pins the conventions and the rigged constants
+rather than the integrals: the real `2 pi k` symbol, the `(i/2 pi) d/dk` map and
+their commutator, the second-derivative product rule, `V(s=vev^2)=0` with the
+retained `lambda vev^4/4`, and the antisymmetric magnetic weight. Because this
+kernel is the collective-coordinate operator, it does not replace the per-mode
+convolution checks in `fock_sirk/tests/sm_momentum_validation.rs`.
 
 With `D=d+i g T A`, commutation gives the manuscript's
 `F=dA-dA-g f A A`. The strong constants are derived from the actual Gell-Mann

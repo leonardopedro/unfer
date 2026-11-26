@@ -20,7 +20,7 @@
 //! the self-adjoint operator, the physical reduction, and the matrix-specific
 //! defect bound remain assumptions.
 
-use crate::sm_bridge::{bind_artifact, canonical_json_sha256, sha256_hex};
+use crate::sm_bridge::{bind_artifact, canonical_json_sha256, reported_residual, sha256_hex};
 use nalgebra::{DMatrix, DVector};
 use nested_fock_algebra::exact_inner::NestedVector;
 use num_complex::Complex64 as C;
@@ -205,21 +205,47 @@ pub struct DefectTerms {
 }
 
 impl DefectTerms {
+    /// The measured fields at their reported precision.
+    ///
+    /// `to_json` and `certificate_json` both build records from this map, so the
+    /// two cannot report different digits for the same measurement. `time` is an
+    /// input and stays exact; the interval endpoints elsewhere in the record are
+    /// directed and are never rounded.
+    fn reported_fields(&self) -> Vec<(&'static str, f64)> {
+        vec![
+            ("initial_leakage", reported_residual(self.initial_leakage)),
+            ("defect_frobenius", reported_residual(self.defect_frobenius)),
+            (
+                "defect_seed_action",
+                reported_residual(self.defect_seed_action),
+            ),
+            (
+                "defect_action_envelope",
+                reported_residual(self.defect_action_envelope),
+            ),
+            (
+                "state_weighted_bound",
+                reported_residual(self.state_weighted_bound),
+            ),
+            ("seed_norm", reported_residual(self.seed_norm)),
+            ("reduced_growth", reported_residual(self.reduced_growth)),
+            ("flow_growth", reported_residual(self.flow_growth)),
+            ("evolution_bound", reported_residual(self.evolution_bound)),
+            (
+                "frobenius_product_bound",
+                reported_residual(self.frobenius_product_bound),
+            ),
+        ]
+    }
+
     pub fn to_json(&self, extra: Value) -> Value {
-        json!({
-            "initial_leakage": self.initial_leakage,
-            "defect_frobenius": self.defect_frobenius,
-            "defect_seed_action": self.defect_seed_action,
-            "defect_action_envelope": self.defect_action_envelope,
-            "state_weighted_bound": self.state_weighted_bound,
-            "seed_norm": self.seed_norm,
-            "reduced_growth": self.reduced_growth,
-            "flow_growth": self.flow_growth,
-            "time": self.time,
-            "evolution_bound": self.evolution_bound,
-            "frobenius_product_bound": self.frobenius_product_bound,
-            "extra": extra,
-        })
+        let mut record = Map::new();
+        for (key, value) in self.reported_fields() {
+            record.insert(key.into(), json!(value));
+        }
+        record.insert("time".into(), json!(self.time));
+        record.insert("extra".into(), extra);
+        Value::Object(record)
     }
 }
 
@@ -488,15 +514,18 @@ pub struct AmplitudeBound {
 }
 
 impl AmplitudeBound {
+    /// The measured fields at their reported precision, matching
+    /// [`DefectTerms`]. `panels` is a count and `time` is an input, so both stay
+    /// exact.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
-            "initial_leakage": self.initial_leakage,
-            "defect_action_integral": self.defect_action_integral,
-            "overlap_integral": self.overlap_integral,
-            "replacement_integral": self.replacement_integral,
-            "replacement_majorant": self.replacement_majorant,
-            "amplitude_bound": self.amplitude_bound,
-            "probability_bound": self.probability_bound,
+            "initial_leakage": reported_residual(self.initial_leakage),
+            "defect_action_integral": reported_residual(self.defect_action_integral),
+            "overlap_integral": reported_residual(self.overlap_integral),
+            "replacement_integral": reported_residual(self.replacement_integral),
+            "replacement_majorant": reported_residual(self.replacement_majorant),
+            "amplitude_bound": reported_residual(self.amplitude_bound),
+            "probability_bound": reported_residual(self.probability_bound),
             "panels": self.panels,
             "time": self.time,
         })
@@ -1055,7 +1084,7 @@ pub fn finite_fixture_bridge(time: f64) -> Value {
                 "time": interval_json(interval.time),
                 "evolution_bound": interval_json(interval.evolution_bound),
             },
-            "measured_map_error": measured,
+            "measured_map_error": reported_residual(measured),
             "measured_within_interval_hi": measured <= interval.evolution_bound.hi,
             "rounding": {
                 "mode": "f64-directed-endpoints",
@@ -1161,25 +1190,15 @@ pub enum DefectError {
 
 pub fn certificate_json(terms: &DefectTerms, hashes: &CertificateHashes) -> Value {
     let mut fields = Map::new();
-    fields.insert("initial_leakage".into(), json!(terms.initial_leakage));
-    fields.insert("defect_frobenius".into(), json!(terms.defect_frobenius));
-    fields.insert("seed_norm".into(), json!(terms.seed_norm));
-    fields.insert("reduced_growth".into(), json!(terms.reduced_growth));
-    fields.insert("flow_growth".into(), json!(terms.flow_growth));
+    for (key, value) in terms.reported_fields() {
+        // `defect_seed_action` is a diagnostic of the term record; the
+        // certificate has always carried only the bound's inputs.
+        if key == "defect_seed_action" {
+            continue;
+        }
+        fields.insert(key.into(), json!(value));
+    }
     fields.insert("time".into(), json!(terms.time));
-    fields.insert("evolution_bound".into(), json!(terms.evolution_bound));
-    fields.insert(
-        "frobenius_product_bound".into(),
-        json!(terms.frobenius_product_bound),
-    );
-    fields.insert(
-        "defect_action_envelope".into(),
-        json!(terms.defect_action_envelope),
-    );
-    fields.insert(
-        "state_weighted_bound".into(),
-        json!(terms.state_weighted_bound),
-    );
     json!({
         "schema": DEFECT_SCHEMA,
         "status": "conditionally-bounded",

@@ -10,52 +10,52 @@
   "elements": {
     "dirac_left": {
       "im": 0.0,
-      "re": -2.4484582493201485
+      "re": -2.44845824932
     },
     "dirac_right": {
       "im": 0.0,
-      "re": 2.4484582493201485
+      "re": 2.44845824932
     },
     "gauge_higgs_cross": {
-      "im": -3.3056138516407376,
+      "im": -3.30561385164,
       "re": 0.0
     },
-    "higgs_potential_constant": 119021053.32000001,
+    "higgs_potential_constant": 119021053.32,
     "longitudinal_curl": 0.0,
     "magnetic_cross": {
-      "im": 3.544786217144068,
+      "im": 3.54478621714,
       "re": 0.0
     },
     "scalar_gradient": 0.345,
-    "transfer_integral": 7.252472656811951,
+    "transfer_integral": 7.25247265681,
     "transverse_curl": 0.2,
     "yukawa_transfer": {
-      "im": 1.4504945313623903,
-      "re": 5.076730859768365
+      "im": 1.45049453136,
+      "re": 5.07673085977
     }
   },
   "evolution": {
-    "defect_frobenius": 296.0312947023059,
-    "first_order_bound": 2.960312947023059,
+    "defect_frobenius": 296.031294702,
+    "first_order_bound": 2.96031294702,
     "full_dim": 3,
-    "gram_frobenius": 7.38857961792959,
+    "gram_frobenius": 7.38857961793,
     "hermiticity_defect": 0.0,
     "label": "measured finite packet-basis diagnostic; not a certified enclosure",
     "leakage": 0.0,
-    "measured_map_gap": 0.44053817410743784,
-    "return_compressed": 0.49490065128024807,
-    "return_full": 0.3733731124267632,
-    "return_gap": 0.12152753885348488,
+    "measured_map_gap": 0.440538174107,
+    "return_compressed": 0.49490065128,
+    "return_full": 0.373373112427,
+    "return_gap": 0.121527538853,
     "time": 0.01,
     "window_dim": 2
   },
   "mutations": {
     "drop_higgs_constant": {
       "dropped": 0.0,
-      "kept": 119021053.32000001
+      "kept": 119021053.32
     },
     "drop_two_pi": {
-      "im": 0.5641702486624991,
+      "im": 0.564170248662,
       "re": 0.0
     },
     "drop_yukawa_adjoint": {
@@ -63,14 +63,14 @@
       "re": 5.076730859768365
     },
     "flip_nonabelian_sign": {
-      "im": -3.544786217144068,
+      "im": -3.54478621714,
       "re": 0.0
     },
     "remove_higgs_cross": {
       "im": 0.0,
       "re": 0.0
     },
-    "reverse_transfer": 7.016000284088793
+    "reverse_transfer": 7.01600028409
   },
   "non_claims": [
     "no continuum or gauge-reduction claim",
@@ -87,10 +87,10 @@
       "im": -0.5,
       "re": 1.75
     },
-    "ordered_product_difference": 2.0000000000000004,
+    "ordered_product_difference": 2.0,
     "two_quanta": {
-      "im": -1.0000000000000002,
-      "re": 3.500000000000001
+      "im": -1.0,
+      "re": 3.5
     },
     "vacuum_terms": 0
   },

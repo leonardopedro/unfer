@@ -14,6 +14,7 @@
 
 pub mod archive;
 pub mod board;
+pub mod channel_contracts;
 pub mod codes;
 pub mod codes_consts;
 pub mod coop;
@@ -38,6 +39,7 @@ pub mod types;
 
 pub use archive::*;
 pub use board::*;
+pub use channel_contracts::*;
 pub use codes::*;
 pub use coop::*;
 pub use distributed::*;

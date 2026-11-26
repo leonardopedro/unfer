@@ -26,10 +26,29 @@ spin frame (left-handed is the exact negative of right-handed, both vanish at
 the scalar-gradient `½|k|²`. The outer lift is checked on 0/1/2 quanta
 (`dΓ(cI): 0, c, 2c`) and `dΓ(B²) ≠ dΓ(B)²` on a two-quantum state.
 The independent numerical check is a 3D/convolution quadrature, not a
-coordinate-space integral of the full action. **Not delivered:** the cadabra2 module and its
-strict-verifier registration (`cadabra2-cli` is absent on this host), the full
-1,241-expression momentum routing, and the complete-operator/gauge-reduction
-work. No symbolic pass is claimed.
+coordinate-space integral of the full action.
+
+**Delivered 2026-11-25.** (i) The cadabra2 module `docs/sm_momentum_nested.cdb`
+(8 CHECK rows, all `(0 = ok)`, registered in `scripts/check-sm-symbolic` and run
+with Cadabra2 2.5.15 through `nix develop .#symbolic`): it pins the two Fourier
+maps (`p = −i∂` has the *real* symbol `2πk`; `q` has `(i/2π)∂_k`), their
+commutator, the second-derivative product rule (the `wall` regression), the
+retained `λv⁴/4` constant with `V(s=vev²)=0`, and the antisymmetric magnetic
+weight `½ΣF² = Σ_{a<b}F²`. (ii) The full 1,241-expression routing:
+`nested_fock_algebra/src/sm_dictionary.rs` parses every exported row and
+cross-checks it between the coordinate and momentum representations of the E1
+collective-coordinate operator, with `docs/fixtures/sm_dictionary_kernel.json`
+and `fock_sirk/tests/sm_dictionary_validation.rs`. All 1,241 rows agree to
+roundoff (worst relative gap 2.3e-13, `wall`); a mutated `2π` is detected on
+exactly the 232 rows that carry a jet momentum.
+
+**Scope of that pass.** The dictionary kernel is the collective-coordinate
+operator (`p_m = −i∂/∂q_m` on the 163 independent coordinates), not a 3D
+field-mode kernel; it therefore does not certify the per-mode convolution
+routing of `sm_momentum.rs`, and the Cadabra rows certify conventions rather
+than the 1,241 integrals (the module does not integrate). **Still outstanding:**
+the complete-operator/gauge-reduction work and a finite-window numerical
+acceptance of the full operator.
 
 1. **Declare conventions in the module.** Write the new calculation alongside
    `sm_full_nested.cdb`. Use $\hat f(k)=\int e^{-2\pi i k\cdot x}f(x)\,d^3x$,

@@ -55,7 +55,7 @@
         "dimension": 1
       },
       "degree_1": {
-        "basis_sha256": "8e170239ab65b509c796695eff44207a6e5e960ff567c59a0b9a58d4fcdbc453",
+        "basis_sha256": "4b7ebfd8a7d4ab490b4255c38d5df1970818463d97da34a916e8b03870b21cde",
         "dimension": 19
       },
       "degree_2": {
@@ -360,7 +360,7 @@
       "field_level": true,
       "finite_quotient": true,
       "kind": "jet- and matter-block-graded finite harmonic representatives (ker Q_n intersect ker Q_{n+1}*)",
-      "representative_basis_sha256": "995e0ffae3a3cebad0a1aa23175110c3507be19ee5a8904294438eac926b80b2"
+      "representative_basis_sha256": "314192e63380f8a2696033c02f81d4d65a2fa2933c8f1f569aee16b0f36dcafe"
     },
     "state_basis_sha256": "afd802d6c3ff0549b299dd95d0d0ad0fe8601f45b564304f3003bf8133014538",
     "state_count": 36207,

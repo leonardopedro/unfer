@@ -13,6 +13,7 @@
 //! the error column is a measured defect/leakage diagnostic, not a verified
 //! enclosure. See `docs/SM_FULL_IMPLEMENTATION.md` for the ledger entry.
 
+use fock_sirk::sm_bridge::reported_residual;
 use nalgebra::{DMatrix, DVector};
 use nested_fock_algebra::exact_inner::{
     ActionLimits, InnerExpr, JointInnerBasis, JointOuterBasis, NestedVector,
@@ -50,6 +51,24 @@ fn packet(center: [f64; 3], width: f64) -> MomentumPacket {
 
 fn complex_json(x: C) -> Value {
     json!({"re": x.re, "im": x.im})
+}
+
+/// A measured complex element at twelve significant digits per component.
+///
+/// Declared inputs (`parameters`, `packets`, `conventions.two_pi`) and the
+/// `inner_constant` keep full precision: they are quoted, not measured. Every
+/// evaluator output goes through `reported_residual` so a rebuild on another
+/// toolchain does not churn the record in its last digits.
+fn measured_complex_json(x: C) -> Value {
+    json!({
+        "re": reported_residual(x.re),
+        "im": reported_residual(x.im),
+    })
+}
+
+/// A measured real scalar at twelve significant digits.
+fn measured(x: f64) -> f64 {
+    reported_residual(x)
 }
 
 /// `S^{-1/2}` for a Hermitian positive-definite Gram matrix, via eigendecomposition
@@ -95,28 +114,32 @@ fn main() {
 
     // Mutation controls: each flips exactly one declared convention.
     let mutations = json!({
-        "drop_two_pi": complex_json(gauge_magnetic_cross(
+        "drop_two_pi": measured_complex_json(gauge_magnetic_cross(
             &bra, &ket, &bg, &sm,
             &Conventions { two_pi: 1.0, ..conv },
         )),
-        "flip_nonabelian_sign": complex_json(gauge_magnetic_cross(
+        "flip_nonabelian_sign": measured_complex_json(gauge_magnetic_cross(
             &bra, &ket, &bg, &sm,
             &Conventions { nonabelian_sign: -1.0, ..conv },
         )),
-        "remove_higgs_cross": complex_json(higgs_gauge_cross(
+        "remove_higgs_cross": measured_complex_json(higgs_gauge_cross(
             &higgs_bra, &higgs_ket, &weak_bg, false, &sm,
             &Conventions { include_higgs_cross: false, ..conv },
         )),
-        "reverse_transfer": transfer_integral(
+        "reverse_transfer": measured(transfer_integral(
             &packets[0], &packets[2], &packets[1],
             &Conventions { transfer_sign: -1.0, ..conv },
-        ),
+        )),
+        // Raw, not `measured_complex_json`: `sm_momentum_validation` pins this
+        // control at 1e-12 absolute, which is stricter than twelve significant
+        // digits (rounding moves it by ~1.6e-12), so rounding it would weaken
+        // a check rather than normalize a record.
         "drop_yukawa_adjoint": complex_json(yukawa_transfer(
             sm.yu[0][0], &packets[2], &packets[0], &packets[1],
             &Conventions { yukawa_adjoint: true, ..conv },
         )),
         "drop_higgs_constant": {
-            "kept": higgs_potential_constant(&sm),
+            "kept": measured(higgs_potential_constant(&sm)),
             "dropped": 0.0,
         },
     });
@@ -251,38 +274,38 @@ fn main() {
             "center": p.center, "width": p.width,
         })).collect::<Vec<_>>(),
         "elements": {
-            "magnetic_cross": complex_json(magnetic),
-            "gauge_higgs_cross": complex_json(higgs),
-            "yukawa_transfer": complex_json(yukawa),
-            "transfer_integral": transfer,
-            "higgs_potential_constant": higgs_potential_constant(&sm),
-            "dirac_right": complex_json(dirac_right),
-            "dirac_left": complex_json(dirac_left),
-            "transverse_curl": transverse,
-            "longitudinal_curl": longitudinal,
-            "scalar_gradient": scalar_gradient_symbol(k),
+            "magnetic_cross": measured_complex_json(magnetic),
+            "gauge_higgs_cross": measured_complex_json(higgs),
+            "yukawa_transfer": measured_complex_json(yukawa),
+            "transfer_integral": measured(transfer),
+            "higgs_potential_constant": measured(higgs_potential_constant(&sm)),
+            "dirac_right": measured_complex_json(dirac_right),
+            "dirac_left": measured_complex_json(dirac_left),
+            "transverse_curl": measured(transverse),
+            "longitudinal_curl": measured(longitudinal),
+            "scalar_gradient": measured(scalar_gradient_symbol(k)),
         },
         "outer_lift": {
             "inner_constant": complex_json(shift_c),
             "vacuum_terms": vacuum_image,
-            "one_quantum": complex_json(one_coefficient),
-            "two_quanta": complex_json(two_coefficient),
-            "ordered_product_difference": ordered_difference,
+            "one_quantum": measured_complex_json(one_coefficient),
+            "two_quanta": measured_complex_json(two_coefficient),
+            "ordered_product_difference": measured(ordered_difference),
         },
         "mutations": mutations,
         "evolution": {
             "time": time,
             "window_dim": 2,
             "full_dim": n,
-            "gram_frobenius": gram.norm(),
-            "hermiticity_defect": hermiticity_defect,
-            "return_full": return_full,
-            "return_compressed": return_compressed,
-            "return_gap": (return_full - return_compressed).abs(),
-            "leakage": leakage,
-            "defect_frobenius": defect,
-            "first_order_bound": leakage + time * defect * coefficients.norm(),
-            "measured_map_gap": measured_gap,
+            "gram_frobenius": measured(gram.norm()),
+            "hermiticity_defect": measured(hermiticity_defect),
+            "return_full": measured(return_full),
+            "return_compressed": measured(return_compressed),
+            "return_gap": measured((return_full - return_compressed).abs()),
+            "leakage": measured(leakage),
+            "defect_frobenius": measured(defect),
+            "first_order_bound": measured(leakage + time * defect * coefficients.norm()),
+            "measured_map_gap": measured(measured_gap),
             "label": "measured finite packet-basis diagnostic; not a certified enclosure",
         },
         "non_claims": [

@@ -45,6 +45,10 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+use unfer_protocol::channel_contracts::{
+    CONSENSUS_LEDGER_SCHEMA, ChannelContract, ContractError, MAX_SUBMISSION_JOURNAL_BYTES,
+    OrderingScope, RetryScope, consensus_live_submission_contract,
+};
 use unfer_protocol::distributed::{Command, ReplicatedValue};
 use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
@@ -55,10 +59,10 @@ use crate::jobs::{Fence, JOB_COMMAND_SCHEMA, JobCommand, JobQueue};
 /// D10: the schema a replicated ledger submission is read under. A command
 /// under any other schema is refused by name rather than applied as a
 /// neighbour.
-pub const LEDGER_TX_SCHEMA: u16 = 1;
+pub const LEDGER_TX_SCHEMA: u16 = CONSENSUS_LEDGER_SCHEMA;
 
 const LIVE_NODES: usize = 2;
-const MAX_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
+const MAX_JOURNAL_BYTES: usize = MAX_SUBMISSION_JOURNAL_BYTES as usize;
 
 /// How often a replica offers its log to a peer that is behind. An idle cluster
 /// has no new decision to carry the offer, which is why this is a timer: a
@@ -69,6 +73,35 @@ const CATCH_UP_INTERVAL: Duration = Duration::from_millis(200);
 /// Decisions per push. Bounded so one catch-up frame stays well inside the
 /// transport's frame limit, whatever the size of the log behind it.
 const CATCH_UP_BATCH: u64 = 256;
+
+/// D19: the live submission path as a checked contract, not prose beside the
+/// client and server. The protocol crate owns the contract so the bridge's
+/// Austral probe and this path cannot drift into two descriptions.
+pub fn live_submission_contract() -> Result<ChannelContract, ContractError> {
+    consensus_live_submission_contract()
+}
+
+/// Refuse to start or submit unless the live path still supports the marker the
+/// contract claims. This is where the vocabulary becomes a production check.
+fn check_live_submission_contract() -> Result<(), String> {
+    let contract = live_submission_contract()
+        .map_err(|error| format!("live submission contract is invalid: {error}"))?;
+    check_submission_contract(&contract)
+}
+
+/// The marker gate itself, separate from the one contract it reads. Keeping it
+/// callable with an arbitrary contract lets the tests show that a contract
+/// without the ordering or delivery field is actually refused, rather than
+/// relying on the live constant always being well formed.
+fn check_submission_contract(contract: &ChannelContract) -> Result<(), String> {
+    contract
+        .ordered_channel()
+        .map_err(|error| format!("live submission is not ordered: {error}"))?;
+    contract
+        .exactly_once_channel()
+        .map_err(|error| format!("live submission is not exactly-once: {error}"))?;
+    Ok(())
+}
 
 /// Durable ledger snapshot: the committed bank plus this node's outbox.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -110,6 +143,7 @@ struct LedgerFile {
     path: PathBuf,
 }
 
+// D19-HOOK: H10 (storage: atomic ledger snapshot)
 impl LedgerFile {
     fn new(state_dir: &Path) -> Self {
         Self {
@@ -1367,6 +1401,7 @@ where
                 + '_,
         >,
     > {
+        // D19-HOOK: H01 (send: submission forwarded to the consensus handler)
         self.0.submit(submission)
     }
 
@@ -1375,6 +1410,7 @@ where
         decisions: Vec<Decision<ReplicatedValue>>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = rust_quepaxa::Result<()>> + Send + '_>>
     {
+        // D19-HOOK: H11 (receive: peer decisions applied by the handler)
         self.0.receive_decisions(decisions)
     }
 }
@@ -1387,6 +1423,7 @@ where
 /// send the decisions behind it through the transport's own
 /// `InformDecisions` request, which the peer's recorder and state machine apply
 /// in slot order exactly as they would a live decision.
+// D19-HOOK: H02 (retry: catch-up push to a peer behind the coalition)
 async fn catch_up_loop<V, C, S, E>(
     self_id: ReplicaId,
     peers: Vec<C>,
@@ -1403,6 +1440,7 @@ async fn catch_up_loop<V, C, S, E>(
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return,
+            // D19-HOOK: H03 (timer: periodic catch-up probe)
             _ = tokio::time::sleep(CATCH_UP_INTERVAL) => {}
         }
         let head = ledger.committed();
@@ -1498,6 +1536,7 @@ async fn start_replica(
     state_dir: Option<StateDirLock>,
     metrics: Arc<NetworkMetrics>,
 ) -> Result<RunningNode, String> {
+    check_live_submission_contract()?;
     let deployment = &config.deployment;
     let index = deployment.index_of(config.replica)?;
     let tls = deployment.node_tls(&config.identity)?;
@@ -1521,6 +1560,7 @@ async fn start_replica(
         .members
         .iter()
         .map(|recorder| {
+            // D19-HOOK: H04 (send: recorder RPC client)
             TlsRecorderClient::new(
                 config.replica,
                 recorder.replica,
@@ -1551,6 +1591,7 @@ async fn start_replica(
     let consensus = NetworkConsensusHandler::new(
         runtime_config,
         recorder_clients.clone(),
+        // D19-HOOK: H05 (storage: consensus runtime snapshot)
         FileRuntimeStore::new(
             node_dir.join("runtime.snapshot"),
             PostcardRuntimeCodec::default(),
@@ -1574,6 +1615,7 @@ async fn start_replica(
     let consensus = Arc::new(consensus);
     let submissions = DeduplicatingSubmissionHandler::new(
         SharedSubmissionHandler(Arc::clone(&consensus)),
+        // D19-HOOK: H06 (storage: durable submission journal)
         FileSubmissionJournal::open(node_dir.join("submission-journal.bin"), MAX_JOURNAL_BYTES)
             .map_err(|error| {
                 format!(
@@ -1587,12 +1629,14 @@ async fn start_replica(
             format!("replica {} recorder config: {error}", config.replica.get())
         })?,
         Arc::new(AllowAllAvailability),
+        // D19-HOOK: H07 (storage: recorder snapshot)
         FileRecorderStore::new(
             node_dir.join("recorder.snapshot"),
             PostcardRecorderCodec::default(),
         ),
     )
     .map_err(|error| format!("replica {} recorder store: {error}", config.replica.get()))?;
+    // D19-HOOK: H08 (receive: mutual-TLS node server)
     let server = NetworkNodeServer::bind(
         deployment.members[index].address,
         deployment.deployment,
@@ -1661,7 +1705,9 @@ pub fn submit_client(
     config: &SubmitConfig,
     address: SocketAddr,
 ) -> Result<TlsSubmitClient, String> {
+    check_live_submission_contract()?;
     let tls = config.tls()?;
+    // D19-HOOK: H09 (send: mutual-TLS submission client)
     Ok(TlsSubmitClient::new(
         config.client_id,
         config.deployment.deployment,
@@ -1780,6 +1826,9 @@ impl NetworkCluster {
         state_dir: &Path,
         addresses: Vec<SocketAddr>,
     ) -> rust_quepaxa::Result<Self> {
+        // The harness is a caller too: check the same marker as the process
+        // path before building a direct client.
+        check_live_submission_contract().map_err(storage_error)?;
         let deployment =
             Self::deployment(identities.clone(), addresses.clone()).map_err(storage_error)?;
         deployment.validate().map_err(storage_error)?;
@@ -1814,6 +1863,7 @@ impl NetworkCluster {
         let tls = MutualTlsConfigs::new(&client.identity, deployment.roots()).map_err(|error| {
             rust_quepaxa::QuePaxaError::TransportError(format!("client TLS setup failed: {error}"))
         })?;
+        // D19-HOOK: H15 (send: in-process harness submission client)
         let submit_client = TlsSubmitClient::new(
             client.client_id,
             deployment.deployment,
@@ -1836,9 +1886,11 @@ impl NetworkCluster {
                 // commit to be applicable.
                 loop {
                     let request_id = pump_ledger.next_request_id();
+                    // D19-HOOK: H16 (send: harness retry with a fresh request id)
                     match submit_client.submit(request_id, vec![value.clone()]).await {
                         Ok(_) => break,
                         Err(error) => {
+                            // D19-HOOK: H17 (timer: harness retry backoff)
                             tokio::time::sleep(Duration::from_millis(50)).await;
                             eprintln!("quepaxa submit retried for id {id}: {error:?}");
                         }
@@ -1910,7 +1962,62 @@ const HARNESS_CLIENT_ID: [u8; 16] = [42u8; 16];
 mod tests {
     use super::*;
     use crate::signing::Keypair;
+    use unfer_protocol::channel_contracts::{
+        Authentication, CapWitness, DecisionKind, Delivery, DuplicateScope, FaultModel, Location,
+        Loss, Repo, SchemaId, UsageCap,
+    };
     use unfer_protocol::{IdentityOp, IdentityOpKind};
+
+    #[test]
+    fn the_live_submission_contract_is_ordered_and_exactly_once() {
+        let contract = live_submission_contract().expect("the live path satisfies its contract");
+        assert_eq!(contract.ordering(), OrderingScope::TotalOrder);
+        assert_eq!(contract.retries(), RetryScope::AcrossReconnects);
+        assert!(contract.ordered_channel().is_ok());
+        assert!(contract.exactly_once_channel().is_ok());
+        assert_eq!(
+            contract.delivery().suppression().map(|s| s.scope()),
+            Some(DuplicateScope::RequestIdentity)
+        );
+    }
+
+    /// The gate must fail on a contract that does not carry the field it asks
+    /// for. Without this, the live check only proves that one hard-coded
+    /// contract is well formed, not that the marker gate is load-bearing.
+    #[test]
+    fn the_marker_gate_refuses_a_contract_without_its_markers() {
+        let contract = |ordering, delivery| {
+            let producer = Location::new(Repo::Unfer, "producer.rs", "submit").unwrap();
+            let consumer = Location::new(Repo::Unfer, "consumer.rs", "apply").unwrap();
+            let schema = SchemaId::new("test.tx", 1).unwrap();
+            let capacity = UsageCap::new("journal bytes", 1024, CapWitness::StaticLayout).unwrap();
+            ChannelContract::new(
+                producer,
+                consumer,
+                schema,
+                ordering,
+                RetryScope::AcrossReconnects,
+                Authentication::MutualTls,
+                FaultModel::new(Loss::Possible, true),
+                capacity,
+                delivery,
+                None,
+                DecisionKind::Monotone,
+            )
+            .unwrap()
+        };
+
+        let per_connection = contract(OrderingScope::PerConnection, Delivery::at_least_once());
+        let error = check_submission_contract(&per_connection).unwrap_err();
+        assert!(error.contains("not ordered"), "unexpected refusal: {error}");
+
+        let at_least_once = contract(OrderingScope::TotalOrder, Delivery::at_least_once());
+        let error = check_submission_contract(&at_least_once).unwrap_err();
+        assert!(
+            error.contains("not exactly-once"),
+            "unexpected refusal: {error}"
+        );
+    }
 
     fn tx(label: u64) -> ConsensusTransaction {
         let did = Keypair::generate();

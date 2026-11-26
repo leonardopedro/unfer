@@ -12,7 +12,7 @@
 //! window. They are not a continuum physical quotient and are not promoted to a
 //! physical-sector identification.
 
-use crate::sm_bridge::canonical_json_sha256;
+use crate::sm_bridge::{canonical_json_sha256, reported_residual};
 use nalgebra::{DMatrix, linalg::SVD};
 use nested_fock_algebra::exact_inner::{
     ActionLimits, InnerExpr, JointInnerBasis as B, JointOuterBasis as O, NestedVector,
@@ -253,15 +253,123 @@ fn entries_json(entries: &[(usize, C)]) -> Vec<Value> {
         .collect()
 }
 
-/// A deterministic, sparse nullspace basis from the reduced row-echelon form of
-/// `Q_degree`. For each free column `f` the basis vector is
-/// `e_f - sum_i R[i,f] e_{pivot_i}`. Every such vector is closed; at the top
-/// degree (`Q_{n+1}=0`) this is the harmonic representative space.
-fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize>) {
+/// A deterministic, sparse kernel basis from the reduced row-echelon form of
+/// `matrix`. For each free column `f` the basis vector is
+/// `e_f - sum_i R[i,f] e_{pivot_i}`. The RREF is unique, so the basis depends on
+/// the matrix alone — unlike singular vectors, which are defined only up to
+/// rotations inside a degenerate kernel. A right kernel of `Q_degree` is closed;
+/// at the top degree (`Q_{n+1}=0`) it is the harmonic representative space, and
+/// on the stacked `[Q_k ; Q_{k-1}^†]` it is `ker Q_k ∩ ker Q_{k-1}^†`.
+///
+/// Returns the pivot columns and `(free_column, entries)` for each basis vector.
+pub(crate) fn rref_kernel(
+    matrix: &DMatrix<C>,
+    tolerance: f64,
+) -> (Vec<usize>, Vec<(usize, Vec<(usize, C)>)>) {
     let mut reduced = matrix.clone();
     let rows = reduced.nrows();
     let columns = reduced.ncols();
     let mut pivots = Vec::new();
+    let mut pivot_row = 0;
+    for column in 0..columns {
+        if pivot_row >= rows {
+            break;
+        }
+        let mut best = pivot_row;
+        let mut best_norm = 0.0_f64;
+        for row in pivot_row..rows {
+            let norm = reduced[(row, column)].norm();
+            if norm > best_norm {
+                best_norm = norm;
+                best = row;
+            }
+        }
+        if best_norm <= tolerance {
+            continue;
+        }
+        if best != pivot_row {
+            reduced.swap_rows(best, pivot_row);
+        }
+        let pivot = reduced[(pivot_row, column)];
+        for c in column..columns {
+            reduced[(pivot_row, c)] /= pivot;
+        }
+        for row in 0..rows {
+            if row == pivot_row {
+                continue;
+            }
+            let factor = reduced[(row, column)];
+            if factor.norm() <= tolerance {
+                reduced[(row, column)] = C::new(0.0, 0.0);
+                continue;
+            }
+            for c in column..columns {
+                let pivot_value = reduced[(pivot_row, c)];
+                reduced[(row, c)] -= factor * pivot_value;
+            }
+            reduced[(row, column)] = C::new(0.0, 0.0);
+        }
+        pivots.push(column);
+        pivot_row += 1;
+    }
+
+    let mut kernel = Vec::with_capacity(columns - pivots.len());
+    for free in 0..columns {
+        if pivots.binary_search(&free).is_ok() {
+            continue;
+        }
+        let mut entries = vec![(free, C::new(1.0, 0.0))];
+        for (i, &pivot) in pivots.iter().enumerate() {
+            let value = -reduced[(i, free)];
+            if value.norm() > 1e-12 {
+                entries.push((pivot, value));
+            }
+        }
+        entries.sort_by_key(|(index, _)| *index);
+        kernel.push((free, entries));
+    }
+    (pivots, kernel)
+}
+
+/// Canonical hash of the right kernel of `Q_degree`.
+fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize>) {
+    let (pivots, kernel) = rref_kernel(matrix, TOLERANCE);
+    let dimension = kernel.len();
+    let vector_hashes: Vec<String> = kernel
+        .iter()
+        .map(|(free, entries)| {
+            canonical_json_sha256(&json!({
+                "free": free,
+                "entries": entries_json(entries),
+            }))
+        })
+        .collect();
+    let basis_hash = canonical_json_sha256(&json!({
+        "degree": degree,
+        "dimension": dimension,
+        "vectors": vector_hashes,
+    }));
+    (dimension, basis_hash, pivots)
+}
+
+/// A deterministic hash of the left nullspace of `Q_2` (the harmonic `H^1`
+/// representatives). `Q_1` vanishes on this window, so `ker Q_2^*` is the
+/// harmonic space.
+///
+/// The basis is read off the augmented reduced row-echelon form `[Q_2 | I]`,
+/// not from the trailing left singular vectors: inside a degenerate nullspace
+/// the singular vectors are defined only up to a rotation, so hashing them pins
+/// an arbitrary basis that does not reproduce across toolchains or platforms.
+/// The zero rows of the reduced left block carry the row combinations that
+/// annihilate the row space, and the augmented RREF is unique, so the basis (and
+/// hence the hash) is a property of the matrix alone. Tracking the transform
+/// keeps the work on the small `rows x rows` factor instead of eliminating over
+/// the adjoint.
+fn left_nullspace(matrix: &DMatrix<C>) -> (usize, String) {
+    let mut reduced = matrix.clone();
+    let rows = reduced.nrows();
+    let columns = reduced.ncols();
+    let mut transform = DMatrix::<C>::identity(rows, rows);
     let mut pivot_row = 0;
     for column in 0..columns {
         if pivot_row >= rows {
@@ -281,10 +389,14 @@ fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize
         }
         if best != pivot_row {
             reduced.swap_rows(best, pivot_row);
+            transform.swap_rows(best, pivot_row);
         }
         let pivot = reduced[(pivot_row, column)];
         for c in column..columns {
             reduced[(pivot_row, c)] /= pivot;
+        }
+        for c in 0..rows {
+            transform[(pivot_row, c)] /= pivot;
         }
         for row in 0..rows {
             if row == pivot_row {
@@ -299,57 +411,26 @@ fn rref_nullspace(matrix: &DMatrix<C>, degree: u32) -> (usize, String, Vec<usize
                 let pivot_value = reduced[(pivot_row, c)];
                 reduced[(row, c)] -= factor * pivot_value;
             }
+            for c in 0..rows {
+                let pivot_value = transform[(pivot_row, c)];
+                transform[(row, c)] -= factor * pivot_value;
+            }
             reduced[(row, column)] = C::new(0.0, 0.0);
         }
-        pivots.push(column);
         pivot_row += 1;
     }
 
-    let dimension = columns - pivots.len();
-    let mut vector_hashes = Vec::with_capacity(dimension);
-    for free in 0..columns {
-        if pivots.binary_search(&free).is_ok() {
-            continue;
-        }
-        let mut entries = vec![(free, C::new(1.0, 0.0))];
-        for (i, &pivot) in pivots.iter().enumerate() {
-            let value = -reduced[(i, free)];
-            if value.norm() > 1e-12 {
-                entries.push((pivot, value));
-            }
-        }
-        entries.sort_by_key(|(index, _)| *index);
-        vector_hashes.push(canonical_json_sha256(&json!({
-            "free": free,
-            "entries": entries_json(&entries),
-        })));
-    }
-    let basis_hash = canonical_json_sha256(&json!({
-        "degree": degree,
-        "dimension": dimension,
-        "vectors": vector_hashes,
-    }));
-    (dimension, basis_hash, pivots)
-}
-
-/// A deterministic hash of the left nullspace of `Q_2` (the harmonic `H^1`
-/// representatives). `Q_1` vanishes on this window, so `ker Q_2^*` is the
-/// harmonic space.
-fn left_nullspace(matrix: &DMatrix<C>) -> (usize, String) {
-    let svd = SVD::new(matrix.clone(), true, false);
-    let rank = svd
-        .singular_values
-        .iter()
-        .filter(|value| **value > TOLERANCE)
-        .count();
-    let rows = matrix.nrows();
-    let dimension = rows.saturating_sub(rank);
-    let u = svd.u.expect("left singular vectors requested");
+    let dimension = rows - pivot_row;
     let mut vectors = Vec::with_capacity(dimension);
-    for column in rank..rows {
+    for row in pivot_row..rows {
+        let scale = (0..rows)
+            .map(|c| transform[(row, c)].norm_sqr())
+            .sum::<f64>()
+            .sqrt();
+        let scale = if scale > 0.0 { scale } else { 1.0 };
         let vector: Vec<[f64; 2]> = (0..rows)
-            .map(|row| {
-                let value = u[(row, column)];
+            .map(|c| {
+                let value = transform[(row, c)] / scale;
                 [round12(value.re), round12(value.im)]
             })
             .collect();
@@ -809,7 +890,7 @@ fn window_record(measurement: WindowMeasurement, include_jets: bool) -> Value {
         "matter_state_dimensions": measurement.matter_dims,
         "matter_block_ranks": measurement.matter_block_ranks,
         "gauge_singlet_kernel_dimension": measurement.gauge_singlet_kernel_dimension,
-        "q_squared_residual": measurement.q_squared,
+        "q_squared_residual": reported_residual(measurement.q_squared),
         "tolerance": TOLERANCE,
         "state_count": measurement.state_count,
         "state_basis_sha256": measurement.basis_hash,

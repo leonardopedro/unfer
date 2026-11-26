@@ -409,6 +409,7 @@ impl ConsensusNode {
 
     pub fn submit_tracked(&self, tx: ConsensusTransaction) -> Result<SubmissionId, Diagnostic> {
         self.verify_ingress(&tx)?;
+        // D19-HOOK: H12 (send: admitted request handed to the ordered engine)
         self.engine.submit(tx).map(SubmissionId)
     }
 

@@ -12,6 +12,19 @@ binaries and the licence boundary is unaffected. Same pattern as the Why3 (LGPL)
 seam. Keep it that way — vendoring the engine would change the licence of
 everything downstream.
 
+**Getting the engine without the CUDA closure.** The default dev shell carries
+`pkgsUnstable.cadabra2` but also the CUDA 12.6 toolkit (~10 GiB). For symbolic
+work use the small shell added 2026-11-25:
+
+```text
+nix develop .#symbolic --command cadabra2-cli -q -n docs/sm_momentum_nested.cdb
+nix develop .#symbolic --command ./scripts/check-sm-symbolic
+```
+
+It provides the same pinned Cadabra2 plus the GCC-15 `libstdc++` that
+cadabra2 2.5.x needs at runtime (`GLIBCXX_3.4.32`). Both shells resolve the same
+store path, so there is no version skew between them.
+
 **Engine-dependent tests skip when `cadabra2-cli` is absent.** That is the
 Cadabra2 skip pattern, also used by the GPU suites in `delta_algebra`. A skip is
 not a pass: a green run on a machine without the engine has verified nothing
@@ -193,6 +206,7 @@ the project's goals. Evidence lives in:
 | `ns_lagrangian_hamiltonian.cdb` | [VERIFY_NS_QG_FOURIER.md](VERIFY_NS_QG_FOURIER.md) |
 | `mass_gap_norm_residual.cdb` | [VERIFY_MASS_GAP_NORM_RESIDUAL.md](VERIFY_MASS_GAP_NORM_RESIDUAL.md) |
 | `ns_compressible_lagrangian.cdb`, `sm_gauge_fixed_hamiltonian.cdb` (2026-10-13) | the 2026-10-14 update in [CDB_MODULE_REVIEW.md](CDB_MODULE_REVIEW.md); numerical seam `fock_sirk/tests/{ns_compressible_lagrangian_validation,sm_gauge_fixed_validation,sm_higgs_mechanism_sirk}.rs` |
+| `sm_momentum_nested.cdb` (2026-11-25) | [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md) §Full-dictionary kernel; numerical seam `fock_sirk/tests/sm_dictionary_validation.rs` (1,241 rows). Certifies conventions only — it does not integrate. |
 
 Related: [NUMERICAL_VALIDATION_GUIDE.md](NUMERICAL_VALIDATION_GUIDE.md) for the
 numeric side, [ARCHITECTURE.md](ARCHITECTURE.md) for the crate map,

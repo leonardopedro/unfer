@@ -5,10 +5,12 @@
 //! Chevalley--Eilenberg cochain complex of the gauge Lie algebra in its adjoint
 //! representation, truncated at ghost degree three. `Q^2 = 0` follows from the
 //! Jacobi identity; the module measures the residual and computes the cohomology
-//! dimensions and harmonic representatives by SVD. The N10 bridge keeps its
-//! field-level `quotient_map` null and binds this finite result separately.
+//! dimensions by SVD and the harmonic representatives from a canonical
+//! reduced-row-echelon kernel basis. The N10 bridge keeps its field-level
+//! `quotient_map` null and binds this finite result separately.
 
-use crate::sm_bridge::canonical_json_sha256;
+use crate::sm_bridge::{canonical_json_sha256, reported_residual};
+use crate::sm_brst_fock::rref_kernel;
 use nalgebra::{DMatrix, linalg::SVD};
 use nested_fock_algebra::sm_constraints::{GENERATORS, structure};
 use num_complex::Complex64 as C;
@@ -196,10 +198,12 @@ fn spectral_rank(matrix: &DMatrix<C>, tolerance: f64) -> usize {
         .count()
 }
 
-/// Deterministic hash of an orthonormal basis for the harmonic representatives:
-/// the nullspace of `Q_k` stacked with the adjoint of `Q_{k-1}`. The entries are
-/// rounded before hashing, so the record binds the quotient map without
-/// depending on an arbitrary SVD phase at the last bit.
+/// Deterministic hash of a canonical basis for the harmonic representatives: the
+/// kernel of `Q_k` stacked with the adjoint of `Q_{k-1}`. The basis is read off
+/// the reduced row-echelon form of the stack, where the free columns give a
+/// unique sparse basis, so the record binds the quotient map without depending on
+/// an arbitrary SVD phase or on singular vectors that are only defined up to a
+/// rotation inside a degenerate kernel.
 fn harmonic_basis(
     degree: usize,
     q_prev: Option<&DMatrix<C>>,
@@ -239,24 +243,15 @@ fn harmonic_basis(
         }
         offset += block.nrows();
     }
-    let svd = SVD::new(stacked, true, true);
-    let rank = svd
-        .singular_values
-        .iter()
-        .filter(|value| **value > tolerance)
-        .count();
-    let nullity = columns.saturating_sub(rank);
+    let (_, kernel) = rref_kernel(&stacked, tolerance);
+    let nullity = kernel.len();
     let mut vectors = Vec::with_capacity(nullity);
-    if let Some(v_t) = svd.v_t {
-        for row in rank..columns {
-            let vector: Vec<[f64; 2]> = (0..columns)
-                .map(|column| {
-                    let value = v_t[(row, column)];
-                    [round12(value.re), round12(value.im)]
-                })
-                .collect();
-            vectors.push(vector);
+    for (_, entries) in kernel {
+        let mut vector = vec![[0.0_f64; 2]; columns];
+        for (index, value) in entries {
+            vector[index] = [round12(value.re), round12(value.im)];
         }
+        vectors.push(vector);
     }
     (
         nullity,
@@ -299,8 +294,8 @@ fn representation_closure(rho: &[DMatrix<C>]) -> f64 {
 }
 
 /// Build the finite adjoint CE quotient record. `status` is `measured`: the
-/// quotient is exact algebraically but the numerical rank and representative
-/// basis are SVD measurements, not interval enclosures.
+/// quotient is exact algebraically but the numerical rank and the representative
+/// basis are measurements, not interval enclosures.
 pub fn finite_brst_quotient() -> Value {
     let rho = adjoint_representation();
     let basis = Basis::new();
@@ -351,8 +346,8 @@ pub fn finite_brst_quotient() -> Value {
             "cochain_dimensions": dims,
             "differential_ranks": [r0, r1, r2],
             "cohomology_dimensions": cohomology,
-            "q_squared_residual": q_squared,
-            "representation_closure_residual": closure,
+            "q_squared_residual": reported_residual(q_squared),
+            "representation_closure_residual": reported_residual(closure),
             "tolerance": tolerance,
             "harmonic_representatives": {
                 "degree_0": h0_count,
@@ -379,7 +374,7 @@ pub fn finite_brst_quotient() -> Value {
             "The complex uses the twelve homogeneous gauge generators and the bare structure constants.",
             "The coefficient module is the adjoint representation, not the complete matter/Higgs Fock space.",
             "Cochains are truncated at ghost degree three; degrees 0..2 are reported.",
-            "Ranks and harmonic bases are SVD measurements with tolerance 1e-9, not interval enclosures.",
+            "Ranks are SVD measurements and the harmonic basis is the canonical reduced-row-echelon kernel basis, both at tolerance 1e-9, not interval enclosures.",
         ],
         "not_claimed": [
             "No field-theoretic BRST cohomology or gauge-invariant Hilbert space.",

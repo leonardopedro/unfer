@@ -50,6 +50,17 @@ The operator keeps the full nonnegative square including `λv⁴/4`, forms the
 | `docs/fixtures/phi4_momentum_mehler.json` | `9b1e9c15ccbb53c876a4818f8d2898d8faec5f26c54d0664406cbcc9912d15bb` |
 | `docs/fixtures/phi4_momentum_sirk_sweep.json` | `92625892a8d4288e141f6f50716a6340f390f132e1cef29d424299686dae31d2` |
 
+The whole record comes from that one run: `source_revision.git_head` and the
+digest above are the run's own. The record predates the twelve-digit reporting
+now in the tree: `6f0d9c6` routes `AmplitudeBound::to_json` through
+`sm_bridge::reported_residual`, and `ea651ed` does not, so this record's
+`responses.cells.*.amplitude_defect` block is still stored at full precision and
+the next regeneration rounds those seven measured fields per cell. Two field
+classes are machine- rather than model-dependent and move between runs:
+`runtime_ms` / `peak_rss_kb`, and the solver diagnostics already at the `1e-16`
+floor (`hermiticity_defect`, `orthogonality_defect`), whose *relative* spread is
+large while the absolute defect stays at rounding noise.
+
 ## 3. Replay
 
 ```bash
@@ -422,9 +433,11 @@ Measured with `fock_sirk/examples/phi4_momentum_parallel_probe.rs`:
 
 The third run is after the worker-count helpers were factored into
 `requested_threads`/`available_threads`; the probability it reports is the
-same `0.9800015102784486` the record stores for `C = 20`, which is the
+same `0.9800015102784486` that record stored for `C = 20`, which is the
 end-to-end check that the split really is order-preserving and not merely
-accurate.
+accurate. (The checked-in record at `ea651ed` stores `0.9800015102784502` for
+that cell — the same value to 13 digits, the remainder being Krylov accumulation
+order rather than the map operations, which are bit-identical by construction.)
 
 So the action parallelisation alone is a **1.5× matvec and a 1.00× sweep** (the
 solve column predates §5.6's fixes). The matvec is not the binding cost at this
