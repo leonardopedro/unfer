@@ -28,7 +28,7 @@ separate operator development in §4.
 |---|---|
 | Ordered action at unit widths, $\lambda=v=1$ | Compare all three columns in the eleven-mode Mehler table using the physical Gram metric. Mean $17/8$, variance $553/32$, seed tail squared $9/2$. The independent-jet comparison has the same mean but variance $145/32$ and lacks the $\mathrm{He}_2(s)\sum_j\mathrm{He}_2(k_j)$ coupling. |
 | Rank two, degree-two even window, physical shifts $10,5$, $t=0.01$ | The SIRK return is $0.9978594340$, the dense same-window reference $0.9987243519$, and the $C=12$ reference $0.9982985830$. Compare the last with the full-orbit analytic interval $[319447/320000,39999/40000]$. Record the raw compressed discrepancy and leakage separately. |
-| Independent cutoff and rank sweeps at $t=0.05$ | At fixed rank two the reported tail falls from about $1.79$ to $0.17$ over $C=4$ to $26$. At $C=8$ the suite attains ranks $2,4,6$. These observations do not bound the maximum error for all cutoffs, ranks or times. Forward products are a measured same-window comparison. |
+| Independent cutoff and rank sweeps at $t=0.05$ | At fixed rank two the reported tail falls from about $1.79$ to $0.13$ over $C=4$ to $28$. At $C=8$ the suite attains ranks $2,4,6$. These observations do not bound the maximum error for all cutoffs, ranks or times. Forward products are a measured same-window comparison. |
 | Response to coupling or packet width at $C=8,m=4$ | Dense-window differences are $0.00161315$ for $\lambda:1\to1.1$ and $0.05616051$ for momentum width $1\to1.5$. The identical-cell difference is zero. The wider unit-coordinate seed represents a physically wider momentum packet. |
 | Absolute floor and parity | Check each sector against the unit fibre lower bound $7/64$ and record the odd–even splitting separately. Finite Ritz values above the floor are consistency checks. |
 
@@ -49,7 +49,7 @@ for different Hamiltonians.
 ## 3. Next fibre experiment — enclose a return response
 
 1. **Reproduce the baseline before changing the solver.** Replay the scalar unit tests,
-   the six momentum SIRK tests and the release evidence runner using the commands in the
+   the seven momentum SIRK tests and the release evidence runner using the commands in the
    replay record. Save source and fixture digests. Preserve the unit rational table,
    parity sectors, empty-vacuum action and $0,c,2c$ shifts as regression checks.
    [Evidence runner](../fock_sirk/examples/phi4_momentum_sirk.rs)

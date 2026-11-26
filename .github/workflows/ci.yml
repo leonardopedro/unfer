@@ -127,6 +127,65 @@ jobs:
         run: bash scripts/check-pcnl-gates --check-manifest
 
   # ---------------------------------------------------------------------------
+  # R13 per-push gate lane (X11).
+  #
+  # X10 above only proves the committed logs still exist and are cited. The
+  # scheduled lane reruns all of them weekly, which is too slow (and too late)
+  # to be the only numeric guard: a row that stopped reproducing would stay
+  # green on push for up to a week. This lane reruns the three cheapest rows
+  # (`--quick`: stream, pilot, readout-exact; 492 s of gate time on an idle
+  # machine, 1,410 s once while another job held it), so ordinary drift in the
+  # fixture or the summary format fails on the push that caused it. Slow rows
+  # remain the scheduled lane's job; `--quick` prints every row it skipped,
+  # so this lane can never be mistaken for the full sweep.
+  # ---------------------------------------------------------------------------
+  # The full gate sweep is the scheduled lane; a push gets the three canary
+  # rows only (reduced-length twins of stream/pilot/readout-exact; ~90 s of run
+  # time after the release build). They are a drift baseline, not a convergence
+  # verdict -- see the --quick note in `scripts/check-pcnl-gates`.
+  pcnl-quick-gates:
+    name: R13 canary rows (per-push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+      # Cargo loads every workspace member's manifest even for `-p pcnl`, and
+      # two members path-dep siblings: unfer_consensus -> ../../dynamic-arctic
+      # and fock_sirk -> ../../australVM/safestos/gpu (optional `avm-gpu`, but
+      # the manifest path must still resolve). Without both clones the build
+      # dies before compiling anything, exit 101 -- which is exactly how the
+      # first run of this job failed.
+      - name: checkout the two sibling path deps
+        run: |
+          git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+          # master, not main: australVM's only remote branch is `master`
+          git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - name: build the examples the quick rows run
+        run: cargo build --locked --release -p pcnl --example vector_regression --example vector_stream
+      # `--structure`: the logs are bitwise on the machine that recorded them and
+      # this runner is a different CPU/libm. Measured on this job: a 50-step Adam
+      # canary moved one RMSE by 0.1% and one `z2` by 4.7%, and a 100-step HMC
+      # canary moved R-hat 2.55 -> 1.92 (at 75 draws those diagnostics are noise
+      # and one accept/reject flip changes a count). What is portable is the shape:
+      # key sequence, `gate=`/`sample_space=` labels and finite numbers. Numeric
+      # reproduction stays `./scripts/check-pcnl-gates` on the recording machine.
+      - name: rerun the quick R13 canary rows
+        run: |
+          set +e
+          bash scripts/check-pcnl-gates --quick --structure > /tmp/canary.log 2>&1
+          status=$?
+          tail -60 /tmp/canary.log
+          if [ "$status" -ne 0 ]; then
+            # Job logs need repo admin rights; annotations are public, so a
+            # failure has to be readable from the annotations API.
+            grep -E '^(FAIL|      )' /tmp/canary.log | head -25 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit "$status"
+
+  # ---------------------------------------------------------------------------
   # X7: cross-repo integration.
   #
   # Every repo in this workspace passes its own CI against its own checkout, and

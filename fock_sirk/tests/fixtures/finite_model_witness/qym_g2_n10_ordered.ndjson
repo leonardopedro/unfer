@@ -1,0 +1,1 @@
+{"coupling":2,"cutoff":10,"even_dimension":581,"inertia_counts":[{"even":0,"odd":0,"shift":-10.25},{"even":1,"odd":0,"shift":-10.234375},{"even":1,"odd":0,"shift":-9.03125},{"even":1,"odd":1,"shift":-9.015625}],"odd_dimension":420,"physical":false,"schema":"qym-finite-reflection-counts/v1"}

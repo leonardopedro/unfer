@@ -41,7 +41,13 @@ sort_product(composed)
 substitute(composed, $ ann cre -> 1 + cre ann $, repeat=True)
 distribute(composed)
 collect_terms(composed)
-productdiff := @(composed) - hval kval cre ann - hval kval cre cre ann ann.
+# The scalars are Symbol, so they do not commute past ann/cre; Cadabra's
+# canonical form after sort_product places them to the RIGHT of the operators.
+# Build the target the same way and canonicalise it too, so the check compares
+# coefficient structure rather than two different orderings of the scalars.
+expected := hval kval cre ann + hval kval cre cre ann ann.
+sort_product(expected)
+productdiff := @(composed) - @(expected).
 distribute(productdiff)
 collect_terms(productdiff)
 print("CHECK 3 ENC dGamma(h)dGamma(k) includes a two-body term (expect 0):", productdiff)

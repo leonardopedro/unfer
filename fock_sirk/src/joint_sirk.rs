@@ -54,6 +54,12 @@ pub struct JointSirkOptions {
     /// Optional independently declared finite basis window. Tail action is
     /// measured against the full operator, including omitted basis labels.
     pub basis_window: Option<BTreeSet<JointOuterBasis>>,
+    /// Run the inner shift solves in coordinates of the cached window rather
+    /// than in the nested maps. Every operation keeps the map path's per-label
+    /// arithmetic and label order, so the result is bit-identical
+    /// (`docs/VERIFY_PHI4_MOMENTUM.md` §5.10); `false` keeps the map walk as
+    /// the reference implementation the pin test compares against.
+    pub dense_window_solve: bool,
 }
 
 impl Default for JointSirkOptions {
@@ -70,6 +76,7 @@ impl Default for JointSirkOptions {
             unit_norm_steps: true,
             occupation_cutoff: None,
             basis_window: None,
+            dense_window_solve: true,
         }
     }
 }
@@ -232,6 +239,172 @@ impl FiniteWindowAction {
         }
         Ok(out)
     }
+
+    /// Coordinates of `state` over `self.labels`. Identical to the vector
+    /// `projected` builds internally: one lookup per stored entry, so this is
+    /// the only label comparison the inner solve pays per vector.
+    fn coords(&self, state: &NestedVector) -> Result<Vec<C>, ActionError> {
+        let mut coordinates = vec![C::new(0.0, 0.0); self.labels.len()];
+        for (b, &a) in state {
+            coordinates[*self.indices.get(b).ok_or(ActionError::UnsupportedBasis)?] = a;
+        }
+        Ok(coordinates)
+    }
+
+    /// Inverse of `coords`, with the same component guard and the same
+    /// zero-dropping rule `projected` applies to its image.
+    fn from_coords(
+        &self,
+        coordinates: &[C],
+        limits: ActionLimits,
+    ) -> Result<NestedVector, ActionError> {
+        let mut out = NestedVector::new();
+        for (b, &a) in self.labels.iter().zip(coordinates) {
+            if !a.re.is_finite() || !a.im.is_finite() {
+                return Err(ActionError::NonFiniteAmplitude);
+            }
+            if a != C::new(0.0, 0.0) {
+                if out.len() >= limits.max_components {
+                    return Err(ActionError::ComponentLimit {
+                        limit: limits.max_components,
+                    });
+                }
+                out.insert(b.clone(), a);
+            }
+        }
+        Ok(out)
+    }
+
+    /// `P H P` as coordinates. This is the same `gemv` `projected` performs on
+    /// the same matrix, so the single entry point is bit-identical; it simply
+    /// keeps the result in coordinates instead of re-serialising a map.
+    fn image_coords(&self, coordinates: &[C], limits: ActionLimits) -> Result<Vec<C>, ActionError> {
+        if self.matrix.len() > limits.max_work {
+            return Err(ActionError::WorkLimit {
+                limit: limits.max_work,
+            });
+        }
+        let image = &self.matrix * DVector::from_column_slice(coordinates);
+        if image.iter().any(|a| !a.re.is_finite() || !a.im.is_finite()) {
+            return Err(ActionError::NonFiniteAmplitude);
+        }
+        Ok(image.as_slice().to_vec())
+    }
+}
+
+// The coordinate forms of `joint_inner_product`, `joint_norm` and
+// `joint_axpy`. All three visit exactly the labels the map walk visits (the
+// map stores no zero amplitudes), in the same ascending label order, and the
+// scalar forms give each label the same arithmetic in the same sequence: the
+// scalar fallback is bit-identical to the map operations, not merely close
+// (`tests/joint_map_ops.rs` and the solver pin in `tests/phi4_momentum_sirk.rs`).
+//
+// The aarch64 inner product is the one deliberate exception: NEON carries four
+// independent accumulators, so the sum is reassociated and its last bits move
+// (`docs/VERIFY_PHI4_MOMENTUM.md` §5.12: `3.75x` off the `dot` kernel and
+// `12.6 %` off the C = 26 solve, for a `1.6e-16` change in the return
+// probability). The frozen sweep record was generated with this path.
+fn coords_inner_product(a: &[C], b: &[C]) -> C {
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: Advanced SIMD is part of the aarch64 baseline, and both
+        // slices are read only at indices below `min(a.len(), b.len())`.
+        return unsafe { coords_inner_product_neon(a, b) };
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        coords_inner_product_scalar(a, b)
+    }
+}
+/// The scalar fallback, used on every target without the aarch64 SIMD path.
+#[cfg(not(target_arch = "aarch64"))]
+fn coords_inner_product_scalar(a: &[C], b: &[C]) -> C {
+    let zero = C::new(0.0, 0.0);
+    let mut sum = zero;
+    for (x, y) in a.iter().zip(b) {
+        if *x == zero || *y == zero {
+            continue;
+        }
+        sum += x.conj() * y;
+    }
+    sum
+}
+/// Four interleaved accumulators: `re0/re1` carry the real parts of the two
+/// half-vectors, `im0/im1` the imaginary parts, so the four `vfmaq_f64` chains
+/// are independent until the final `vaddvq_f64`.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn coords_inner_product_neon(a: &[C], b: &[C]) -> C {
+    use core::arch::aarch64::*;
+    let n = a.len().min(b.len());
+    let ap = a.as_ptr() as *const f64;
+    let bp = b.as_ptr() as *const f64;
+    let mut re0 = vdupq_n_f64(0.0);
+    let mut re1 = vdupq_n_f64(0.0);
+    let mut im0 = vdupq_n_f64(0.0);
+    let mut im1 = vdupq_n_f64(0.0);
+    let mut i = 0;
+    while i + 4 <= n {
+        // SAFETY: `i + 4 <= n` keeps every load inside both slices.
+        let (v0, v1, v2, v3, w0, w1, w2, w3) = unsafe {
+            (
+                vld1q_f64(ap.add(2 * i)),
+                vld1q_f64(ap.add(2 * i + 2)),
+                vld1q_f64(ap.add(2 * i + 4)),
+                vld1q_f64(ap.add(2 * i + 6)),
+                vld1q_f64(bp.add(2 * i)),
+                vld1q_f64(bp.add(2 * i + 2)),
+                vld1q_f64(bp.add(2 * i + 4)),
+                vld1q_f64(bp.add(2 * i + 6)),
+            )
+        };
+        let (ar0, ai0) = (vuzp1q_f64(v0, v1), vuzp2q_f64(v0, v1));
+        let (ar1, ai1) = (vuzp1q_f64(v2, v3), vuzp2q_f64(v2, v3));
+        let (br0, bi0) = (vuzp1q_f64(w0, w1), vuzp2q_f64(w0, w1));
+        let (br1, bi1) = (vuzp1q_f64(w2, w3), vuzp2q_f64(w2, w3));
+        re0 = vfmaq_f64(vfmaq_f64(re0, ar0, br0), ar1, br1);
+        re1 = vfmaq_f64(vfmaq_f64(re1, ai0, bi0), ai1, bi1);
+        im0 = vfmaq_f64(vfmaq_f64(im0, ar0, bi0), ar1, bi1);
+        im1 = vfmaq_f64(vfmaq_f64(im1, ai0, br0), ai1, br1);
+        i += 4;
+    }
+    let mut sum = C::new(
+        vaddvq_f64(vaddq_f64(re0, re1)),
+        vaddvq_f64(vsubq_f64(im0, im1)),
+    );
+    while i < n {
+        sum += a[i].conj() * b[i];
+        i += 1;
+    }
+    sum
+}
+fn coords_norm(a: &[C]) -> f64 {
+    let zero = C::new(0.0, 0.0);
+    a.iter()
+        .filter(|x| **x != zero)
+        .fold(0.0_f64, |norm, x| norm.hypot(x.re).hypot(x.im))
+}
+fn coords_axpy(a: &mut [C], b: &[C], scale: C, limits: ActionLimits) -> Result<(), ActionError> {
+    if b.len() > limits.max_work {
+        return Err(ActionError::WorkLimit {
+            limit: limits.max_work,
+        });
+    }
+    if !scale.re.is_finite() || !scale.im.is_finite() {
+        return Err(ActionError::NonFiniteAmplitude);
+    }
+    let zero = C::new(0.0, 0.0);
+    for (slot, value) in a.iter_mut().zip(b) {
+        if *value == zero {
+            continue;
+        }
+        let updated = *slot + scale * value;
+        if !updated.re.is_finite() || !updated.im.is_finite() {
+            return Err(ActionError::NonFiniteAmplitude);
+        }
+        *slot = updated;
+    }
+    Ok(())
 }
 
 pub fn joint_inner_product(a: &NestedVector, b: &NestedVector) -> C {
@@ -282,41 +455,73 @@ pub fn joint_axpy(
             limit: limits.max_work,
         });
     }
-    for (basis, amplitude) in b {
-        // Update through `get_mut` on the borrowed label: the overwhelmingly
-        // common case in a Krylov loop is a label already present in `a`, and
-        // re-inserting it meant cloning a `JointOuterBasis` (several
-        // allocations) plus a fresh node split for every entry. The arithmetic
-        // is unchanged -- `0 + scale * amplitude` for a fresh label, the same
-        // `C` addition in the same order otherwise -- so this is bit-identical.
-        let mut drop_entry = false;
-        if let Some(slot) = a.get_mut(basis) {
-            let value = *slot + scale * amplitude;
-            if !value.re.is_finite() || !value.im.is_finite() {
-                return Err(ActionError::NonFiniteAmplitude);
-            }
-            if value == C::new(0.0, 0.0) {
-                drop_entry = true;
-            } else {
-                *slot = value;
-            }
-        } else {
-            let value = scale * amplitude;
-            if !value.re.is_finite() || !value.im.is_finite() {
-                return Err(ActionError::NonFiniteAmplitude);
-            }
-            if value != C::new(0.0, 0.0) {
-                if a.len() >= limits.max_components {
-                    return Err(ActionError::ComponentLimit {
-                        limit: limits.max_components,
-                    });
+    // Both maps are ordered by the same label order, so one ordered walk visits
+    // every touched entry with a single comparison, instead of a tree descent
+    // (about a dozen deep `JointOuterBasis` comparisons) per entry of `b`. That
+    // descent was 87 % of the `C = 26` shift solve (`docs/VERIFY_PHI4_MOMENTUM.md`
+    // §5.6): the map operation, not the arithmetic, was the cost.
+    //
+    // The arithmetic is unchanged per label -- `scale * amplitude` for a fresh
+    // label, `*slot + scale * amplitude` otherwise, and the same zero-deletion
+    // rule -- and no label's value depends on any other, so this is
+    // bit-identical to the search version (`tests/joint_map_ops.rs` pins that).
+    // Insertions and removals are collected and applied after the walk, since
+    // the map cannot be restructured while it is borrowed mutably.
+    let mut incoming = b.iter();
+    let mut next = incoming.next();
+    let mut fresh: Vec<(&JointOuterBasis, C)> = Vec::new();
+    let mut vanishing: Vec<JointOuterBasis> = Vec::new();
+    for (label, slot) in a.iter_mut() {
+        while let Some((basis, amplitude)) = next {
+            match basis.cmp(label) {
+                std::cmp::Ordering::Less => {
+                    let value = scale * amplitude;
+                    if !value.re.is_finite() || !value.im.is_finite() {
+                        return Err(ActionError::NonFiniteAmplitude);
+                    }
+                    if value != C::new(0.0, 0.0) {
+                        fresh.push((basis, value));
+                    }
+                    next = incoming.next();
                 }
-                a.insert(basis.clone(), value);
+                std::cmp::Ordering::Greater => break,
+                std::cmp::Ordering::Equal => {
+                    let value = *slot + scale * amplitude;
+                    if !value.re.is_finite() || !value.im.is_finite() {
+                        return Err(ActionError::NonFiniteAmplitude);
+                    }
+                    if value == C::new(0.0, 0.0) {
+                        vanishing.push(label.clone());
+                    } else {
+                        *slot = value;
+                    }
+                    next = incoming.next();
+                    break;
+                }
             }
         }
-        if drop_entry {
-            a.remove(basis);
+    }
+    // `b` can outrun `a` once `a` is exhausted.
+    while let Some((basis, amplitude)) = next {
+        let value = scale * amplitude;
+        if !value.re.is_finite() || !value.im.is_finite() {
+            return Err(ActionError::NonFiniteAmplitude);
         }
+        if value != C::new(0.0, 0.0) {
+            fresh.push((basis, value));
+        }
+        next = incoming.next();
+    }
+    for (basis, value) in fresh {
+        if a.len() >= limits.max_components {
+            return Err(ActionError::ComponentLimit {
+                limit: limits.max_components,
+            });
+        }
+        a.insert(basis.clone(), value);
+    }
+    for label in vanishing {
+        a.remove(&label);
     }
     Ok(())
 }
@@ -466,6 +671,7 @@ pub fn solve_joint_sirk(
         let mut result = solve_joint_sirk_with_actions(
             |v| cache.full(v, options.action_limits),
             |v| cache.projected(v, options.action_limits),
+            Some(&cache),
             initial,
             shifts,
             options,
@@ -493,6 +699,7 @@ where
     solve_joint_sirk_with_actions(
         &matvec,
         |v| Ok(project_joint(&matvec(v)?, options).0),
+        None,
         initial,
         shifts,
         options,
@@ -502,6 +709,7 @@ where
 fn solve_joint_sirk_with_actions<F, P>(
     matvec: F,
     projected_matvec: P,
+    window: Option<&FiniteWindowAction>,
     initial: &NestedVector,
     shifts: &[C],
     options: &JointSirkOptions,
@@ -567,9 +775,10 @@ where
                 relative_tolerance,
                 max_iterations,
             } => {
-                let (solution, bound, used) = gmres_shift(
+                let (solution, bound, used) = shift_solve(
                     &matvec,
                     &projected_matvec,
+                    window,
                     &sequence[k],
                     shift,
                     options,
@@ -719,9 +928,10 @@ where
             let mut bounds = Vec::new();
             let mut iterations_used = Vec::new();
             for j in 0..rank {
-                let (inverse, bound, used) = gmres_shift(
+                let (inverse, bound, used) = shift_solve(
                     &matvec,
                     &projected_matvec,
+                    window,
                     &orthonormal[j],
                     shift,
                     options,
@@ -803,7 +1013,7 @@ struct GmresProfile {
     axpy_calls: usize,
     dot: std::time::Duration,
     dot_calls: usize,
-    svd: std::time::Duration,
+    lstsq: std::time::Duration,
 }
 
 impl GmresProfile {
@@ -819,7 +1029,7 @@ impl GmresProfile {
             return;
         }
         eprintln!(
-            "PROFILE steps={steps} matvec={:.2}s axpy={:.2}s ({} calls, {:.3} ms/call) dot={:.2}s ({} calls, {:.3} ms/call) svd={:.2}s",
+            "PROFILE steps={steps} matvec={:.2}s axpy={:.2}s ({} calls, {:.3} ms/call) dot={:.2}s ({} calls, {:.3} ms/call) lstsq={:.2}s",
             self.matvec.as_secs_f64(),
             self.axpy.as_secs_f64(),
             self.axpy_calls,
@@ -827,7 +1037,7 @@ impl GmresProfile {
             self.dot.as_secs_f64(),
             self.dot_calls,
             self.dot.as_secs_f64() / self.dot_calls.max(1) as f64 * 1e3,
-            self.svd.as_secs_f64()
+            self.lstsq.as_secs_f64()
         );
     }
 }
@@ -898,7 +1108,7 @@ where
             .svd(true, true)
             .solve(&target, 1e-14)
             .map_err(|e| JointSirkError::Invalid(format!("GMRES least squares: {e}")))?;
-        profile.svd += clock.elapsed();
+        profile.lstsq += clock.elapsed();
         let estimated = (&small * &coefficients - &target).norm() / beta;
         if estimated <= tolerance || k + 1 == iterations || next_norm <= 1e-14 {
             let mut solution = NestedVector::new();
@@ -931,6 +1141,222 @@ where
         residual: last_residual,
         iterations,
     })
+}
+
+/// One complex Givens rotation `(c, s)`, with `c` real, such that
+/// `[[c, s], [-conj(s), c]] [top; bottom] = [rotated; 0]`. `rotated` keeps the
+/// phase of `top`, so the rotation is not just a modulus operation.
+fn givens_rotation(top: C, bottom: C) -> (f64, C, C) {
+    let zero = C::new(0.0, 0.0);
+    let bottom_norm = bottom.norm();
+    if bottom_norm == 0.0 {
+        return (1.0, zero, top);
+    }
+    let top_norm = top.norm();
+    if top_norm == 0.0 {
+        return (0.0, bottom.conj() / bottom_norm, C::new(bottom_norm, 0.0));
+    }
+    let radius = top_norm.hypot(bottom_norm);
+    let c = top_norm / radius;
+    let s = top / top_norm * bottom.conj() / radius;
+    (c, s, top / top_norm * C::new(radius, 0.0))
+}
+
+/// The same GMRES as `gmres_shift`, in coordinates of the declared window.
+///
+/// The map path re-serialises every `w` (image, shifted vector, each MGS
+/// subtraction) into a `BTreeMap`, and each entry then pays a label descent.
+/// `docs/VERIFY_PHI4_MOMENTUM.md` §5.9 measured that at `52 %` of the whole
+/// `C = 26` cell. Here the basis stays in flat coordinates and the projected
+/// action is the cached `gemv`, so no label is compared inside the loop at
+/// all.
+///
+/// This is not an approximation: the projection is the same `gemv`
+/// `FiniteWindowAction::projected` performs, and `coords_inner_product`,
+/// `coords_norm` and `coords_axpy` apply the map operations' arithmetic in the
+/// same label order (§5.10). The map path is therefore kept as the reference
+/// implementation, and `solve_joint_sirk` with
+/// `dense_window_solve: false` returns solutions identical on `to_bits()`.
+fn gmres_shift_window<F>(
+    cache: &FiniteWindowAction,
+    matvec: &F,
+    rhs: &NestedVector,
+    shift: C,
+    options: &JointSirkOptions,
+    tolerance: f64,
+    iterations: usize,
+) -> Result<(NestedVector, f64, usize), JointSirkError>
+where
+    F: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
+{
+    if !tolerance.is_finite()
+        || tolerance <= 0.0
+        || tolerance >= 1.0
+        || iterations == 0
+        || shift.im == 0.0
+    {
+        return Err(JointSirkError::Invalid(
+            "nonreal shifts, positive solve tolerance and iteration budget required".into(),
+        ));
+    }
+    let beta = joint_norm(rhs);
+    if beta == 0.0 {
+        return Ok((NestedVector::new(), 0.0, 0));
+    }
+    let limits = options.action_limits;
+    let zero = C::new(0.0, 0.0);
+    let n = cache.labels.len();
+    if n > limits.max_components {
+        return Err(ActionError::ComponentLimit {
+            limit: limits.max_components,
+        }
+        .into());
+    }
+    let mut profile = GmresProfile::new();
+    let mut first = vec![zero; n];
+    coords_axpy(
+        &mut first,
+        &cache.coords(rhs)?,
+        C::new(1.0 / beta, 0.0),
+        limits,
+    )?;
+    let mut basis: Vec<Vec<C>> = vec![first];
+    let mut h = DMatrix::<C>::zeros(iterations + 1, iterations);
+    // Rotations accumulated so far, and the rotated right-hand side.
+    let mut rotations: Vec<(f64, C)> = Vec::new();
+    let mut transformed = DVector::<C>::zeros(iterations + 1);
+    transformed[0] = C::new(beta, 0.0);
+    let mut last_residual = f64::INFINITY;
+    for k in 0..iterations {
+        let clock = std::time::Instant::now();
+        let image = cache.image_coords(&basis[k], limits)?;
+        profile.matvec += clock.elapsed();
+        let clock = std::time::Instant::now();
+        // `joint_axpy(&mut w, &image, 1.0)` is an exact copy on the map path,
+        // so the image can be moved straight in.
+        let mut w = image;
+        coords_axpy(&mut w, &basis[k], -shift, limits)?;
+        // Two passes of modified Gram-Schmidt, preserving tiny support entries.
+        for _ in 0..2 {
+            for j in 0..=k {
+                let dot_clock = std::time::Instant::now();
+                let coefficient = coords_inner_product(&basis[j], &w);
+                profile.dot += dot_clock.elapsed();
+                profile.dot_calls += 1;
+                h[(j, k)] += coefficient;
+                coords_axpy(&mut w, &basis[j], -coefficient, limits)?;
+                profile.axpy_calls += 1;
+            }
+        }
+        profile.axpy += clock.elapsed();
+        let next_norm = coords_norm(&w);
+        h[(k + 1, k)] = C::new(next_norm, 0.0);
+        // Incremental least squares (§5.11): the Hessenberg column is rotated
+        // into upper triangular form by one Givens rotation per step, and the
+        // transformed right-hand side carries the residual estimate in its last
+        // entry. The dense SVD this replaced cost `k³` per step -- 56 % of the
+        // `C = 26` solve -- and only ever produced the same three things: the
+        // residual estimate, the acceptance test's coefficients, and nothing
+        // the loop used again.
+        let clock = std::time::Instant::now();
+        for (i, &(c, s)) in rotations.iter().enumerate() {
+            let top = h[(i, k)];
+            let bottom = h[(i + 1, k)];
+            h[(i, k)] = C::new(c, 0.0) * top + s * bottom;
+            h[(i + 1, k)] = -s.conj() * top + C::new(c, 0.0) * bottom;
+        }
+        let (c, s, rotated) = givens_rotation(h[(k, k)], h[(k + 1, k)]);
+        rotations.push((c, s));
+        h[(k, k)] = rotated;
+        h[(k + 1, k)] = zero;
+        let (top, bottom) = (transformed[k], transformed[k + 1]);
+        transformed[k] = C::new(c, 0.0) * top + s * bottom;
+        transformed[k + 1] = -s.conj() * top + C::new(c, 0.0) * bottom;
+        profile.lstsq += clock.elapsed();
+        let estimated = transformed[k + 1].norm() / beta;
+        if estimated <= tolerance || k + 1 == iterations || next_norm <= 1e-14 {
+            // Back-substitute the rotated triangular system for the same
+            // coefficients the SVD returned.
+            let clock = std::time::Instant::now();
+            let mut coefficients = vec![zero; k + 1];
+            for i in (0..=k).rev() {
+                let mut accumulated = transformed[i];
+                for j in (i + 1)..=k {
+                    accumulated -= h[(i, j)] * coefficients[j];
+                }
+                let diagonal = h[(i, i)];
+                if diagonal.norm() == 0.0 {
+                    return Err(JointSirkError::Invalid(
+                        "singular Hessenberg diagonal in the GMRES least squares".into(),
+                    ));
+                }
+                coefficients[i] = accumulated / diagonal;
+            }
+            profile.lstsq += clock.elapsed();
+            let mut coordinates = vec![zero; n];
+            for (j, &c) in coefficients.iter().enumerate() {
+                coords_axpy(&mut coordinates, &basis[j], c, limits)?;
+            }
+            let solution = cache.from_coords(&coordinates, limits)?;
+            let mut residual = matvec(&solution)?;
+            joint_axpy(&mut residual, &solution, -shift, limits)?;
+            joint_axpy(&mut residual, rhs, C::new(-1.0, 0.0), limits)?;
+            let full_norm = joint_norm(&residual);
+            let compressed = project_joint(&residual, options).0;
+            last_residual = joint_norm(&compressed) / beta;
+            if last_residual <= tolerance {
+                profile.report(k + 1);
+                return Ok((solution, full_norm / shift.im.abs(), k + 1));
+            }
+            if next_norm <= 1e-14 {
+                break;
+            }
+        }
+        if next_norm == 0.0 || !next_norm.is_finite() {
+            break;
+        }
+        let mut normalized = vec![zero; n];
+        coords_axpy(&mut normalized, &w, C::new(1.0 / next_norm, 0.0), limits)?;
+        basis.push(normalized);
+    }
+    profile.report(iterations);
+    Err(JointSirkError::ShiftSolve {
+        residual: last_residual,
+        iterations,
+    })
+}
+
+/// One shift solve, in the window's coordinates when a cached window is
+/// available (and `dense_window_solve` is set), otherwise on the nested maps.
+#[allow(clippy::too_many_arguments)]
+fn shift_solve<F, P>(
+    matvec: &F,
+    projected_matvec: &P,
+    window: Option<&FiniteWindowAction>,
+    rhs: &NestedVector,
+    shift: C,
+    options: &JointSirkOptions,
+    tolerance: f64,
+    iterations: usize,
+) -> Result<(NestedVector, f64, usize), JointSirkError>
+where
+    F: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
+    P: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
+{
+    match window {
+        Some(cache) if options.dense_window_solve => {
+            gmres_shift_window(cache, matvec, rhs, shift, options, tolerance, iterations)
+        }
+        _ => gmres_shift(
+            matvec,
+            projected_matvec,
+            rhs,
+            shift,
+            options,
+            tolerance,
+            iterations,
+        ),
+    }
 }
 
 #[derive(Debug)]

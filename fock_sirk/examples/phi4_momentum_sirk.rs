@@ -62,10 +62,12 @@ fn shift_invert() -> JointKrylovMethod {
 
 /// Cutoffs of the outside-window sweep. C = 16 and 20 are the extension past
 /// the window at which the seed's support is fully covered; they need a looser
-/// solve policy (see `sweep_method`) and a larger component budget. C = 22, 24
-/// and 26 push past 20 to show that the tail keeps shrinking while the SIRK
-/// error stays flat (rank-limited, not window-limited).
-const SWEEP_CUTOFFS: [u32; 8] = [4, 8, 12, 16, 20, 22, 24, 26];
+/// solve policy (see `sweep_method`) and a larger component budget. C = 22, 24,
+/// 26, 28, 30, 32, 34, 36, 38 and 40 push past 20 to show that the tail keeps
+/// shrinking while the SIRK error stays flat (rank-limited, not window-limited).
+/// C = 40 is the largest window the component budget allows (see
+/// `SWEEP_COMPONENT_BUDGET`).
+const SWEEP_CUTOFFS: [u32; 15] = [4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40];
 
 /// Solve policy per cutoff. The `1e-13` relative residual is affordable while
 /// the window is small, but at C = 20 the smallest scheduled shift
@@ -87,9 +89,13 @@ fn sweep_method(cutoff: u32) -> JointKrylovMethod {
 /// The window dictionary charges one component per (outer label, inner state)
 /// pair, so C = 20 (1001 labels) exceeds the default 1e6 budget during span
 /// registration, C = 24 (1820 labels, 3.35e6 components) needs more than
-/// C = 20's 4e6, and C = 26 (2380 labels, 5.71e6 components) needs more than
-/// 4e6 too.
-const SWEEP_COMPONENT_BUDGET: usize = 8_000_000;
+/// C = 20's 4e6, C = 26 (2380 labels, 5.71e6) needs more than 4e6 too, C = 28
+/// (3060 labels, 9.42e6) needs more than C = 26's 8e6, C = 32 (4845 labels,
+/// 2.36e7 components) needs more than C = 28's 1.2e7, C = 36 (7315 labels,
+/// 5.37e7 components) needs more than C = 32's 2.5e7, C = 38 (8855 labels,
+/// 7.84e7) needs more than C = 36's 6e7, and C = 40 (10626 labels, 1.129e8
+/// components) needs more than C = 38's.
+const SWEEP_COMPONENT_BUDGET: usize = 130_000_000;
 
 fn solve(
     h: &InnerExpr,
@@ -118,6 +124,15 @@ fn sweep_solve(
         basis_window: Some(window.clone()),
         method,
         max_cached_components: SWEEP_COMPONENT_BUDGET,
+        // The projected action is a dense `n x n` product, so the default
+        // `max_work` of 1e7 is exactly exhausted at C = 28 (9.36e6 entries) and
+        // binds before the cache budget does at C = 30. This is a resource
+        // policy, not a model change: the same actions are counted, and the
+        // limit is raised with the window it prices.
+        action_limits: ActionLimits {
+            max_work: 4 * SWEEP_COMPONENT_BUDGET,
+            ..ActionLimits::default()
+        },
         ..JointSirkOptions::default()
     };
     solve_joint_sirk(h, initial, shifts, &options).expect("Krylov solve")
@@ -359,7 +374,7 @@ fn cutoff_sweep() -> Value {
 
     json!({
         "status": "measured",
-        "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; they solve to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
+        "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; C = 22 ... 28 extend it further to measure the tail's slow decay. Every C >= 16 cell solves to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
         "tail_sweep_fixed_rank_2": tail_cells,
         "method_contrast_fixed_rank_4": method_cells,
         "runtime_ms": started.elapsed().as_millis() as u64,

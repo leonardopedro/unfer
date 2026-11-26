@@ -167,11 +167,154 @@ impl WindowOperator {
     }
 }
 
+/// Largest amplitude difference over the union of the two supports.
+fn vector_gap(a: &NestedVector, b: &NestedVector) -> f64 {
+    let zero = C::new(0.0, 0.0);
+    let left: BTreeMap<&JointOuterBasis, &C> = a.iter().collect();
+    let right: BTreeMap<&JointOuterBasis, &C> = b.iter().collect();
+    left.keys().chain(right.keys()).fold(0.0_f64, |gap, label| {
+        let x = left.get(label).copied().copied().unwrap_or(zero);
+        let y = right.get(label).copied().copied().unwrap_or(zero);
+        gap.max((x - y).norm())
+    })
+}
+
+/// Largest entry difference, relative to the larger matrix norm.
+fn matrix_gap(a: &DMatrix<C>, b: &DMatrix<C>) -> f64 {
+    assert_eq!(a.shape(), b.shape());
+    let gap = a
+        .iter()
+        .zip(b.iter())
+        .fold(0.0_f64, |gap, (x, y)| gap.max((*x - *y).norm()));
+    gap / a.norm().max(b.norm()).max(1.0)
+}
+
 fn assert_close(actual: f64, expected: f64, tolerance: f64, label: &str) {
     assert!(
         (actual - expected).abs() <= tolerance,
         "{label}: got {actual}, expected {expected} (tolerance {tolerance})"
     );
+}
+
+/// The coordinate backend of §5.10 reproduced the map walk on `to_bits()`.
+/// §5.11 replaced its per-step dense SVD with Givens rotations, so the two
+/// paths now round differently in the least-squares stage: this asserts they
+/// agree to solver precision instead — same rank, same Arnoldi counts, and
+/// every diagnostic and amplitude within `1e-12`. The map path is kept behind
+/// `dense_window_solve: false` precisely so this stays checkable.
+#[test]
+fn window_solve_matches_the_map_walk_at_solver_precision() {
+    let t = 0.01;
+    let model = ScalarMomCont::unit();
+    let window = ScalarMomCont::window_labels(12);
+    let initial = seed(&model, &vacuum_support());
+    let shifts = physical_shifts(t, 30.0, 5.0, 4);
+    let hamiltonian = model.hamiltonian();
+
+    let mut map_options = options(window.clone(), shift_invert());
+    map_options.dense_window_solve = false;
+    let map = solve_joint_sirk(&hamiltonian, &initial, &shifts, &map_options)
+        .expect("map-walk window solve");
+    let dense = solve_joint_sirk(
+        &hamiltonian,
+        &initial,
+        &shifts,
+        &options(window, shift_invert()),
+    )
+    .expect("coordinate window solve");
+
+    // The solves must have run, converged, and taken the same steps.
+    assert!(!map.shift_solve_iterations.is_empty());
+    assert_eq!(
+        map.shift_solve_iterations.len(),
+        dense.shift_solve_iterations.len(),
+        "one step count per shift solve"
+    );
+    for (left, right) in map
+        .shift_solve_iterations
+        .iter()
+        .zip(&dense.shift_solve_iterations)
+    {
+        assert!(
+            left.abs_diff(*right) <= 1,
+            "Arnoldi steps: {left} against {right} (the least-squares rounding decides the last step)"
+        );
+    }
+    assert_eq!(map.rank(), dense.rank(), "Krylov rank");
+    assert_eq!(map.cached_components, dense.cached_components);
+    for (left, right) in map
+        .shift_solve_error_bounds
+        .iter()
+        .zip(&dense.shift_solve_error_bounds)
+    {
+        assert_close(*right, *left, 1e-12 * left.max(1.0), "shift solve bound");
+    }
+    for (left, right) in map
+        .projected_action_tail_norms
+        .iter()
+        .zip(&dense.projected_action_tail_norms)
+    {
+        assert_close(*right, *left, 1e-12, "action tail");
+    }
+    for (left, right) in map.scales.iter().zip(&dense.scales) {
+        assert_close(*right, *left, 1e-12, "unit-norm scale");
+    }
+
+    // The forward sequence is where a shifted solve's output lands, so this is
+    // the end-to-end check on the solution itself.
+    assert_eq!(map.sequence.len(), dense.sequence.len());
+    for (k, (left, right)) in map.sequence.iter().zip(&dense.sequence).enumerate() {
+        let gap = vector_gap(left, right);
+        assert_close(gap, 0.0, 1e-12, &format!("forward sequence {k}"));
+    }
+    for (k, (left, right)) in map
+        .orthonormal_basis
+        .iter()
+        .zip(&dense.orthonormal_basis)
+        .enumerate()
+    {
+        let gap = vector_gap(left, right);
+        assert_close(gap, 0.0, 1e-12, &format!("orthonormal basis {k}"));
+    }
+
+    assert_close(matrix_gap(&map.gram, &dense.gram), 0.0, 1e-12, "Gram");
+    assert_close(matrix_gap(&map.h_proj, &dense.h_proj), 0.0, 1e-12, "H_proj");
+    assert_close(
+        matrix_gap(&map.function_generator, &dense.function_generator),
+        0.0,
+        1e-12,
+        "function generator",
+    );
+    match (&map.projected_resolvent, &dense.projected_resolvent) {
+        (Some(left), Some(right)) => assert_close(
+            matrix_gap(left, right),
+            0.0,
+            1e-12,
+            "bounded-resolvent compression",
+        ),
+        (None, None) => {}
+        _ => panic!("bounded-resolvent compression present on one path only"),
+    }
+    assert_close(
+        dense.orthogonality_defect,
+        map.orthogonality_defect,
+        1e-12,
+        "orthogonality defect",
+    );
+    assert_close(
+        dense.hermiticity_defect,
+        map.hermiticity_defect,
+        1e-12,
+        "hermiticity defect",
+    );
+    for time in [t, 2.0 * t, 5.0 * t] {
+        assert_close(
+            return_probability(&dense, &initial, time),
+            return_probability(&map, &initial, time),
+            1e-13,
+            &format!("return probability at t = {time}"),
+        );
+    }
 }
 
 #[test]
@@ -791,9 +934,9 @@ fn rational(text: &str) -> f64 {
 }
 
 /// The evidence record's cutoff sweep must stay consistent with the live
-/// operator. `C <= 12` is recomputed here; the `C = 16 … 26` rows (which cost
-/// 5.7 s to 406 s per cell and need an `8e6` component budget with a looser
-/// `1e-10` solve policy) are checked for the trend they are quoted for:
+/// operator. `C <= 12` is recomputed here; the `C = 16 … 40` rows (which need up
+/// to a `1.13e8` component budget and the looser `1e-10` solve policy, and cost
+/// seconds to minutes per cell) are checked for the trend they are quoted for:
 /// the tail keeps shrinking, the inside-window error stays flat, the
 /// `ForwardProducts` diagnostic keeps growing, and every Arnoldi step count is
 /// recorded rather than `null`.
@@ -814,14 +957,20 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .iter()
         .map(|c| c["hermite_cutoff"].as_u64().unwrap())
         .collect();
-    assert_eq!(cutoffs, vec![4, 8, 12, 16, 20, 22, 24, 26], "sweep cutoffs");
+    assert_eq!(
+        cutoffs,
+        vec![4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40],
+        "sweep cutoffs"
+    );
     let sizes: Vec<u64> = tails
         .iter()
         .map(|c| c["window_labels"].as_u64().unwrap())
         .collect();
     assert_eq!(
         sizes,
-        vec![15, 70, 210, 495, 1001, 1365, 1820, 2380],
+        vec![
+            15, 70, 210, 495, 1001, 1365, 1820, 2380, 3060, 3876, 4845, 5985, 7315, 8855, 10626
+        ],
         "window sizes"
     );
     let tail_values: Vec<f64> = tails
@@ -840,10 +989,23 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         tail_values[6] < 0.7 * tail_values[4],
         "pushing to C = 24 must keep shrinking the tail: {tail_values:?}"
     );
-    assert!(
-        tail_values[7] < 0.85 * tail_values[6],
-        "pushing to C = 26 must keep shrinking the tail: {tail_values:?}"
-    );
+    // Indices 7..=14 are C = 26, 28, 30, 32, 34, 36, 38 and 40: every further two
+    // steps of cutoff must still cut the tail by at least 15 %.
+    for (pushed, window) in [
+        (7, 26),
+        (8, 28),
+        (9, 30),
+        (10, 32),
+        (11, 34),
+        (12, 36),
+        (13, 38),
+        (14, 40),
+    ] {
+        assert!(
+            tail_values[pushed] < 0.85 * tail_values[pushed - 1],
+            "pushing to C = {window} must keep shrinking the tail: {tail_values:?}"
+        );
+    }
     let tail_steps: Vec<u64> = tails
         .iter()
         .map(|c| {
@@ -894,7 +1056,7 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .iter()
         .map(|c| c["forward_products_diagnostic"]["error"].as_f64().unwrap())
         .collect();
-    assert_eq!(sirk.len(), 8);
+    assert_eq!(sirk.len(), cutoffs.len());
     assert!(
         sirk.iter().all(|e| *e < 1e-2),
         "the primary solver must stay bounded across the sweep: {sirk:?}"
@@ -915,7 +1077,7 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
     );
     // Past C = 20 the diagnostic saturates instead of growing: the window has
     // long covered the seed's support, so the omitted directions are the same
-    // ones. Read the four largest cells as equal within 10%.
+    // ones. Read every cell past C = 20 as equal within 10%.
     assert!(
         forward[4..].iter().all(|e| *e > 0.9 * forward[4]),
         "the forward diagnostic must plateau past C = 20: {forward:?}"

@@ -46,7 +46,14 @@ jobs:
   gates:
     name: re-run every committed R13 gate log
     runs-on: ubuntu-latest
-    timeout-minutes: 240 # ~1.5 h of gates on 12 cores; runners are slower
+    # Measured on the local 12-core machine (2026-11-24, `--all`): 13 rows,
+    # 6,645 s of gate time, ~1 h 55 m wall. GitHub-hosted runners are slower and
+    # their core count is not something this file controls, so 350 min leaves
+    # headroom without approaching the 6 h hosted cap. A timed-out run uploads
+    # nothing useful -- if this lane starts hitting it, dispatch with
+    # `quick: true` and read the `unselected by --skip-slow` list instead of
+    # trimming rows silently.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
 
@@ -78,13 +85,20 @@ jobs:
       # gate that grows past `SLOW_SECS` would otherwise drop out of the lane
       # silently (temper-4 did exactly that, 950 s). Only the explicit `quick`
       # dispatch skips the long entries, and the run prints what it skipped.
+      # `--band 0.2`: the committed logs are bitwise on the recording machine and
+      # a hosted runner is a different CPU/libm (a seeded canary moved by 0.1-4.7%
+      # there with no code change, and an MCMC accept/reject can flip a chain), so
+      # a byte-exact diff would be red for reasons nobody can act on. Counts,
+      # verdicts and labels still compare exactly; the band is a gross-drift net.
+      # Byte-exact reproduction is `./scripts/check-pcnl-gates` on the recording
+      # machine or a pinned container.
       - name: re-run the gates and diff their summaries
         run: |
           set -euo pipefail
           if [ "${{ inputs.quick }}" = "true" ]; then
-            bash scripts/check-pcnl-gates
+            bash scripts/check-pcnl-gates --band 0.2
           else
-            bash scripts/check-pcnl-gates --all
+            bash scripts/check-pcnl-gates --all --band 0.2
           fi
 
       - name: keep the diffs even when the shell failed

@@ -226,6 +226,17 @@ fn axpy_is_bit_identical_to_the_insert_version() {
         }
     }
 
+    // Growing source: every label of `dense` is new to `nested`, so this
+    // exercises the insertion branch (and, since `dense` also carries labels
+    // beyond `nested`'s largest, the walk that runs `a` out first).
+    for scale in scales {
+        let mut got = nested.clone();
+        let mut want = nested.clone();
+        joint_axpy(&mut got, &dense, scale, limits()).expect("finite axpy");
+        axpy_previous(&mut want, &dense, scale, limits());
+        assert_bit_identical(&got, &want, &format!("growing at scale {scale}"));
+    }
+
     // Repeated strokes: the in-place path must not drift over a Krylov-like
     // sequence of alternating additions, which is where a stale or copied slot
     // would show up.

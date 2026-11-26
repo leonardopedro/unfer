@@ -28,6 +28,7 @@
 #   ./scripts/check-pcnl-gates qk-gate         # one gate (name or log prefix)
 #   ./scripts/check-pcnl-gates --all           # including the slow ones
 #   ./scripts/check-pcnl-gates --alts          # also the documented alternates
+#   ./scripts/check-pcnl-gates --quick         # only the per-push quick rows
 #   ./scripts/check-pcnl-gates --check-manifest # structure only, no numerics
 #
 # `--check-manifest` needs no built binary and no gate run: it asserts that the
@@ -36,6 +37,16 @@
 # (see `.github/workflows/ci.yml`, job "artifact + corpus drift gates"); the
 # numeric sweep is the scheduled lane in `.github/workflows/pcnl-gates.yml`.
 #
+# `--quick` runs only `QUICK_NAMES`: the three `canary` rows, which are
+# reduced-length twins of `stream`, `pilot` and `readout-exact` (50 Adam steps,
+# 100 HMC steps and a 100-step exact-mass chain) at ~6 s + ~45 s + ~40 s, so a
+# per-push sweep lands in ~2 min instead of ~8. They are *drift canaries*, not
+# gates: the same seeded pipeline decides the same numbers, so a behaviour
+# change moves them, but their R-hat/ESS are not a convergence claim (the gate
+# verdict is `false` by construction at that length). The full rows still run
+# in the default sweep and in the scheduled lane. `--quick` is never a silent
+# subset: the closing report names every row it did not run.
+#
 # `--skip-slow` is the default: entries budgeted above `SLOW_SECS` (900 s) are
 # not run, so the script stays usable as a pre-commit check. They are never
 # dropped silently -- the closing line names every unselected entry with the
@@ -43,6 +54,20 @@
 # cover them. The budgets are runtime estimates: a row is only ever excluded
 # by an estimate above `SLOW_SECS`, so a row that grew past the threshold (as
 # `temper-4` did, 950 s) leaves the default sweep until `--all` is used.
+#
+# `--band R` compares numbers with a relative tolerance R instead of
+# byte-for-byte, and `--structure` drops the magnitude check entirely. The
+# committed logs are bitwise on the machine that recorded them, and that is not
+# portable: on GitHub's hosted runner the same seeded canary moved its 50-step
+# Adam RMSE by 0.1%, one `z2` by 4.7%, and then a 100-step HMC row moved R-hat
+# 2.55 -> 1.92 and ESS 13 -> 23, because at 75 draws per chain those diagnostics
+# are noise rather than estimates and one accept/reject flip changes the counts
+# in `(93/240)`. So the hosted lanes compare what is portable: the key sequence,
+# the non-numeric tokens (`gate=true`, `sample_space=…`), the non-finite class (a
+# `NaN` must stay `NaN`) and finiteness of every number. Short chains use
+# `--structure`; the scheduled lane, whose rows are long enough for ESS/R-hat to
+# mean something, uses `--band 0.2` as a gross-drift net. Default stays
+# byte-exact, so reproduction on the recording machine is unchanged.
 #
 # Exit status: 0 all compared rungs matched; 1 any mismatch or failed run;
 # 2 setup problem (no binary, no fixture, unknown gate).
@@ -54,6 +79,9 @@ LOG_DIR=logs/pcnl_r13_gates
 BIN_DIR=./target/release/examples
 FIXTURE=docs/fixtures/ultrabert_20ng4_embeddings.safetensors
 SLOW_SECS=900
+# Per-push lane: see the header. Names only, so a renamed row fails the
+# selection check below instead of silently shrinking the quick lane.
+QUICK_NAMES="stream-canary pilot-canary readout-canary"
 
 # name|class|budget_s|log|program|arguments
 # class: gate  = a row of the R13 gate table, run by default
@@ -73,12 +101,27 @@ cn-exact-dense|gate|700|cn-exact-dense.log|vector_regression|--readout-only --ke
 # Twice the chain length of the row above, same start: tests whether the CN ESS is
 # length-limited (it is: 620.9 -> 1720.5 bulk) rather than a stuck chain.
 cn-exact-dense-12k|alt|1300|cn-exact-dense-12k.log|vector_regression|--readout-only --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 12000 --burn 3000 --thin 1 --draws 9000 --chains 4
+# Four times the original row's chain length (2x the 12k one): the ESS test is
+# linear-in-draws scaling, since a stuck chain would plateau instead.
+cn-exact-dense-24k|alt|3200|cn-exact-dense-24k.log|vector_regression|--readout-only --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 24000 --burn 3000 --thin 1 --draws 21000 --chains 4
 basins|gate|300|basins.log|vector_basins|--runs 2 --steps 8000
 stream|gate|90|stream.log|vector_stream|--prefixes 4 --adam-steps 300 --lr 0.02
 jitter-lf4|gate|600|jitter-lf4.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass lowrank --lowrank-rank 32 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --hmc-jitter --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4
 hitrun-5000|gate|3000|hitrun-5000.log|vector_regression|--kernel hitrun --init point --steps 5000 --hr-width 1 --thin 2 --draws 1875 --chains 4
 qk-alt-lf8-lr5e-3|alt|240|qk-alt-lf8-lr5e-3.log|vector_regression|--kernel hmc --init mode --mode-steps 8000 --mode-lr 5e-3 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
 qk-alt-lf8-lr2e-3|alt|240|qk-alt-lf8-lr2e-3.log|vector_regression|--kernel hmc --init mode --mode-steps 8000 --mode-lr 2e-3 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
+# Per-push canaries (class `canary`, selected only by --quick or --all): the
+# same three programs and code paths at a length that fits a ~2 min lane.  Their
+# numbers are a drift baseline, not a convergence result; the full rows above
+# remain the gates.
+stream-canary|canary|20|stream-canary.log|vector_stream|--prefixes 4 --adam-steps 50 --lr 0.02
+pilot-canary|canary|70|pilot-canary.log|vector_regression|--kernel hmc --init mode --mode-steps 300 --mode-lr 5e-3 --start-scale legacy --hmc-mass pilot --pilot-steps 100 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 100 --chains 4 --start-jitter 1e-4 --thin 1 --draws 75
+readout-canary|canary|70|readout-canary.log|vector_regression|--readout-only --kernel hmc --init mean --hmc-mass exact --hmc-leapfrog 4 --steps 100 --burn 25 --thin 1 --draws 75 --chains 4
+# Full-parameter twin of `pilot` with the calibration line: the readout-only
+# calibration above is conditioned on the frozen backbone, so its 90% band is
+# tight; marginalising all 57,378 coordinates is the contrast (and its df is
+# negative, which is why the df-adjusted sd is NaN here).
+pilot-calibrated|alt|240|pilot-calibrated.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass pilot --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --chains 4 --start-jitter 1e-4 --thin 1 --draws 300 --calibration
 EOF
 )
 # `#` lines inside the block above document a row; they are not entries.
@@ -88,14 +131,19 @@ OUT=target/r13-logs/gate-diff-$STAMP
 SEL=()
 RUN_ALL=0
 RUN_ALTS=0
+RUN_QUICK=0
 CHECK_MANIFEST=0
+BAND=
 
 while [ $# -gt 0 ]; do
   case $1 in
     --list)     printf '%s\n' "$MANIFEST" | awk -F'|' '{ printf "%-20s %-5s %5ss  %s\n", $1, $2, $3, $4 }'; exit 0 ;;
     --all)      RUN_ALL=1 ;;
     --alts)     RUN_ALTS=1 ;;
+    --quick)    RUN_QUICK=1 ;;
     --check-manifest) CHECK_MANIFEST=1 ;;
+    --band)     BAND=${2:?--band needs a relative tolerance}; shift ;;
+    --structure) BAND=1e300 ;;
     --skip-slow) RUN_ALL=0 ;;
     --out)      OUT=${2:?--out needs a directory}; shift ;;
     -h|--help)  sed -n '2,40p' "$0"; exit 0 ;;
@@ -105,9 +153,21 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+[ -z "$BAND" ] || printf '%s' "$BAND" | grep -qE '^[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$' \
+  || { echo "setup: --band takes a relative tolerance such as 0.2" >&2; exit 2; }
+
 [ -d "$LOG_DIR" ] || { echo "setup: $LOG_DIR missing" >&2; exit 2; }
 [ "$CHECK_MANIFEST" -eq 1 ] || [ -f "$FIXTURE" ] \
   || { echo "setup: fixture $FIXTURE missing" >&2; exit 2; }
+
+# A quick-lane row that no longer exists would make the per-push lane quietly
+# cover less than it claims, so resolve every name against the manifest.
+if [ "$RUN_QUICK" -eq 1 ]; then
+  for qn in $QUICK_NAMES; do
+    printf '%s\n' "$MANIFEST" | awk -F'|' -v n="$qn" '$1 == n { found = 1 } END { exit !found }' \
+      || { echo "setup: --quick names '$qn', which is not in the manifest" >&2; exit 2; }
+  done
+fi
 
 # --- coverage: manifest <-> directory -------------------------------------
 coverage_problem=0
@@ -127,7 +187,7 @@ done <<< "$MANIFEST"
 lines_problem=0
 while IFS='|' read -r name _cls _budget log _prog _args; do
   [ -f "$LOG_DIR/$log" ] || continue   # already reported by the coverage pass
-  n=$(grep -cE '^(posterior |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$LOG_DIR/$log" 2>/dev/null)
+  n=$(grep -cE '^(posterior |calibration |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$LOG_DIR/$log" 2>/dev/null)
   [ "${n:-0}" -gt 0 ] \
     || { echo "coverage: $LOG_DIR/$log (entry '$name') has no summary lines" >&2; lines_problem=1; }
 done <<< "$MANIFEST"
@@ -153,15 +213,123 @@ selected() { # name class budget
     done
     return 1
   fi
+  if [ "$RUN_QUICK" -eq 1 ]; then
+    case " $QUICK_NAMES " in *" $name "*) return 0 ;; esac
+    return 1
+  fi
   [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ] && return 1
+  # Canaries are subsumed by the full rows they twin and exist only for the
+  # latency budget of the per-push lane, so the default sweep skips them.
+  [ "$cls" = canary ] && [ "$RUN_ALL" -eq 0 ] && return 1
   [ "$RUN_ALL" -eq 0 ] && [ "$budget" -gt "$SLOW_SECS" ] && return 1
   return 0
 }
 
 # Summary lines only; see the header for why chain lines are excluded.
 summaries() {
-  grep -E '^(posterior |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$1" 2>/dev/null \
+  grep -E '^(posterior |calibration |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$1" 2>/dev/null \
     | sed -e 's/[[:space:]]\+/ /g' -e 's/ *$//'
+}
+
+# Band comparison: every number may move within a relative band, but the key
+# sequence, the non-numeric tokens (`gate=true`, `sample_space=...`) and the
+# non-finite class (a `NaN` must stay `NaN`) compare exactly.  This is the only
+# portable mode: an MCMC accept/reject step and a training loop amplify a
+# last-bit difference on a foreign CPU/libm into a percent-level change (the
+# hosted runner moved a 50-step Adam canary's RMSE by 0.1% and one `z2` by
+# 4.7%), so no digit count can separate hardware noise from real drift.  The
+# band is a gross-drift net, not a reproduction claim.
+band_cmp() { # expected actual band
+  awk -v band="$3" '
+    function parse(line, VAL,   n, t, i, tok, eq, k) {
+      n = split(line, t, " "); GK = ""; k = ""
+      for (i = 1; i <= n; i++) {
+        tok = t[i]
+        if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+          eq = index(tok, "=")
+          k = substr(tok, 1, eq - 1)
+          VAL[k] = substr(tok, eq + 1)
+          GK = GK (GK == "" ? "" : ",") k
+        } else if (k != "") {
+          VAL[k] = VAL[k] " " tok
+        }
+      }
+      return 1
+    }
+    # Skeleton = the value with each number literal replaced by <n>; SN holds
+    # the literals found, in order.
+    function skel(s, VALS,   out, i, c, rest, L) {
+      out = ""; SN = 0; i = 1
+      while (i <= length(s)) {
+        c = substr(s, i, 1)
+        if (c ~ /[-+0-9.]/) {
+          rest = substr(s, i)
+          if (match(rest, /^[-+]?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?/) && RLENGTH > 0) {
+            L = substr(rest, 1, RLENGTH)
+            VALS[++SN] = L
+            out = out "<n>"
+            i += RLENGTH
+            continue
+          }
+        }
+        out = out c
+        i++
+      }
+      return out
+    }
+    function nonfinite(v) { return (v ~ /^[-+]?[Nn]a[Nn]$/ || v ~ /^[-+]?[Ii]nf(inity)?$/) }
+    function val_ok(a, b,   sa, sb, na, i, x, y, d, m, t) {
+      if (a == b) return 1
+      sa = skel(a, VA); na = SN
+      sb = skel(b, VB)
+      if (sa != sb || na != SN) return 0
+      for (i = 1; i <= na; i++) {
+        x = VA[i]; y = VB[i]
+        if (nonfinite(x) || nonfinite(y)) { if (x != y) return 0; continue }
+        x += 0; y += 0
+        d = (x > y) ? x - y : y - x
+        m = (x < 0 ? -x : x); t = (y < 0 ? -y : y); if (t > m) m = t
+        if (m == 0) m = 1
+        if (d > band * m) return 0
+      }
+      return 1
+    }
+    FNR == NR {
+      parse($0, EV)
+      EK[++el] = GK
+      for (k in EV) E[el, k] = EV[k]
+      split("", EV)
+      next
+    }
+    {
+      parse($0, AV)
+      al++
+      ak[al] = GK
+      for (k in AV) A[al, k] = AV[k]
+      split("", AV)
+    }
+    END {
+      if (el != al) { printf "      line count: recorded %d, rerun %d\n", el, al; exit 1 }
+      bad = 0
+      for (i = 1; i <= el; i++) {
+        if (EK[i] != ak[i]) {
+          printf "      line %d: key set changed\n        recorded %s\n        rerun    %s\n", i, EK[i], ak[i]
+          bad = 1
+          continue
+        }
+        nc = split(EK[i], ks, ",")
+        for (j = 1; j <= nc; j++) {
+          k = ks[j]
+          if (!val_ok(E[i, k], A[i, k])) {
+            # 1e300 is --structure: there is no band to quote.
+            suffix = (band > 1e200) ? "" : sprintf(" (beyond band %g)", band)
+            printf "      line %d: %-22s %s -> %s%s\n", i, k, E[i, k], A[i, k], suffix
+            bad = 1
+          }
+        }
+      }
+      exit bad
+    }' "$1" "$2"
 }
 
 # Per-field report for two summary lines: key: recorded -> rerun.
@@ -200,13 +368,21 @@ SKIPPED=()
 
 echo "R13 gate re-run: $STAMP"
 echo "  rerun logs: $OUT"
+if [ -z "$BAND" ]; then :
+  elif [ "$BAND" = 1e300 ]; then echo "  comparison: structure only (keys, labels, verdicts, finiteness)"
+  else echo "  comparison: relative numeric band $BAND (not byte-exact)"
+fi
 echo
 
 while IFS='|' read -r name cls budget log prog args; do
   if ! selected "$name" "$cls" "$budget" "$log"; then
     skipped=$((skipped + 1))
-    if [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ]; then
+    if [ "$RUN_QUICK" -eq 1 ]; then
+      SKIPPED+=("$name (not in the per-push quick set; --all)")
+    elif [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ]; then
       SKIPPED+=("$name (alternate; --alts)")
+    elif [ "$cls" = canary ] && [ "$RUN_ALL" -eq 0 ]; then
+      SKIPPED+=("$name (canary; --quick)")
     elif [ "$RUN_ALL" -eq 0 ] && [ "$budget" -gt "$SLOW_SECS" ]; then
       SKIPPED+=("$name (budget ${budget}s > ${SLOW_SECS}s; --all)")
     fi
@@ -245,7 +421,13 @@ while IFS='|' read -r name cls budget log prog args; do
     continue
   fi
 
-  if cmp -s "$expected" "$actual"; then
+  matched=0
+  if [ -n "$BAND" ]; then
+    band_cmp "$expected" "$actual" "$BAND" && matched=1
+  else
+    cmp -s "$expected" "$actual" && matched=1
+  fi
+  if [ "$matched" -eq 1 ]; then
     echo "ok   $name ($(wc -l < "$expected") lines, ${elapsed}s)"
     continue
   fi
@@ -253,18 +435,21 @@ while IFS='|' read -r name cls budget log prog args; do
   fail=1
   echo "FAIL $name: summary differs (${elapsed}s)"
   # Walk the two files in parallel; report the first difference per line.
-  mapfile -t expl < "$expected"
-  mapfile -t actl < "$actual"
-  if [ "${#expl[@]}" -ne "${#actl[@]}" ]; then
-    echo "      line count: recorded ${#expl[@]}, rerun ${#actl[@]}"
+  # In --band mode band_cmp has already named the fields beyond tolerance.
+  if [ -z "$BAND" ]; then
+    mapfile -t expl < "$expected"
+    mapfile -t actl < "$actual"
+    if [ "${#expl[@]}" -ne "${#actl[@]}" ]; then
+      echo "      line count: recorded ${#expl[@]}, rerun ${#actl[@]}"
+    fi
+    for i in "${!expl[@]}"; do
+      e=${expl[$i]}
+      a=${actl[$i]:-<missing>}
+      [ "$e" = "$a" ] && continue
+      echo "      line $((i + 1)):"
+      field_diff "$e" "$a"
+    done
   fi
-  for i in "${!expl[@]}"; do
-    e=${expl[$i]}
-    a=${actl[$i]:-<missing>}
-    [ "$e" = "$a" ] && continue
-    echo "      line $((i + 1)):"
-    field_diff "$e" "$a"
-  done
   echo "      full diff: diff -u $expected $actual"
 done <<< "$MANIFEST"
 
@@ -277,7 +462,11 @@ if [ "$fail" -ne 0 ]; then
 fi
 echo "R13 gates reproduce: $ran compared, $skipped not selected."
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
-  echo "  unselected by --skip-slow / --alts:"
+  if [ "$RUN_QUICK" -eq 1 ]; then
+    echo "  unselected by --quick:"
+  else
+    echo "  unselected by --skip-slow / --alts:"
+  fi
   for s in "${SKIPPED[@]}"; do echo "    $s"; done
 fi
 exit 0

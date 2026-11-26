@@ -2704,3 +2704,35 @@ fn the_converged_shift_reaches_48_in_the_odd_block() {
         count.fill
     );
 }
+
+/// Count both reflection blocks to enclose the first two levels of their direct sum.
+#[test]
+fn finite_model_ordered_levels() {
+    let trunc = Truncated::build(&qcd_ym_hamiltonian(2.0), 10);
+    let odd = sector_columns(&trunc, &trunc.sector(false));
+    let even = sector_columns(&trunc, &trunc.sector(true));
+    assert_eq!((odd.len(), even.len()), (420, 581));
+
+    let probes = [(-10.25, 0, 0), (-10.234375, 0, 1), (-9.03125, 0, 1), (-9.015625, 1, 1)];
+    let mut counts = Vec::new();
+    for (shift, expect_odd, expect_even) in probes {
+        let n_odd = inertia_below(&odd, shift).expect("odd count undecided").below;
+        let n_even = inertia_below(&even, shift).expect("even count undecided").below;
+        assert_eq!((n_odd, n_even), (expect_odd, expect_even));
+        counts.push(serde_json::json!({"shift":shift,"odd":n_odd,"even":n_even}));
+    }
+    let row = serde_json::json!({
+        "schema":"qym-finite-reflection-counts/v1", "physical":false,
+        "coupling":2, "cutoff":10, "odd_dimension":odd.len(), "even_dimension":even.len(),
+        "inertia_counts":counts
+    });
+    if let Some(path) = std::env::var_os("QYM_ORDERED_COUNTS_OUTPUT") {
+        std::fs::write(path, format!("{row}\n")).unwrap();
+    } else {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/finite_model_witness/qym_g2_n10_ordered.ndjson");
+        let recorded: serde_json::Value =
+            serde_json::from_reader(std::fs::File::open(path).unwrap()).unwrap();
+        assert_eq!(row, recorded);
+    }
+}

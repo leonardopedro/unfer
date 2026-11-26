@@ -68,6 +68,12 @@ impl WindowOperator {
         self.matrix.nrows()
     }
 
+    /// The dense window matrix `P H P`, for timing probes that need the operator
+    /// itself (`phi4_gemv_device_bench`).
+    pub fn matrix(&self) -> &DMatrix<C> {
+        &self.matrix
+    }
+
     /// Index of the single unit basis label of the seed.
     pub fn seed_index(&self, initial: &NestedVector) -> usize {
         let mut label = None;

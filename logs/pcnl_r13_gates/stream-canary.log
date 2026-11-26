@@ -1,0 +1,28 @@
+## R13 stream comparison: fixture=docs/fixtures/ultrabert_20ng4_embeddings.safetensors rows=240 block=60 prefixes=4 q=2 adam_steps=50 lr=0.02 noise=0.05 prior_sigma=0.05
+## split=contiguous_row_blocks (no document ids in the fixture)
+prefix=1 rows=0..60 warm_test_rmse=0.148586 warm_test_per_coord=[0.1782, 0.1113] warm_coverage90=1.0000 warm_z2=0.029 warm_calib=[(0.5, 0.996), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] warm_secs=0.23 joint_test_rmse=0.148586 joint_test_per_coord=[0.1782, 0.1113] joint_coverage90=1.0000 joint_z2=0.029 joint_calib=[(0.5, 0.996), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] joint_secs=0.22 reset_test_rmse=0.148586 reset_test_per_coord=[0.1782, 0.1113] reset_coverage90=1.0000 reset_z2=0.029 reset_calib=[(0.5, 0.996), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] reset_secs=0.22
+prefix=2 rows=60..120 warm_test_rmse=0.101879 warm_test_per_coord=[0.1206, 0.0789] warm_coverage90=1.0000 warm_z2=0.014 warm_calib=[(0.5, 1.0), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] warm_secs=0.42 joint_test_rmse=0.105639 joint_test_per_coord=[0.1261, 0.0801] joint_coverage90=1.0000 joint_z2=0.016 joint_calib=[(0.5, 1.0), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] joint_secs=0.44 reset_test_rmse=0.180384 reset_test_per_coord=[0.2166, 0.1348] reset_coverage90=1.0000 reset_z2=0.104 reset_calib=[(0.5, 0.95), (0.8, 0.996), (0.9, 1.0), (0.95, 1.0)] reset_secs=0.28
+  retention block=0 warm=0.026002(cov=1.000) joint=0.026568(cov=1.000) reset=0.177936(cov=1.000)
+prefix=3 rows=120..180 warm_test_rmse=0.066642 warm_test_per_coord=[0.0646, 0.0686] warm_coverage90=1.0000 warm_z2=0.024 warm_calib=[(0.5, 1.0), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] warm_secs=0.73 joint_test_rmse=0.109742 joint_test_per_coord=[0.123, 0.0947] joint_coverage90=1.0000 joint_z2=0.038 joint_calib=[(0.5, 0.996), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] joint_secs=0.74 reset_test_rmse=0.212067 reset_test_per_coord=[0.2603, 0.1489] reset_coverage90=0.9917 reset_z2=0.162 reset_calib=[(0.5, 0.9), (0.8, 0.988), (0.9, 0.992), (0.95, 1.0)] reset_secs=0.20
+  retention block=0 warm=0.029598(cov=1.000) joint=0.029964(cov=1.000) reset=0.211458(cov=0.992)
+  retention block=1 warm=0.030746(cov=1.000) joint=0.032980(cov=1.000) reset=0.199934(cov=1.000)
+prefix=4 rows=180..240 warm_test_rmse=0.078607 warm_test_per_coord=[0.0841, 0.0727] warm_coverage90=1.0000 warm_z2=0.085 warm_calib=[(0.5, 0.963), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] warm_secs=0.87 joint_test_rmse=0.095295 joint_test_per_coord=[0.1051, 0.0844] joint_coverage90=1.0000 joint_z2=0.047 joint_calib=[(0.5, 0.992), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] joint_secs=0.87 reset_test_rmse=0.162131 reset_test_per_coord=[0.1988, 0.1143] reset_coverage90=1.0000 reset_z2=0.050 reset_calib=[(0.5, 0.983), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)] reset_secs=0.20
+  retention block=0 warm=0.026624(cov=1.000) joint=0.034185(cov=1.000) reset=0.157151(cov=1.000)
+  retention block=1 warm=0.028188(cov=1.000) joint=0.035158(cov=1.000) reset=0.141826(cov=1.000)
+  retention block=2 warm=0.030274(cov=1.000) joint=0.036822(cov=1.000) reset=0.551158(cov=0.992)
+arm=warm test_rmse_mean=0.098929 per_prefix=[0.148586, 0.101879, 0.066642, 0.078607]
+  arm=warm coverage90_per_prefix=[1.0, 1.0, 1.0, 1.0]
+  arm=warm retention_curve_mean_per_prefix=[0.026002, 0.030172, 0.028362]
+  arm=warm z2_per_prefix=[0.029, 0.014, 0.024, 0.085]
+  arm=warm calibration_mean=[(0.5, 0.99), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)]
+arm=joint test_rmse_mean=0.114816 per_prefix=[0.148586, 0.105639, 0.109742, 0.095295]
+  arm=joint coverage90_per_prefix=[1.0, 1.0, 1.0, 1.0]
+  arm=joint retention_curve_mean_per_prefix=[0.026568, 0.031472, 0.035388]
+  arm=joint z2_per_prefix=[0.029, 0.016, 0.038, 0.047]
+  arm=joint calibration_mean=[(0.5, 0.996), (0.8, 1.0), (0.9, 1.0), (0.95, 1.0)]
+arm=reset test_rmse_mean=0.175792 per_prefix=[0.148586, 0.180384, 0.212067, 0.162131]
+  arm=reset coverage90_per_prefix=[1.0, 1.0, 0.9917, 1.0]
+  arm=reset retention_curve_mean_per_prefix=[0.177936, 0.205696, 0.283378]
+  arm=reset z2_per_prefix=[0.029, 0.104, 0.162, 0.05]
+  arm=reset calibration_mean=[(0.5, 0.957), (0.8, 0.996), (0.9, 0.998), (0.95, 1.0)]
+limitations: synthetic targets; fixture embeddings; contiguous row blocks (no document ids); readout-conditional posterior mean; not a calibration or promotion result

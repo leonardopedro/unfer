@@ -242,21 +242,23 @@ print("CHECK 2  YMH truncation guard len(H_final) / len(s2) / len(s3) (expect 2 
 {uval, vval, gval}::Symbol.
 bdiag := uval - vval + (gval/2) uval vval.
 breflect := -vval + uval + (gval/2) vval uval.
-breflectdiff := (@(breflect))**2 - (@(bdiag))**2.
+# Write the squares as products: distribute does not expand a `**2` power node.
+breflectdiff := (@(breflect)) (@(breflect)) - (@(bdiag)) (@(bdiag)).
 distribute(breflectdiff)
 sort_product(breflectdiff)
 collect_terms(breflectdiff)
-print("CHECK 3 YMH two-mode magnetic reflection (expect 0; new, run pending):", breflectdiff)
+print("CHECK 3 YMH two-mode magnetic reflection (expect 0):", breflectdiff)
 if str(breflectdiff) != "0":
     raise AssertionError("YMH reflection changed the inner magnetic square")
 # Independent coefficient probe keeps the nonabelian cubic and quartic pieces.
-bsquare := (@(bdiag))**2.
-bsquaretarget := uval**2 - 2 uval vval + vval**2 + gval uval**2 vval
-                 - gval uval vval**2 + (gval**2/4) uval**2 vval**2.
+# Products, not powers, on both sides (see CHECK 3).
+bsquare := (@(bdiag)) (@(bdiag)).
+bsquaretarget := uval uval - 2 uval vval + vval vval + gval uval uval vval
+                 - gval uval vval vval + (gval gval/4) uval uval vval vval.
 bexpanded := @(bsquare) - @(bsquaretarget).
 distribute(bexpanded)
 sort_product(bexpanded)
 collect_terms(bexpanded)
-print("CHECK 4 YMH full inner cubic/quartic expansion (expect 0; new, run pending):", bexpanded)
+print("CHECK 4 YMH full inner cubic/quartic expansion (expect 0):", bexpanded)
 if str(bexpanded) != "0":
     raise AssertionError("YMH inner cubic/quartic terms were changed")

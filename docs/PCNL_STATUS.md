@@ -7617,6 +7617,79 @@ each) — the same kernel **passes**: acceptance `2553/5953`, `2456/5941`,
 coverage `0.1583` (38/240), predictive coverage `0.5917` (142/240).  HMC
 reaches the same gate with 750 draws per chain, about 6× fewer.
 
+#### Why the readout-conditional 90% coverage is `0.158` (2026-11-25)
+
+That number is not a sampler or ESS artifact and it is not the posterior's
+calibration: it is the held-out **generalisation** error of the pointed
+backbone showing through a coverage metric. Four things pin it down.
+
+1. **It is sampler-independent.** `readout-exact.log` (HMC, exact mass, leapfrog
+   4, 1,000 steps, 750 draws) reports the *identical* `38/240` and `141/240`;
+   CN at 4,500 and at 9,000 draws both report `38/240` (`141/240` and
+   `142/240`). Four samplers, two kernels, two chain lengths, one count.
+2. **The bands are tight because the backbone memorised the train split.**
+   `adam_fit` trains the whole model, so `train_rmse=0.000286` — far under the
+   `0.05` noise — while `test_rmse=0.099276` is ~2× the noise. Freezing that
+   backbone and sampling the 34 readout coordinates against an exact
+   likelihood with `σ=0.05` (whose fit is essentially perfect on train) gives a
+   posterior prediction band of sd ≈ `0.013`, i.e. half-width ≈ `0.021`.
+3. **The observations sit outside it.** With band half-width `0.021` and
+   held-out residual sd ≈ `0.099`, a Gaussian residual model predicts parameter
+   coverage `15.8%` — the measured value.
+4. **The predictive line closes the loop.** Adding only `σ=0.05` in quadrature
+   gives half-width `√(0.013² + 0.05²)·1.645 = 0.085`, which against the same
+   residuals predicts `59%` (measured `58.75%`). Solving both coverages
+   jointly for the residual sd gives `0.1035` against the logged `test_rmse`
+   `0.0993` — a 4% mismatch.
+
+So `param_interval90_coverage` here compares a held-out observation against the
+credible band of the *predicted mean*; it inherits the backbone's held-out
+error and is a misspecification/generalisation diagnostic. The row's own
+`limitations:` line already declines a calibration claim.
+
+**The conditioning-split check (2026-11-25).** Readout-only runs now print a
+`calibration conditioning_split=train ...` line — the same 90% bands scored on
+the split the likelihood actually conditions on, plus the residual sd there,
+its degrees-of-freedom-corrected value, and the declared noise. The line is
+part of the summary set `scripts/check-pcnl-gates` diffs, so it cannot drift
+silently.
+
+| row | train param 90% | train predictive 90% | band half-width | residual sd | residual sd (df-adj) | declared σ |
+|---|---|---|---|---|---|---|
+| `readout-exact` (HMC, 3,000 draws) | `480/480` | `480/480` | `0.018983` | `0.004343` | `0.004505` (df `446`) | `0.05` |
+| `cn-exact-dense` (CN, 18,000 draws) | `480/480` | `480/480` | `0.019031` | `0.004451` | `0.004618` (df `446`) | `0.05` |
+| `pilot-calibrated` (full parameter, 1,200 draws) | `478/480` | `480/480` | `0.066869` | `0.018003` | `NaN` (df `−56,898`) | `0.05` |
+
+The bands are calibrated on the split they condition on, under both kernels:
+both cover every one of the 480 train observations, exactly as the analytic
+linear-Gaussian posterior requires. The `0.158` therefore belongs to the
+held-out split, not to the sampler.
+
+**The full-parameter contrast (2026-11-25).** `--calibration` adds the same line
+to a full-parameter run, so `pilot-calibrated` scores the *identical* train rows
+and 90% band while marginalising all 57,378 coordinates. The band is **3.5×
+wider** (`0.0669` vs `0.0190`) and the in-sample residual sd four times larger
+(`0.0180` vs `0.0044`), which is exactly the point: the readout-conditional
+band is tight because the frozen backbone already fits train, not because the
+sampler is overconfident. On train the full posterior over-covers (`478/480`
+parameter, `480/480` predictive) while on the held-out split the *same* run
+covers only `170/240` and `200/240` — in-sample it has absorbed the noise, so
+its train coverage is the memorisation again and the held-out numbers are the
+honest ones. `df` is `480 − 57,378 < 0`, so the df-adjusted residual sd is
+`NaN` by construction: with more parameters than train targets there is no
+unbiased in-sample noise estimate, which is why the full-parameter row can only
+supply the width contrast. The row is an `alt` (opt-in) entry: emitting the
+line by default would invalidate every committed full-parameter log.
+
+The same line also answers "estimate the noise scale", and the answer is that
+this split cannot: the frozen backbone was fitted on train, so the in-sample
+residual (`0.0043–0.0045`) is an order of magnitude *below* the declared
+`0.05`, and it is the held-out residual sd (`0.0993`) that dominates the
+coverage arithmetic in points 3–4 above. The check certifies the conditional
+posterior and the generalisation diagnosis; it does not re-estimate σ from data,
+and the row remains a readout-conditional result rather than a calibration
+claim for the full model.
+
 ### CN dimension-sweep scaling (2026-11-23)
 
 `examples/cn_dimension_sweep.rs` runs the production prior-referenced CN
@@ -7728,7 +7801,34 @@ root against `./target/release/examples/vector_regression` (or
 and print into `logs/pcnl_r13_gates/`, which is committed together with
 `scripts/check-pcnl-gates` — that script re-runs every one of these commands
 and diffs the summary lines against the committed log, so a stale log or a
-command that has drifted from its log fails loudly instead of silently.
+command that has drifted from its log fails loudly instead of silently. The
+per-push CI lane runs `--quick`, which now selects three *canary* rows instead
+of the full gate rows: `stream-canary` (50 Adam steps, 6 s), `pilot-canary`
+(100 HMC steps, 45 s) and `readout-canary` (100-step exact-mass chain, 43 s),
+94 s total on an idle machine against 492 s for the full twins. Each canary is
+the same program, code path and seed at a reduced length, so a behaviour change
+still moves its numbers, but their R̂/ESS are a drift baseline and **not** a
+convergence claim — the `gate=` verdict is `false` at that length by
+construction, and every table in this section cites the full rows. The full
+rows remain in the default sweep and in the scheduled `--all` lane; the default
+sweep skips canaries (they are subsumed) and both lanes print every row they
+did not run. This is the trade the per-push budget forces: ~2 min of coverage
+that fires on the push, with the complete gate sweep still scheduled.
+
+The hosted runner is not the recording machine, so the lane compares with
+`--structure`, not byte-for-byte, and the first GitHub runs are why. Measured on
+that runner with no code change: the 50-step Adam canary moved
+`test_rmse_mean` by 0.1% and one `z2` by 4.7%, and the 100-step HMC canary
+moved `rhat_rank` `2.54906 → 1.91680` and `ess_tail` `13.4 → 22.8` — at 75
+draws per chain those diagnostics are noise rather than estimates, and one
+accept/reject flip also changes the counts inside `(93/240)`. So the lane
+checks what is portable: the key sequence, the `gate=`/`sample_space=` words,
+that every number stays finite (a `NaN` must stay `NaN`), and that the run
+exits 0. Byte-exact reproduction stays `./scripts/check-pcnl-gates` on the
+machine that recorded the logs, which is why that is the default; the
+scheduled `--all` lane, whose rows are long enough for ESS/R̂ to mean something,
+uses `--band 0.2` as a gross-drift net. The lesson generalises: a committed log
+is machine-local evidence, and only structure travels.
 
 The four full-parameter rows (`pilot`, `hessian-64`, `lowrank-8`,
 `lowrank-32`) carried a flag the first reconstruction of this table dropped:
@@ -7756,6 +7856,7 @@ RMSE `0.130804` instead of `0.144261` for the pilot row and
 | continual stream — coverage90 0.983–1.000, z² 0.02–0.36 | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | `logs/pcnl_r13_gates/stream.log` (re-verified: warm coverage `1.0/1.0/0.9917/0.9833`, z² `0.032/0.024/0.275/0.356`) |
 | CN exact-dense, 6,000 steps — R̂ 1.00616, ESS 620.9, tail 201.3, RMSE 0.105528 (`gate=true`) | `vector_regression --readout-only --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 6000 --burn 1500 --thin 1 --draws 4500 --chains 4` | `logs/pcnl_r13_gates/cn-exact-dense.log` (re-verified; readout-conditional, dim 34) |
 | CN exact-dense, 12,000 steps — R̂ 1.00423, ESS 1720.5, tail 1107.3, RMSE 0.105396 (`gate=true`) | as above with `--steps 12000 --burn 3000 --draws 9000` | `logs/pcnl_r13_gates/cn-exact-dense-12k.log` (length-scaling probe, not a new gate) |
+| CN exact-dense, 24,000 steps — R̂ 1.00274, ESS 3920.6, tail 2144.3, RMSE 0.105362 (`gate=true`) | as above with `--steps 24000 --burn 3000 --draws 21000` | `logs/pcnl_r13_gates/cn-exact-dense-24k.log` (length-scaling probe; ~3,100 s) |
 
 The readout, pilot, Hessian, low-rank 8/32 (with and without jitter), hit-and-run
 400/5,000, q/k gate, basins and stream rows were re-executed and match to the
@@ -7794,16 +7895,20 @@ the system mid-session, so only the numbers in this table survive for those:
   `0.121815`) with `--steps 5000 --thin 2 --draws 1875`, i.e. burn `1,250`
   derived from `steps/4`. Twelve times the moves of the 400-move gate buys ESS
   `4.5` against `4.9`: the plateau is not a move-count problem.
-- **CN ESS is length-limited, not stuck** (`cn-exact-dense-12k`, kept as an
-  alternate). Doubling the chain of the 6,000-step CN row — `--steps 12000
-  --burn 3000 --draws 9000`, same start, same proposal — gives ESS `1720.5`
-  against `620.9` (2.8× for 2× the draws, so the earlier figure was also
-  truncated by the estimator at 4,500 draws), tail ESS `1107.3` against
-  `201.3`, R̂ `1.00423` against `1.00616`, and an unchanged point estimate
-  (RMSE `0.105396` vs `0.105528`, `param_interval90_coverage` `0.1583` both
-  runs, predictive `141/240` vs `142/240`). The mixing caveat on this row is
-  therefore finite-sample, not a failure to explore; the 90% interval coverage
-  of `0.158` is still far from nominal and is not a promotion.
+- **CN ESS is length-limited, not stuck** (`cn-exact-dense-12k` and `-24k`,
+  kept as alternates). Doubling the chain of the 6,000-step CN row — `--steps
+  12000 --burn 3000 --draws 9000`, same start, same proposal — gives ESS
+  `1720.5` against `620.9` (2.8× for 2× the draws, so the earlier figure was
+  also truncated by the estimator at 4,500 draws), tail ESS `1107.3` against
+  `201.3`, R̂ `1.00423` against `1.00616`, and unchanged coverage counts. The
+  24,000-step probe (`--draws 21000`, 18,000 draws per chain) continues the
+  line: ESS `3920.6` (2.28× the 12k value for 2× the steps), tail ESS `2144.3`,
+  R̂ `1.00274`, RMSE `0.105362`, `gate=true` — so the growth is not
+  plateauing. The mixing caveat on this row is therefore finite-sample, not a
+  failure to explore; the 90% interval coverage of `0.158` is still far from
+  nominal and is not a promotion. The 24k run also exposed a memory defect
+  (the example copied every expanded draw, doubling peak to ~25 GB); the
+  scoring path now borrows the draws, so its peak is ~16 GB like the 12k row.
 - **low-rank 32 + trajectory jitter — recovered**, on the same flag the other
   legacy rows needed: `--start-scale legacy`. With it the run returns R̂
   `2.14626`, ESS `5.1`, tail `10.0`, RMSE `0.092472` exactly. Without the flag

@@ -223,7 +223,6 @@ fn emit_finite_model_witness_row() {
 
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/finite_model_witness");
-    fs::create_dir_all(&dir).expect("fixture dir");
     let line = serde_json::json!({
         "kind": "finite_model_witness",
         "hamiltonian": "qcd_ym_hamiltonian(g)",
@@ -239,8 +238,21 @@ fn emit_finite_model_witness_row() {
         "exact_gap_at_cutoff": exact_gap,
         "physical": false
     });
-    fs::write(dir.join("qym_g2_n10_count.ndjson"), format!("{line}\n"))
-        .expect("write fixture");
+    if let Some(output) = std::env::var_os("QYM_TEMPLE_ROW_OUTPUT") {
+        fs::write(output, format!("{line}\n")).expect("write requested Temple row");
+    } else {
+        let fixture = fs::File::open(dir.join("qym_g2_n10_count.ndjson")).expect("Temple fixture");
+        let recorded: serde_json::Value = serde_json::from_reader(fixture).expect("Temple JSON");
+        for key in ["kind", "hamiltonian", "coupling", "cutoff", "dimension", "physical"] {
+            assert_eq!(line[key], recorded[key], "{key}");
+        }
+        // Eigenvectors and their residuals vary at roundoff across numerical libraries.
+        for key in ["theta_odd", "theta_even", "beta_lambda2_odd", "temple_bound",
+                    "exact_gap_at_cutoff", "residual_odd"] {
+            let difference = line[key].as_f64().unwrap() - recorded[key].as_f64().unwrap();
+            assert!(difference.abs() < 1e-10, "{key}: {difference}");
+        }
+    }
     eprintln!(
         "emitted finite-model witness: g={g}, N<={n_max}, temple={bound:.9}, exact={exact_gap:.9}, beta={beta:.9}"
     );
