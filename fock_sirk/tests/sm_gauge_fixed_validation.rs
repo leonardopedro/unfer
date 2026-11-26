@@ -64,6 +64,9 @@ fn sm_gf_magnetic_field_abelian_reduction() {
         }
     }
     let mut nonabelian_norm2 = 0.0;
+    // Three cyclic tensor indices read simultaneously (`derivative[j][k][a]`
+    // in the inner loops), so an index loop is the readable form here.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..3 {
         for a in 0..3 {
             let j_cyc = (i + 1) % 3;
@@ -509,8 +512,8 @@ fn sm_audit_sum(a: &SmAuditMatrix, b: &SmAuditMatrix, scale: Complex64) -> SmAud
 
 fn sm_audit_identity(dim: usize) -> SmAuditMatrix {
     let mut m = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
-    for i in 0..dim {
-        m[i][i] = Complex64::new(1.0, 0.0);
+    for (i, row) in m.iter_mut().enumerate() {
+        row[i] = Complex64::new(1.0, 0.0);
     }
     m
 }
@@ -561,8 +564,8 @@ fn sm_gf_canonical_pair_uses_one_mode_and_keeps_cutoff_defect() {
         &sm_audit_mul(&p, &q),
         Complex64::new(-1.0, 0.0),
     );
-    for i in 0..dim {
-        for j in 0..dim {
+    for (i, row) in comm.iter().enumerate() {
+        for (j, value) in row.iter().enumerate() {
             let expected = if i != j {
                 Complex64::new(0.0, 0.0)
             } else if i == dim - 1 {
@@ -570,7 +573,7 @@ fn sm_gf_canonical_pair_uses_one_mode_and_keeps_cutoff_defect() {
             } else {
                 Complex64::new(0.0, 1.0)
             };
-            assert!((comm[i][j] - expected).norm() < 1e-12);
+            assert!((value - expected).norm() < 1e-12);
         }
     }
     // Negative control, as a TENSOR PRODUCT: q on factor 0 and p on factor 1

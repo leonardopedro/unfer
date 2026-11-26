@@ -35,14 +35,14 @@ pub use escrow::{Escrow, EscrowService, EscrowState};
 pub use idempotency::IdempotencyStore;
 pub use identity::IdentityRegistry;
 pub use jobs::{
-    ClaimState, Fence, FenceTable, FencedSink, JobClaim, JobCommand, JobQueue, JobState,
-    OrderedMockSink, JOB_COMMAND_SCHEMA,
+    ClaimState, Fence, FenceTable, FencedSink, JOB_COMMAND_SCHEMA, JobClaim, JobCommand, JobQueue,
+    JobState, OrderedMockSink,
 };
 pub use lease::LeaderLease;
 pub use mathbond::MathBondLedger;
 pub use mathbond_market::MarketLedger;
 pub use node::ConsensusNode;
-pub use signing::{sign_transaction, verify_transaction, Keypair};
+pub use signing::{Keypair, sign_transaction, verify_transaction};
 pub use storage::{
     JournalRecord, Recovery, RequestRecord, StorageError, TransitionLog, TransitionRecord,
 };

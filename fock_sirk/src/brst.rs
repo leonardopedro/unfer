@@ -177,7 +177,7 @@ fn ghost_lowering_modes(q: &Hamiltonian) -> Option<BTreeSet<u32>> {
 }
 
 /// Exact orthogonal projection onto `ker Q` for a ghost-lowering charge
-/// (`Q = Σ_k A_k c_{g_k}`, see [`ghost_lowering_modes`]).
+/// (`Q = Σ_k A_k c_{g_k}`, see `ghost_lowering_modes`).
 ///
 /// `P w` deletes every Fock component whose inner state carries a fermion in
 /// one of `Q`'s ghost modes. That is exact, needs no solve, and is the
@@ -191,7 +191,7 @@ fn ghost_lowering_modes(q: &Hamiltonian) -> Option<BTreeSet<u32>> {
 ///   (hence `w` is ghost-free) **provided `A_g` has trivial kernel**.
 /// * `P` is diagonal in the Fock basis, hence self-adjoint and idempotent.
 ///
-/// The injectivity of `A_g` is **checked**, not assumed: [`ghost_lowering_modes`]
+/// The injectivity of `A_g` is **checked**, not assumed: `ghost_lowering_modes`
 /// proves it for a co-factor that is a constant plus a Hermitian (or
 /// anti-Hermitian) degree-1 ladder combination — which covers both charges
 /// that need this path, YM's `Σ_m π_m` and NS's real `Σ_k A_{jk} u_k` —

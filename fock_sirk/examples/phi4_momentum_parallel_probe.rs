@@ -141,7 +141,8 @@ fn main() {
             let started = Instant::now();
             for _ in 0..reps {
                 let mut target = state.clone();
-                std::hint::black_box(parallel_axpy(&mut target, &image, threads, limits));
+                parallel_axpy(&mut target, &image, threads, limits);
+                std::hint::black_box(());
             }
             let paxpy = started.elapsed().as_secs_f64() / reps as f64 - clone;
             parallel.push((threads, pdot, paxpy, worst));

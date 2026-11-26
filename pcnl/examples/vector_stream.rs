@@ -5,12 +5,12 @@
 //! At each prefix boundary three predictors are trained with the same objective,
 //! optimizer settings and prior:
 //!
-//! * `warm`   — Adam continues from the previous prefix's full parameter vector
-//!              on every row seen so far;
-//! * `joint`  — Adam restarts from the fixed initial vector on every row seen
-//!              so far (the same data as `warm`);
-//! * `reset`  — Adam restarts from the fixed initial vector on the **new block
-//!              only** (the forgetting control).
+//! * `warm` — Adam continues from the previous prefix's full parameter vector
+//!   on every row seen so far;
+//! * `joint` — Adam restarts from the fixed initial vector on every row seen
+//!   so far (the same data as `warm`);
+//! * `reset` — Adam restarts from the fixed initial vector on the **new block
+//!   only** (the forgetting control).
 //!
 //! Each arm's prediction is the mean of its readout-conditional posterior
 //! `N(m, A⁻¹)` with the trained backbone frozen, which for a Gaussian target is
@@ -229,6 +229,7 @@ fn main() {
         .iter()
         .map(|name| (name.to_string(), Vec::new()))
         .collect();
+    #[allow(clippy::type_complexity)]
     let mut calib: Vec<(String, Vec<Vec<(f64, f64)>>)> = ["warm", "joint", "reset"]
         .iter()
         .map(|name| (name.to_string(), Vec::new()))
@@ -241,10 +242,9 @@ fn main() {
         let seen_y = &train_y[..end * shapes.output];
         let new_x = &train_x[start * shapes.input..end * shapes.input];
         let new_y = &train_y[start * shapes.output..end * shapes.output];
-        let seen =
-            VectorRegression::new(shapes.clone(), seen_x.to_vec(), seen_y.to_vec(), noise, 1.0)
-                .expect("seen target");
-        let new = VectorRegression::new(shapes.clone(), new_x.to_vec(), new_y.to_vec(), noise, 1.0)
+        let seen = VectorRegression::new(shapes, seen_x.to_vec(), seen_y.to_vec(), noise, 1.0)
+            .expect("seen target");
+        let new = VectorRegression::new(shapes, new_x.to_vec(), new_y.to_vec(), noise, 1.0)
             .expect("new target");
 
         let mut arms: Vec<(&str, Vec<f32>, f64, ExactPosterior)> = Vec::new();
@@ -255,7 +255,7 @@ fn main() {
         ] {
             let t0 = Instant::now();
             let init_t =
-                Tensor::from_vec(init, shapes.flat_size(), &scratch.device()).expect("init tensor");
+                Tensor::from_vec(init, shapes.flat_size(), scratch.device()).expect("init tensor");
             let (theta, _) = adam_fit(target, init_t, adam_steps, lr);
             let flat = theta.to_vec1::<f32>().expect("flat theta");
             // Readout-conditional exact posterior mean over the frozen backbone.
@@ -363,16 +363,16 @@ fn main() {
                     .collect::<Vec<_>>()
             );
         }
-        if let Some((_, values)) = z2.iter().find(|(n, _)| n == name) {
-            if !values.is_empty() {
-                println!(
-                    "  arm={name} z2_per_prefix={:?}",
-                    values
-                        .iter()
-                        .map(|v| (v * 1e3).round() / 1e3)
-                        .collect::<Vec<_>>()
-                );
-            }
+        if let Some((_, values)) = z2.iter().find(|(n, _)| n == name)
+            && !values.is_empty()
+        {
+            println!(
+                "  arm={name} z2_per_prefix={:?}",
+                values
+                    .iter()
+                    .map(|v| (v * 1e3).round() / 1e3)
+                    .collect::<Vec<_>>()
+            );
         }
         if let Some((_, prefixes)) = calib.iter().find(|(n, _)| n == name) {
             // Average the empirical coverage at each nominal level.

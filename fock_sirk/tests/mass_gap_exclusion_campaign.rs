@@ -141,7 +141,6 @@ fn r_odd_start() -> QuantumState {
 /// builds sectors by pairing ([`Truncated::sector`]) instead.
 struct Truncated {
     basis: Vec<QuantumState>,
-    index: HashMap<OuterState, usize>,
     columns: Vec<Vec<(usize, f64)>>,
     /// `reflection[i] = (j, sign)` with `R|i⟩ = sign·|j⟩`.
     reflection: Vec<(usize, f64)>,
@@ -209,7 +208,6 @@ impl Truncated {
         }
         Self {
             basis,
-            index,
             columns,
             reflection,
             leak: leak.sqrt(),
@@ -776,7 +774,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
     }
 
     let header = |solver: Solver| {
-        println!("\n{} — {}", solver.label(), "H_N rows, m = 12");
+        println!("\n{} — H_N rows, m = 12", solver.label());
         println!(
             "{:>4} {:>3} {:>4} {:>5} {:>12} {:>9} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} \
              {:>10}",
@@ -2713,11 +2711,20 @@ fn finite_model_ordered_levels() {
     let even = sector_columns(&trunc, &trunc.sector(true));
     assert_eq!((odd.len(), even.len()), (420, 581));
 
-    let probes = [(-10.25, 0, 0), (-10.234375, 0, 1), (-9.03125, 0, 1), (-9.015625, 1, 1)];
+    let probes = [
+        (-10.25, 0, 0),
+        (-10.234375, 0, 1),
+        (-9.03125, 0, 1),
+        (-9.015625, 1, 1),
+    ];
     let mut counts = Vec::new();
     for (shift, expect_odd, expect_even) in probes {
-        let n_odd = inertia_below(&odd, shift).expect("odd count undecided").below;
-        let n_even = inertia_below(&even, shift).expect("even count undecided").below;
+        let n_odd = inertia_below(&odd, shift)
+            .expect("odd count undecided")
+            .below;
+        let n_even = inertia_below(&even, shift)
+            .expect("even count undecided")
+            .below;
         assert_eq!((n_odd, n_even), (expect_odd, expect_even));
         counts.push(serde_json::json!({"shift":shift,"odd":n_odd,"even":n_even}));
     }

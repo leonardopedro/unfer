@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use unfer_protocol::durable::{streams, DurableStore};
+use unfer_protocol::durable::{DurableStore, streams};
 use unfer_protocol::types::EffectKind;
 
 /// A lowercase hex sha256 digest.
@@ -184,9 +184,7 @@ impl DispatchState {
     fn is_terminal_for_retry(self) -> bool {
         matches!(
             self,
-            DispatchState::Acknowledged
-                | DispatchState::Reconciling
-                | DispatchState::Refused
+            DispatchState::Acknowledged | DispatchState::Reconciling | DispatchState::Refused
         )
     }
 }
@@ -240,12 +238,16 @@ pub enum DispatchError {
 impl std::fmt::Display for DispatchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DispatchError::UnknownRequest => write!(f, "no committed effect intent for that request"),
+            DispatchError::UnknownRequest => {
+                write!(f, "no committed effect intent for that request")
+            }
             DispatchError::ApprovalMismatch => write!(
                 f,
                 "the approval does not bind this request/resource/epoch/payload digest"
             ),
-            DispatchError::Refused(reason) => write!(f, "policy refused at the execution point: {reason}"),
+            DispatchError::Refused(reason) => {
+                write!(f, "policy refused at the execution point: {reason}")
+            }
             DispatchError::WrongState(state) => write!(f, "effect is in state {state:?}"),
             DispatchError::Storage(error) => write!(f, "durable store refused the record: {error}"),
         }
@@ -393,7 +395,10 @@ impl Dispatcher {
         Ok(())
     }
 
-    fn load(&self, request_id: &str) -> Result<(EffectIntent, DispatchState, String), DispatchError> {
+    fn load(
+        &self,
+        request_id: &str,
+    ) -> Result<(EffectIntent, DispatchState, String), DispatchError> {
         self.entries
             .lock()
             .unwrap()
@@ -431,9 +436,10 @@ impl Dispatcher {
         let outcome = sink.dispatch(&key, &intent);
         let (next, detail) = match &outcome {
             SinkOutcome::Applied(value) => (DispatchState::Acknowledged, Some(value.clone())),
-            SinkOutcome::Retryable(reason) => {
-                (DispatchState::Retryable, Some(serde_json::json!({ "retryable": reason })))
-            }
+            SinkOutcome::Retryable(reason) => (
+                DispatchState::Retryable,
+                Some(serde_json::json!({ "retryable": reason })),
+            ),
             SinkOutcome::Uncertain(reason) => {
                 let state = if sink.dedups() {
                     DispatchState::Uncertain
@@ -520,18 +526,14 @@ mod tests {
         fn new() -> Arc<Self> {
             Arc::new(Self::default())
         }
-
-        fn copy_into(&self, other: &MemStore) {
-            let streams = self.streams.lock().unwrap();
-            let mut target = other.streams.lock().unwrap();
-            for (name, records) in streams.iter() {
-                target.insert(name.clone(), records.clone());
-            }
-        }
     }
 
     impl DurableStore for MemStore {
-        fn append(&self, stream: &str, record: &[u8]) -> Result<(), unfer_protocol::durable::DurableError> {
+        fn append(
+            &self,
+            stream: &str,
+            record: &[u8],
+        ) -> Result<(), unfer_protocol::durable::DurableError> {
             self.streams
                 .lock()
                 .unwrap()
@@ -546,7 +548,10 @@ mod tests {
             Ok(())
         }
 
-        fn replay(&self, stream: &str) -> Result<Vec<Vec<u8>>, unfer_protocol::durable::DurableError> {
+        fn replay(
+            &self,
+            stream: &str,
+        ) -> Result<Vec<Vec<u8>>, unfer_protocol::durable::DurableError> {
             Ok(self
                 .streams
                 .lock()
@@ -580,7 +585,9 @@ mod tests {
 
     impl DurableStore for BrokenStore {
         fn append(&self, _: &str, _: &[u8]) -> Result<(), unfer_protocol::durable::DurableError> {
-            Err(unfer_protocol::durable::DurableError::Io("disk full".into()))
+            Err(unfer_protocol::durable::DurableError::Io(
+                "disk full".into(),
+            ))
         }
 
         fn flush(&self) -> Result<(), unfer_protocol::durable::DurableError> {
@@ -691,11 +698,17 @@ mod tests {
             Some(intent.idempotency_key())
         );
 
-        let sink = CountingSink::new(true, SinkOutcome::Applied(serde_json::json!({ "ok": true })));
+        let sink = CountingSink::new(
+            true,
+            SinkOutcome::Applied(serde_json::json!({ "ok": true })),
+        );
         let outcome = dispatcher
             .dispatch(&intent.approval(), &sink, &allow)
             .unwrap();
-        assert_eq!(outcome, SinkOutcome::Applied(serde_json::json!({ "ok": true })));
+        assert_eq!(
+            outcome,
+            SinkOutcome::Applied(serde_json::json!({ "ok": true }))
+        );
         assert_eq!(sink.calls(), 1);
         assert_eq!(dispatcher.state("req-1"), Some(DispatchState::Acknowledged));
     }
@@ -722,7 +735,11 @@ mod tests {
             Err(DispatchError::Storage(_))
         ));
         let sink = CountingSink::new(true, SinkOutcome::Applied(serde_json::json!({})));
-        assert!(dispatcher.dispatch(&intent.approval(), &sink, &allow).is_err());
+        assert!(
+            dispatcher
+                .dispatch(&intent.approval(), &sink, &allow)
+                .is_err()
+        );
         assert_eq!(sink.calls(), 0);
     }
 
@@ -786,11 +803,10 @@ mod tests {
         let dispatcher = Dispatcher::open(MemStore::new()).unwrap();
         let intent = intent("req-1", serde_json::json!({}));
         dispatcher.commit(&intent).unwrap();
-        let sink = CountingSink::new(
-            true,
-            SinkOutcome::Retryable("sink busy".to_string()),
-        );
-        dispatcher.dispatch(&intent.approval(), &sink, &allow).unwrap();
+        let sink = CountingSink::new(true, SinkOutcome::Retryable("sink busy".to_string()));
+        dispatcher
+            .dispatch(&intent.approval(), &sink, &allow)
+            .unwrap();
         assert_eq!(dispatcher.state("req-1"), Some(DispatchState::Retryable));
 
         sink.set_outcome(SinkOutcome::Applied(serde_json::json!({ "ok": true })));
@@ -844,7 +860,9 @@ mod tests {
         let intent = intent("req-1", serde_json::json!({}));
         dispatcher.commit(&intent).unwrap();
         let sink = CountingSink::new(false, SinkOutcome::Uncertain("timeout".to_string()));
-        dispatcher.dispatch(&intent.approval(), &sink, &allow).unwrap();
+        dispatcher
+            .dispatch(&intent.approval(), &sink, &allow)
+            .unwrap();
         assert_eq!(
             dispatcher.state("req-1"),
             Some(DispatchState::Reconciling),
@@ -863,7 +881,9 @@ mod tests {
         let intent = intent("req-1", serde_json::json!({}));
         dispatcher.commit(&intent).unwrap();
         let sink = CountingSink::new(true, SinkOutcome::Uncertain("timeout".to_string()));
-        dispatcher.dispatch(&intent.approval(), &sink, &allow).unwrap();
+        dispatcher
+            .dispatch(&intent.approval(), &sink, &allow)
+            .unwrap();
         assert_eq!(dispatcher.state("req-1"), Some(DispatchState::Uncertain));
 
         sink.set_outcome(SinkOutcome::Applied(serde_json::json!({})));
@@ -885,10 +905,7 @@ mod tests {
         let sink = CountingSink::new(false, SinkOutcome::Applied(serde_json::json!({})));
         assert_eq!(recovered.resume("req-1", &sink, &allow).unwrap(), None);
         assert_eq!(sink.calls(), 0);
-        assert_eq!(
-            recovered.state("req-1"),
-            Some(DispatchState::Reconciling)
-        );
+        assert_eq!(recovered.state("req-1"), Some(DispatchState::Reconciling));
     }
 
     #[test]

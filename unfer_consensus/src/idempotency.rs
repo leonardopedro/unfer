@@ -185,15 +185,17 @@ impl RequestId {
             self.principal.as_str(),
             self.incarnation,
         ))
-        .unwrap_or_else(|_| format!("{}:{}:{}", self.deployment, self.principal, self.incarnation))
+        .unwrap_or_else(|_| {
+            format!(
+                "{}:{}:{}",
+                self.deployment, self.principal, self.incarnation
+            )
+        })
     }
 
     /// A short rendering for diagnostics (never the full principal list).
     pub fn label(&self) -> String {
-        format!(
-            "{}#{}:{}",
-            self.principal, self.incarnation, self.sequence
-        )
+        format!("{}#{}:{}", self.principal, self.incarnation, self.sequence)
     }
 }
 
@@ -218,7 +220,10 @@ pub enum AdmittedOutcome {
     /// Submitted, commitment not yet known.
     Pending { submission: SubmissionId },
     /// Committed and applied at `slot`.
-    Accepted { submission: SubmissionId, slot: Slot },
+    Accepted {
+        submission: SubmissionId,
+        slot: Slot,
+    },
     /// In the log, applied, and refused by the domain: a stable verdict, safe
     /// to replay to a retrying client.
     Rejected(Refusal),
@@ -336,11 +341,7 @@ impl AdmissionBook {
 
     /// Override the incarnation bounds (operator policy, or a small value in a
     /// test). Both are floored at 1: a book that admits nobody is not a policy.
-    pub fn with_incarnation_limits(
-        mut self,
-        max_scopes: usize,
-        max_incarnations: usize,
-    ) -> Self {
+    pub fn with_incarnation_limits(mut self, max_scopes: usize, max_incarnations: usize) -> Self {
         self.max_scopes = max_scopes.max(1);
         self.max_incarnations = max_incarnations.max(1);
         self
@@ -350,9 +351,7 @@ impl AdmissionBook {
     pub fn incarnations(&self, deployment: &str, principal: &str) -> usize {
         self.clients
             .values()
-            .filter(|w| {
-                w.identity.deployment == deployment && w.identity.principal == principal
-            })
+            .filter(|w| w.identity.deployment == deployment && w.identity.principal == principal)
             .count()
     }
 
@@ -447,10 +446,10 @@ impl AdmissionBook {
     /// Record the settled outcome. A refusal is cached (it is a deterministic
     /// verdict); a pending or timed-out request stays pending.
     pub fn settle(&mut self, id: &RequestId, outcome: AdmittedOutcome) {
-        if let Some(window) = self.clients.get_mut(&id.scope()) {
-            if let Some(admission) = window.entries.get_mut(&id.sequence) {
-                admission.outcome = outcome;
-            }
+        if let Some(window) = self.clients.get_mut(&id.scope())
+            && let Some(admission) = window.entries.get_mut(&id.sequence)
+        {
+            admission.outcome = outcome;
         }
     }
 
@@ -553,7 +552,7 @@ impl<S: RequestSequenceStore> ClientRequests<S> {
                     Code::STORAGE_FAILED,
                     format!("could not read the client sequence: {error}"),
                     Severity::Error,
-                ))
+                ));
             }
         };
         Ok(Self {
@@ -567,6 +566,9 @@ impl<S: RequestSequenceStore> ClientRequests<S> {
     /// Allocate the next request id, persisted **before** it is returned. On a
     /// store failure the sequence does not advance, so the caller may retry and
     /// the id it eventually sends is the one that was made durable.
+    // A monotonic request-id allocator, not an iterator: the result is
+    // persisted before it is handed out, so it is `Result`-shaped.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<RequestId, Diagnostic> {
         let sequence = self.state.sequence.checked_add(1).ok_or_else(|| {
             Diagnostic::new(
@@ -623,9 +625,9 @@ impl FileSequenceStore {
 impl RequestSequenceStore for FileSequenceStore {
     fn load(&self) -> Result<Option<ClientSequence>, String> {
         match std::fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map(Some)
-                .map_err(|error| format!("corrupt client sequence {}: {error}", self.path.display())),
+            Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| {
+                format!("corrupt client sequence {}: {error}", self.path.display())
+            }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(format!(
                 "could not read client sequence {}: {error}",
@@ -646,12 +648,12 @@ impl RequestSequenceStore for FileSequenceStore {
             .map_err(|error| format!("could not fsync {}: {error}", temporary.display()))?;
         std::fs::rename(&temporary, &self.path)
             .map_err(|error| format!("could not publish {}: {error}", self.path.display()))?;
-        if let Some(parent) = self.path.parent() {
-            if let Ok(directory) = std::fs::File::open(parent) {
-                directory.sync_all().map_err(|error| {
-                    format!("could not fsync {}: {error}", parent.display())
-                })?;
-            }
+        if let Some(parent) = self.path.parent()
+            && let Ok(directory) = std::fs::File::open(parent)
+        {
+            directory
+                .sync_all()
+                .map_err(|error| format!("could not fsync {}: {error}", parent.display()))?;
         }
         Ok(())
     }
@@ -844,10 +846,7 @@ mod tests {
         // the record capacity could be bypassed one incarnation at a time.
         assert_eq!(
             book.admit(&RequestId::new("f", "did:unfer:alice", 3, 1), [9u8; 32]),
-            AdmissionVerdict::IncarnationsExhausted {
-                limit: 2,
-                known: 2,
-            }
+            AdmissionVerdict::IncarnationsExhausted { limit: 2, known: 2 }
         );
         // Retiring a finished run is the only way to regain headroom, and it is
         // the client's declaration: it must never retry under a retired
@@ -875,8 +874,16 @@ mod tests {
         // windows a client invents are bounded by `max_scopes`. A book that
         // counted only records would grow one map entry per invented window.
         let mut book = AdmissionBook::new(1024).with_incarnation_limits(2, 8);
-        book.record(&RequestId::new("f", "did:unfer:alice", 1, 1), SubmissionId(1), [1u8; 32]);
-        book.record(&RequestId::new("f", "did:unfer:bob", 1, 1), SubmissionId(2), [1u8; 32]);
+        book.record(
+            &RequestId::new("f", "did:unfer:alice", 1, 1),
+            SubmissionId(1),
+            [1u8; 32],
+        );
+        book.record(
+            &RequestId::new("f", "did:unfer:bob", 1, 1),
+            SubmissionId(2),
+            [1u8; 32],
+        );
         assert_eq!(
             book.admit(&RequestId::new("f", "did:unfer:carol", 1, 1), [1u8; 32]),
             AdmissionVerdict::AtCapacity { capacity: 2 }
@@ -924,7 +931,11 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(resumed.current().incarnation, 9, "the stored incarnation wins");
+        assert_eq!(
+            resumed.current().incarnation,
+            9,
+            "the stored incarnation wins"
+        );
         assert_eq!(resumed.next().unwrap().sequence, 2);
     }
 

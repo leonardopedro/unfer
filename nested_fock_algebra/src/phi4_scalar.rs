@@ -198,7 +198,7 @@ pub fn periodic_fourier_1d(n: usize) -> Vec<Vec<f64>> {
         rows.push(cos);
         rows.push(sin);
     }
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         rows.push(
             (0..n)
                 .map(|x| if x % 2 == 0 { norm } else { -norm })

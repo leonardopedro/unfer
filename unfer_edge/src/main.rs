@@ -1004,12 +1004,18 @@ mod early_route_tests {
     #[test]
     fn capability_surface_is_loopback_only() {
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-        assert!(capability_peer_allowed(Some(IpAddr::V4(Ipv4Addr::LOCALHOST))));
-        assert!(capability_peer_allowed(Some(IpAddr::V6(Ipv6Addr::LOCALHOST))));
+        assert!(capability_peer_allowed(Some(IpAddr::V4(
+            Ipv4Addr::LOCALHOST
+        ))));
+        assert!(capability_peer_allowed(Some(IpAddr::V6(
+            Ipv6Addr::LOCALHOST
+        ))));
         assert!(!capability_peer_allowed(Some(IpAddr::V4(Ipv4Addr::new(
             10, 0, 0, 7
         )))));
-        assert!(!capability_peer_allowed(Some(IpAddr::V4(Ipv4Addr::UNSPECIFIED))));
+        assert!(!capability_peer_allowed(Some(IpAddr::V4(
+            Ipv4Addr::UNSPECIFIED
+        ))));
         assert!(!capability_peer_allowed(None));
     }
 

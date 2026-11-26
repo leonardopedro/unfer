@@ -8,7 +8,7 @@
 //! `k = 60` the Elasticsearch/xerj default. That fusion is the whole of
 //! [`rrf_fuse`], ported as a shape rather than a dependency: our arms are a
 //! lexical overlap rank, a graph-recomputed semantic rank from
-//! [`RecomputeIndex`](crate::formalize::index::RecomputeIndex), and a
+//! [`RecomputeIndex`], and a
 //! remote node's own ranking if the operator runs one.
 //!
 //! Why RRF and not weighted score merging: the arms are *not* comparable —

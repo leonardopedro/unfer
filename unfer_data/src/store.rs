@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 
 use crate::blueprint::{CellRef, store_cell};
-use crate::crypto::{open_object, seal_object, SealedObject};
+use crate::crypto::{SealedObject, open_object, seal_object};
 
 /// Domain separator for epoch-key derivation.
 const EPOCH_DOMAIN: &[u8] = b"unfer-cell-epoch-v1\0";

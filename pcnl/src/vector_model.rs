@@ -118,9 +118,12 @@ impl VectorShapes {
         let mut out = Vec::with_capacity(self.flat_size());
         for (_, _, shape) in self.layout() {
             if shape.len() == 2 {
-                out.extend(std::iter::repeat((shape[0] as f64).sqrt()).take(shape[0] * shape[1]));
+                out.extend(std::iter::repeat_n(
+                    (shape[0] as f64).sqrt(),
+                    shape[0] * shape[1],
+                ));
             } else {
-                out.extend(std::iter::repeat(1.0).take(shape[0]));
+                out.extend(std::iter::repeat_n(1.0, shape[0]));
             }
         }
         out
@@ -351,7 +354,7 @@ impl VectorRegression {
                 "lambda must be finite and > 0".into(),
             ));
         }
-        if x.len() % shapes.input != 0 || x.is_empty() {
+        if !x.len().is_multiple_of(shapes.input) || x.is_empty() {
             return Err(candle_core::Error::Msg(
                 "x is empty or not a whole number of embeddings".into(),
             ));
@@ -365,7 +368,7 @@ impl VectorRegression {
             )));
         }
         if x.iter().chain(&y).any(|v| !v.is_finite()) {
-            return Err(candle_core::Error::Msg("x and y must be finite".into()))?;
+            Err(candle_core::Error::Msg("x and y must be finite".into()))?;
         }
         Ok(Self {
             shapes,
@@ -553,7 +556,7 @@ impl VectorSamplerConfig {
         if !self.prior_sigma.is_finite() || self.prior_sigma <= 0.0 {
             return Err(candle_core::Error::Msg("prior_sigma must be > 0".into()));
         }
-        let available = (self.steps - self.burn + self.thin - 1) / self.thin;
+        let available = (self.steps - self.burn).div_ceil(self.thin);
         if self.draws > available {
             return Err(candle_core::Error::Msg(format!(
                 "draws={} exceeds {available} post-burn thinned steps",
@@ -792,7 +795,7 @@ fn cholesky_lower(a: &[f64], n: usize) -> Option<(Vec<f64>, f64)> {
                 s -= l[i * n + k] * l[j * n + k];
             }
             if i == j {
-                if !(s > 0.0) || !s.is_finite() {
+                if s <= 0.0 || !s.is_finite() {
                     return None;
                 }
                 l[i * n + i] = s.sqrt();
@@ -1433,7 +1436,7 @@ fn run_chain_with_reference<T: EnergyTarget>(
             }
         }
         if step >= config.burn
-            && (step - config.burn) % config.thin == 0
+            && (step - config.burn).is_multiple_of(config.thin)
             && draws.len() < config.draws
         {
             draws.push(theta.clone());
@@ -1503,7 +1506,7 @@ impl HmcConfig {
                 "target_accept must lie in (0,1)".into(),
             ));
         }
-        let available = (self.steps - self.burn + self.thin - 1) / self.thin;
+        let available = (self.steps - self.burn).div_ceil(self.thin);
         if self.draws > available {
             return Err(candle_core::Error::Msg(format!(
                 "draws={} exceeds {available} post-burn thinned steps",
@@ -1651,7 +1654,7 @@ impl LowRankCovariance {
         let mut w = vec![0.0f64; dim * rank];
         let mut lam = vec![0.0f64; rank];
         for (slot, &idx) in order.iter().take(rank).enumerate() {
-            if !(eig.eigenvalues[idx] > 0.0) {
+            if eig.eigenvalues[idx] <= 0.0 || eig.eigenvalues[idx].is_nan() {
                 continue;
             }
             let u = eig.eigenvectors.column(idx);
@@ -1666,7 +1669,7 @@ impl LowRankCovariance {
                 })
                 .collect();
             let norm = col.iter().map(|x| x * x).sum::<f64>().sqrt();
-            if !(norm > 0.0) {
+            if norm <= 0.0 || norm.is_nan() {
                 continue;
             }
             lam[slot] = norm * norm;
@@ -1727,18 +1730,18 @@ impl LowRankCovariance {
     /// `C x = D x + W Λ Wᵀ x`.
     fn apply_cov(&self, x: &[f64]) -> Vec<f64> {
         let mut coords = vec![0.0f64; self.rank];
-        for j in 0..self.rank {
+        for (j, coord) in coords.iter_mut().enumerate() {
             let mut s = 0.0f64;
-            for k in 0..self.dim {
-                s += self.w[k * self.rank + j] * x[k];
+            for (k, x_k) in x.iter().enumerate() {
+                s += self.w[k * self.rank + j] * x_k;
             }
-            coords[j] = self.lam[j] * s;
+            *coord = self.lam[j] * s;
         }
         (0..self.dim)
             .map(|k| {
                 let mut y = self.v[k] * x[k];
-                for j in 0..self.rank {
-                    y += self.w[k * self.rank + j] * coords[j];
+                for (j, coord) in coords.iter().enumerate() {
+                    y += self.w[k * self.rank + j] * coord;
                 }
                 y
             })
@@ -1749,20 +1752,20 @@ impl LowRankCovariance {
     fn solve(&self, x: &[f64]) -> Vec<f64> {
         let t: Vec<f64> = (0..self.dim).map(|k| x[k] / self.v[k]).collect();
         let mut rhs = vec![0.0f64; self.rank];
-        for j in 0..self.rank {
+        for (j, r) in rhs.iter_mut().enumerate() {
             let mut s = 0.0f64;
-            for k in 0..self.dim {
-                s += self.w[k * self.rank + j] * t[k];
+            for (k, t_k) in t.iter().enumerate() {
+                s += self.w[k * self.rank + j] * t_k;
             }
-            rhs[j] = s;
+            *r = s;
         }
         let y = forward_substitute(&self.chol, self.rank, &rhs);
         let y = back_substitute_transpose(&self.chol, self.rank, &y);
         (0..self.dim)
             .map(|k| {
                 let mut out = t[k];
-                for j in 0..self.rank {
-                    out -= self.w_over_v[k * self.rank + j] * y[j];
+                for (j, y_j) in y.iter().enumerate() {
+                    out -= self.w_over_v[k * self.rank + j] * y_j;
                 }
                 out
             })
@@ -1780,8 +1783,8 @@ impl LowRankCovariance {
         let q: Vec<f64> = (0..self.dim)
             .map(|k| {
                 let mut y = self.v[k].sqrt() * z[k];
-                for j in 0..self.rank {
-                    y += self.w[k * self.rank + j] * self.lam[j].sqrt() * zk[j];
+                for (j, zk_j) in zk.iter().enumerate() {
+                    y += self.w[k * self.rank + j] * self.lam[j].sqrt() * zk_j;
                 }
                 y
             })
@@ -1985,7 +1988,7 @@ fn run_hmc_with_metric<T: EnergyTarget>(
         }
         proposals += 1;
         let leapfrog = if config.jitter_leapfrog && config.leapfrog > 1 {
-            rng.gen_range(1..=2 * config.leapfrog)
+            rng.random_range(1..=2 * config.leapfrog)
         } else {
             config.leapfrog
         };
@@ -2039,12 +2042,12 @@ fn run_hmc_with_metric<T: EnergyTarget>(
             next_state = Some(next);
             prob
         };
-        if accept_prob >= 1.0 || (accept_prob > 0.0 && rng.random::<f64>() < accept_prob) {
-            if let Some(next) = next_state {
-                theta = proposed;
-                current = next;
-                accepted += 1;
-            }
+        if (accept_prob >= 1.0 || (accept_prob > 0.0 && rng.random::<f64>() < accept_prob))
+            && let Some(next) = next_state
+        {
+            theta = proposed;
+            current = next;
+            accepted += 1;
         }
         accept_sum += accept_prob;
         if adapting {
@@ -2056,7 +2059,7 @@ fn run_hmc_with_metric<T: EnergyTarget>(
             log_eps_bar = w * log_eps + (1.0 - w) * log_eps_bar;
         }
         if step >= config.burn
-            && (step - config.burn) % config.thin == 0
+            && (step - config.burn).is_multiple_of(config.thin)
             && draws.len() < config.draws
         {
             draws.push(theta.clone());
@@ -2082,6 +2085,7 @@ fn run_hmc_with_metric<T: EnergyTarget>(
 ///
 /// `current` holds the *tempered* potential `βU` and gradient `β∇U`, so the
 /// acceptance ratio is the ordinary one and the density is `exp(−βU)`.
+#[allow(clippy::too_many_arguments)]
 fn tempered_step<T: EnergyTarget>(
     target: &T,
     prior_c: &[f64],
@@ -2171,7 +2175,10 @@ impl TemperConfig {
                 "tempering ladder must end at beta = 1".into(),
             ));
         }
-        if self.ladder.windows(2).any(|w| !(w[0] < w[1]))
+        if self
+            .ladder
+            .windows(2)
+            .any(|w| w[0].partial_cmp(&w[1]) != Some(std::cmp::Ordering::Less))
             || self.ladder.iter().any(|b| !(*b > 0.0 && *b <= 1.0))
         {
             return Err(candle_core::Error::Msg(
@@ -2322,7 +2329,7 @@ pub fn run_parallel_tempering<T: EnergyTarget>(
         }
 
         if step >= config.burn
-            && (step - config.burn) % config.thin == 0
+            && (step - config.burn).is_multiple_of(config.thin)
             && cold_draws.len() < config.draws
         {
             cold_draws.push(thetas[k - 1].clone());
@@ -2432,7 +2439,7 @@ pub fn run_hit_and_run<T: EnergyTarget>(
             *d = sc * z;
             norm2 += *d * *d;
         }
-        if !(norm2 > 0.0) {
+        if norm2 <= 0.0 || norm2.is_nan() {
             continue;
         }
         let inv = 1.0 / norm2.sqrt();
@@ -2502,7 +2509,7 @@ pub fn run_hit_and_run<T: EnergyTarget>(
             step_sum += (t / width).abs();
         }
         if move_index >= config.burn
-            && (move_index - config.burn) % config.thin == 0
+            && (move_index - config.burn).is_multiple_of(config.thin)
             && draws.len() < config.draws
         {
             draws.push(theta.clone());
@@ -2547,8 +2554,8 @@ mod tests {
         fn energy_and_grad(&self, theta: &[f32]) -> Option<(f64, Vec<f32>)> {
             let mut u = 0.0;
             let mut grad = Vec::with_capacity(self.p.len());
-            for i in 0..self.p.len() {
-                let d = f64::from(theta[i]) - self.mu[i];
+            for (i, (th, mu)) in theta.iter().zip(&self.mu).enumerate().take(self.p.len()) {
+                let d = f64::from(*th) - mu;
                 u += 0.5 * self.p[i] * d * d;
                 grad.push((self.p[i] * d) as f32);
             }
@@ -2563,9 +2570,9 @@ mod tests {
         fn energy_and_grad(&self, theta: &[f32]) -> Option<(f64, Vec<f32>)> {
             let x: Vec<f64> = theta.iter().map(|v| f64::from(*v)).collect();
             let mut grad = vec![0.0f64; self.dim];
-            for i in 0..self.dim {
-                for j in 0..self.dim {
-                    grad[i] += self.a[i * self.dim + j] * x[j];
+            for (i, g) in grad.iter_mut().enumerate() {
+                for (j, x_j) in x.iter().enumerate() {
+                    *g += self.a[i * self.dim + j] * x_j;
                 }
             }
             let u = 0.5 * x.iter().zip(&grad).map(|(xi, gi)| xi * gi).sum::<f64>();
@@ -2739,14 +2746,9 @@ mod tests {
         let prior_c = vec![0.5, 0.25];
         let probe = hessian_probe(&target, &prior_c, &[0.3, -0.2], 2048, 1e-4, 7).expect("probe");
         let want = [4.0 + 1.0 / 0.5, 2.0 + 1.0 / 0.25];
-        for i in 0..2 {
-            let rel = (probe.diag[i] - want[i]).abs() / want[i];
-            assert!(
-                rel < 2e-2,
-                "coordinate {i}: {} vs {}",
-                probe.diag[i],
-                want[i]
-            );
+        for (i, w) in want.iter().enumerate() {
+            let rel = (probe.diag[i] - w).abs() / w;
+            assert!(rel < 2e-2, "coordinate {i}: {} vs {}", probe.diag[i], w);
         }
         assert_eq!(probe.columns.len(), 2048);
         assert_eq!(probe.columns[0].len(), 2, "columns are full-dimension Hz");
@@ -2775,7 +2777,7 @@ mod tests {
                 let z: Vec<f64> = (0..3)
                     .map(|_| rng.sample::<f64, _>(StandardNormal))
                     .collect();
-                let mut x = vec![0.0f64; 3];
+                let mut x = [0.0f64; 3];
                 for i in 0..3 {
                     for j in 0..=i {
                         x[i] += chol[i * 3 + j] * z[j];
@@ -2937,9 +2939,9 @@ mod tests {
         let s = tiny();
         let x: Vec<f32> = (0..4 * s.input).map(|i| (i as f32 * 0.07).cos()).collect();
         let y: Vec<f32> = (0..4 * s.output).map(|i| i as f32 * 0.1).collect();
-        let all = VectorRegression::new(s.clone(), x.clone(), y.clone(), 0.5, 1.0).unwrap();
+        let all = VectorRegression::new(s, x.clone(), y.clone(), 0.5, 1.0).unwrap();
         let a = VectorRegression::new(
-            s.clone(),
+            s,
             x[..2 * s.input].to_vec(),
             y[..2 * s.output].to_vec(),
             0.5,
@@ -2947,7 +2949,7 @@ mod tests {
         )
         .unwrap();
         let b = VectorRegression::new(
-            s.clone(),
+            s,
             x[2 * s.input..].to_vec(),
             y[2 * s.output..].to_vec(),
             0.5,
@@ -2966,7 +2968,7 @@ mod tests {
         let s = tiny();
         let x: Vec<f32> = (0..5 * s.input).map(|i| (i as f32 * 0.17).sin()).collect();
         let y: Vec<f32> = (0..5 * s.output).map(|i| i as f32 * 0.21 - 0.3).collect();
-        let base = VectorRegression::new(s.clone(), x, y, 0.3, 1.2).unwrap();
+        let base = VectorRegression::new(s, x, y, 0.3, 1.2).unwrap();
         let flat = init_flat(&s, 0.2, 21).to_vec1::<f32>().unwrap();
         let target = ReadoutTarget::new(base, flat).unwrap();
         let prior_c: Vec<f64> = (0..target.dim())
@@ -3129,7 +3131,7 @@ mod tests {
         let s = VectorShapes::with_width(3, 1, 2, 4, 2, 4).unwrap();
         let x: Vec<f32> = (0..2 * s.input).map(|i| i as f32 * 0.1).collect();
         let y = vec![0.2, -0.3];
-        let target = VectorRegression::new(s.clone(), x, y, 1.0, 1.0).unwrap();
+        let target = VectorRegression::new(s, x, y, 1.0, 1.0).unwrap();
         let cfg = VectorSamplerConfig {
             steps: 20,
             burn: 5,

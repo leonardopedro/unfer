@@ -262,9 +262,9 @@ fn hamiltonian_commutes_with_each_gauss_generator() {
     let mut worst_pair = (0usize, 0usize);
     let mut checked = 0usize;
     for (label, state) in [("matter", seed()), ("gauge", with_gauge())] {
-        for a in 0..GENERATORS {
-            let hg = apply(h(), &apply(&g[a], &state));
-            let gh = apply(&g[a], &apply(h(), &state));
+        for (a, g_a) in g.iter().enumerate().take(GENERATORS) {
+            let hg = apply(h(), &apply(g_a, &state));
+            let gh = apply(g_a, &apply(h(), &state));
             let mut residual = hg;
             joint_axpy(&mut residual, &gh, C::new(-1.0, 0.0), limits()).unwrap();
             let r = norm(&residual);

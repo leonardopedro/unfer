@@ -16,15 +16,18 @@
 //!      principal, effect, resource, epoch, payload digest — is appended and
 //!      flushed before any sink is called. A dispatcher that runs on an intent
 //!      whose write failed would be running an effect it cannot account for.
-//!   2. **Approval bound to the bytes.** An [`ApprovalBinding`] names the
+//!   2. **Approval bound to the bytes.** An [`ApprovalBinding`](crate::outbox::ApprovalBinding) names the
 //!      request, the payload digest, the resource and the epoch it was granted
 //!      for. Resolution re-checks all four, so an approval replayed against an
 //!      altered payload is refused before the sink sees it — the same check
 //!      `dispatch` performs again immediately before the call, which is where a
 //!      revocation that happened while the operator was reading is caught.
-//!   3. **Three outcomes, three records.** [`OutboxRecord::Acknowledged`] is the
-//!      sink saying it applied the effect. [`OutboxRecord::Retryable`] is the
-//!      sink saying it did not, and may be asked again. [`OutboxRecord::Uncertain`]
+//!   3. **Three outcomes, three records.**
+//!      [`OutboxRecord::Acknowledged`](crate::outbox::OutboxRecord::Acknowledged)
+//!      is the sink saying it applied the effect.
+//!      [`OutboxRecord::Retryable`](crate::outbox::OutboxRecord::Retryable) is the
+//!      sink saying it did not, and may be asked again.
+//!      [`OutboxRecord::Uncertain`](crate::outbox::OutboxRecord::Uncertain)
 //!      is the honest one: the marker went out and no acknowledgment came back,
 //!      so whether the effect landed is *unknown* and must be looked at rather
 //!      than guessed. They are separate variants because they need different
@@ -34,8 +37,9 @@
 //!      restart performs after a crash between the sink call and the
 //!      acknowledgment — carries the key the first attempt used, so a sink that
 //!      deduplicates applies the effect once. A sink that cannot deduplicate is
-//!      not retried automatically: it goes to [`OutboxRecord::Uncertain`] and
-//!      waits for [`Outbox::reconcile`], because replaying an irreversible
+//!      not retried automatically: it goes to
+//!      [`OutboxRecord::Uncertain`](crate::outbox::OutboxRecord::Uncertain) and
+//!      waits for [`Outbox::reconcile`](crate::outbox::Outbox::reconcile), because replaying an irreversible
 //!      effect that may already have landed is not a recovery strategy.
 //!
 //! What this is *not*: a second approval system. The operator surface
@@ -44,7 +48,7 @@
 //! guarantee: it records what happened, and where the record is missing it says
 //! so instead of pretending.
 //!
-//! The fence in [`EffectCall`] is the D14 ordered fence, when the caller has
+//! The fence in [`EffectCall`](crate::outbox::EffectCall) is the D14 ordered fence, when the caller has
 //! one. A sink that can enforce an order receives it; a sink that cannot is
 //! refused when a fence is required, because a fence a sink ignores is a
 //! promise nobody keeps.
@@ -159,19 +163,31 @@ pub enum ApprovalMismatch {
 impl std::fmt::Display for ApprovalMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ApprovalMismatch::Request { approved, presented } => write!(
+            ApprovalMismatch::Request {
+                approved,
+                presented,
+            } => write!(
                 f,
                 "approval names request {approved} but the intent is {presented}"
             ),
-            ApprovalMismatch::Payload { approved, presented } => write!(
+            ApprovalMismatch::Payload {
+                approved,
+                presented,
+            } => write!(
                 f,
                 "approval covers payload {approved} but the intent hashes to {presented}"
             ),
-            ApprovalMismatch::Resource { approved, presented } => write!(
+            ApprovalMismatch::Resource {
+                approved,
+                presented,
+            } => write!(
                 f,
                 "approval covers resource {approved} but the intent names {presented}"
             ),
-            ApprovalMismatch::Epoch { approved, presented } => write!(
+            ApprovalMismatch::Epoch {
+                approved,
+                presented,
+            } => write!(
                 f,
                 "approval was granted at epoch {approved} but the intent is at epoch {presented}"
             ),
@@ -252,10 +268,7 @@ pub enum OutboxRecord {
     },
     /// The dispatch was refused before the sink was called (a stale or missing
     /// approval, a revoked principal, a fence the sink cannot enforce).
-    Refused {
-        request_id: String,
-        reason: String,
-    },
+    Refused { request_id: String, reason: String },
     /// A human (or the owning system) determined what happened to an uncertain
     /// dispatch. Terminal.
     Reconciled {
@@ -329,7 +342,10 @@ pub enum EffectState {
     Uncertain(String),
     Refused(String),
     /// Reconciled by a human/system: `applied` is what they determined.
-    Reconciled { applied: bool, note: String },
+    Reconciled {
+        applied: bool,
+        note: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -489,7 +505,9 @@ impl Outbox {
                 });
             }
             OutboxRecord::Dispatching {
-                request_id, attempt, ..
+                request_id,
+                attempt,
+                ..
             } => {
                 if let Some(entry) = self.entries.get_mut(&request_id) {
                     entry.attempts = entry.attempts.max(attempt);
@@ -572,9 +590,7 @@ impl Outbox {
         intent: EffectIntent,
         approval: ApprovalBinding,
     ) -> Result<(), DispatchError> {
-        approval
-            .covers(&intent)
-            .map_err(DispatchError::Approval)?;
+        approval.covers(&intent).map_err(DispatchError::Approval)?;
         if let Some(existing) = self.entries.get(&intent.request_id) {
             // The same request id is the same request. If the payload changed,
             // this is someone reusing an identity — refuse rather than pick.
@@ -620,15 +636,16 @@ impl Outbox {
         policy: &dyn DispatchPolicy,
         fence: Option<&Fence>,
     ) -> Result<DispatchOutcome, DispatchError> {
-        let entry = self
-            .entries
-            .get(request_id)
-            .ok_or_else(|| DispatchError::NotPlanned(format!("no intent for request {request_id}")))?;
+        let entry = self.entries.get(request_id).ok_or_else(|| {
+            DispatchError::NotPlanned(format!("no intent for request {request_id}"))
+        })?;
         let intent = entry.intent.clone();
         let approval = entry.approval.clone();
         let attempts = entry.attempts;
         match &entry.state {
-            EffectState::Applied(result) => return Ok(DispatchOutcome::AlreadyApplied(result.clone())),
+            EffectState::Applied(result) => {
+                return Ok(DispatchOutcome::AlreadyApplied(result.clone()));
+            }
             EffectState::Reconciled { applied: true, .. } => {
                 return Err(DispatchError::Terminal(format!(
                     "request {request_id} was already applied (reconciled); not dispatching again"
@@ -673,9 +690,7 @@ impl Outbox {
         }
         // Execution-point recheck, after the approval and before the sink: an
         // approval does not outlive a revocation.
-        policy
-            .authorize(&intent)
-            .map_err(DispatchError::Policy)?;
+        policy.authorize(&intent).map_err(DispatchError::Policy)?;
         approval.covers(&intent).map_err(DispatchError::Approval)?;
         if let Some(fence) = fence
             && !sink.enforces_fence()
@@ -762,7 +777,8 @@ impl Outbox {
             result: result.clone(),
         };
         if let Err(e) = self.append(&record) {
-            let reason = format!("the sink applied the effect but the acknowledgment is not durable: {e}");
+            let reason =
+                format!("the sink applied the effect but the acknowledgment is not durable: {e}");
             // Best-effort: the state is already durable via the dispatch
             // marker, so recovery will see `Dispatching` and ask.
             if let Some(entry) = self.entries.get_mut(request_id) {
@@ -804,11 +820,13 @@ impl Outbox {
         applied: bool,
         note: impl Into<String>,
     ) -> Result<(), DispatchError> {
-        let entry = self
-            .entries
-            .get(request_id)
-            .ok_or_else(|| DispatchError::NotPlanned(format!("no intent for request {request_id}")))?;
-        if !matches!(entry.state, EffectState::Uncertain(_) | EffectState::Dispatching) {
+        let entry = self.entries.get(request_id).ok_or_else(|| {
+            DispatchError::NotPlanned(format!("no intent for request {request_id}"))
+        })?;
+        if !matches!(
+            entry.state,
+            EffectState::Uncertain(_) | EffectState::Dispatching
+        ) {
             return Err(DispatchError::Terminal(format!(
                 "request {request_id} is not uncertain; there is nothing to reconcile"
             )));
@@ -831,7 +849,12 @@ impl Outbox {
     pub fn unresolved(&self) -> Vec<(&str, &Entry)> {
         self.entries
             .iter()
-            .filter(|(_, e)| matches!(e.state, EffectState::Dispatching | EffectState::Uncertain(_)))
+            .filter(|(_, e)| {
+                matches!(
+                    e.state,
+                    EffectState::Dispatching | EffectState::Uncertain(_)
+                )
+            })
             .map(|(id, e)| (id.as_str(), e))
             .collect()
     }
@@ -894,9 +917,7 @@ pub fn with_kernel<R>(f: impl FnOnce(&mut Outbox) -> R) -> Result<Option<R>, Str
     let Some(store) = crate::handles::durable() else {
         return Ok(None);
     };
-    let mut guard = KERNEL_OUTBOX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = KERNEL_OUTBOX.lock().unwrap_or_else(|e| e.into_inner());
     let rebuild = match guard.as_ref() {
         Some(outbox) => !Arc::ptr_eq(outbox.store(), &store),
         None => true,
@@ -1153,10 +1174,8 @@ mod tests {
         outbox.plan(i, a).unwrap();
         // The plan is on disk, not only in memory: a fresh outbox over the same
         // store sees the intent and its approval.
-        let reopened = Outbox::open_checked(Arc::new(
-            JsonlDurableStore::open(Some(&dir)).unwrap(),
-        ))
-        .unwrap();
+        let reopened =
+            Outbox::open_checked(Arc::new(JsonlDurableStore::open(Some(&dir)).unwrap())).unwrap();
         assert_eq!(
             reopened.get("req-1").map(|e| e.state.clone()),
             Some(EffectState::Planned)
@@ -1178,7 +1197,10 @@ mod tests {
         let tampered = intent("req-1", serde_json::json!({"amount": 1000}));
         let err = outbox.plan(tampered, approval.clone()).unwrap_err();
         match &err {
-            DispatchError::Approval(ApprovalMismatch::Payload { approved, presented }) => {
+            DispatchError::Approval(ApprovalMismatch::Payload {
+                approved,
+                presented,
+            }) => {
                 assert_ne!(approved, presented);
             }
             other => panic!("expected a payload mismatch, got {other:?}"),
@@ -1255,7 +1277,9 @@ mod tests {
 
         let mut sink = FlakySink::default();
         assert_eq!(
-            outbox.dispatch("req-1", &mut sink, &AllowAll, None).unwrap(),
+            outbox
+                .dispatch("req-1", &mut sink, &AllowAll, None)
+                .unwrap(),
             DispatchOutcome::Retryable("provider 503".into())
         );
         assert_eq!(
@@ -1269,7 +1293,9 @@ mod tests {
         // Retry carries the same idempotency key.
         let key = outbox.get("req-1").unwrap().intent.idempotency_key();
         assert_eq!(
-            outbox.dispatch("req-1", &mut sink, &AllowAll, None).unwrap(),
+            outbox
+                .dispatch("req-1", &mut sink, &AllowAll, None)
+                .unwrap(),
             DispatchOutcome::Applied(serde_json::json!({"ok": true}))
         );
         assert_eq!(sink.calls, 2);
@@ -1324,7 +1350,11 @@ mod tests {
                 .unwrap(),
             DispatchOutcome::AlreadyApplied(serde_json::json!({"duplicate": true}))
         );
-        assert_eq!(sink_after.effects(), 1, "the effect must not be applied twice");
+        assert_eq!(
+            sink_after.effects(),
+            1,
+            "the effect must not be applied twice"
+        );
         assert_eq!(
             recovered.get("req-1").unwrap().state,
             EffectState::Applied(serde_json::json!({"duplicate": true}))
@@ -1371,7 +1401,9 @@ mod tests {
             EffectState::Uncertain(_)
         ));
         // Dispatching again after reconciliation-as-applied is terminal.
-        recovered.reconcile("req-1", true, "provider console shows one charge").unwrap();
+        recovered
+            .reconcile("req-1", true, "provider console shows one charge")
+            .unwrap();
         let err = recovered
             .dispatch("req-1", &mut sink_after, &AllowAll, None)
             .unwrap_err();
@@ -1426,9 +1458,7 @@ mod tests {
                 if let Some(last) = self.last
                     && at <= last
                 {
-                    return SinkReply::Refused(format!(
-                        "fence {at:?} does not follow {last:?}"
-                    ));
+                    return SinkReply::Refused(format!("fence {at:?} does not follow {last:?}"));
                 }
                 self.last = Some(at);
                 self.seen.push(at);
@@ -1485,7 +1515,9 @@ mod tests {
         store
             .append(streams::ACTIONS, br#"{"outbox":{"kind":"bogus"}}"#)
             .unwrap();
-        store.append(streams::ACTIONS, br#"{"id":"action-1"}"#).unwrap();
+        store
+            .append(streams::ACTIONS, br#"{"id":"action-1"}"#)
+            .unwrap();
         store.flush().unwrap();
         let err = Outbox::open_checked(store).unwrap_err();
         assert!(err.contains("could not be parsed"), "{err}");

@@ -54,6 +54,9 @@ pub struct Dual {
     pub dd: Iv,
 }
 
+// `Dual` is a numeric carrier, not a `num` trait impl: these methods take
+// `&Dual` and return `Self` for the interval arithmetic the chart needs.
+#[allow(clippy::should_implement_trait)]
 impl Dual {
     pub fn constant(x: f64) -> Self {
         Self {
@@ -1018,6 +1021,7 @@ fn build_head_params(
 /// `rep` is the question representation as a dual vector. For head-only chart
 /// directions it is constant (`Dual::constant(rep_j)`); the encoder pass would
 /// supply value/derivative intervals here instead.
+#[allow(clippy::too_many_arguments)]
 pub fn label_probability_dual(
     hp: &HeadParams,
     rep: &[Dual],
@@ -1033,8 +1037,8 @@ pub fn label_probability_dual(
     let mut logits = Vec::with_capacity(paths);
     for r in 0..paths {
         let mut l = hp.policy_b[r];
-        for j in 0..d {
-            l = l.add(&hp.policy_w[j * paths + r].mul(&rep[j]));
+        for (j, rep_j) in rep[..d].iter().enumerate() {
+            l = l.add(&hp.policy_w[j * paths + r].mul(rep_j));
         }
         logits.push(l);
     }
@@ -1043,14 +1047,14 @@ pub fn label_probability_dual(
     let mut marginal: Option<Dual> = None;
     for (r, a_r) in a.iter().enumerate() {
         let mut h = Vec::with_capacity(d);
-        for j in 0..d {
-            h.push(rep[j].add(&hp.path_embed[r * d + j]));
+        for (j, rep_j) in rep[..d].iter().enumerate() {
+            h.push(rep_j.add(&hp.path_embed[r * d + j]));
         }
         let u = match kind {
             QuestionKind::Noul => {
                 let mut logit = hp.noul_b[r];
-                for j in 0..d {
-                    logit = logit.add(&hp.noul_w[r * d + j].mul(&h[j]));
+                for (j, h_j) in h.iter().enumerate() {
+                    logit = logit.add(&hp.noul_w[r * d + j].mul(h_j));
                 }
                 let p_yes = logit.sigmoid()?;
                 let p_no = p_yes.neg().add(&Dual::constant(1.0));
@@ -1062,8 +1066,8 @@ pub fn label_probability_dual(
                 for &tok in options_tokens {
                     let row = &hp.embed[tok as usize * d..(tok as usize + 1) * d];
                     let mut l = Dual::constant(0.0);
-                    for j in 0..d {
-                        l = l.add(&row[j].mul(&h[j]));
+                    for (row_j, h_j) in row.iter().zip(&h) {
+                        l = l.add(&row_j.mul(h_j));
                     }
                     logits.push(l.scale(scale));
                 }
@@ -1072,8 +1076,8 @@ pub fn label_probability_dual(
             }
             QuestionKind::Score { levels } => {
                 let mut score = Dual::constant(0.0);
-                for j in 0..d {
-                    score = score.add(&hp.score_w[r * d + j].mul(&h[j]));
+                for (j, h_j) in h.iter().enumerate() {
+                    score = score.add(&hp.score_w[r * d + j].mul(h_j));
                 }
                 let raw = &hp.thresholds;
                 let base = r * threshold_stride;
@@ -1660,8 +1664,10 @@ mod tests {
         // projection (`d·r + r·d = d²` at `r = d/2`), so a paired comparison
         // is parameter-for-parameter.
         let mut full = Edge0Config::default();
-        let mut low = Edge0Config::default();
-        low.state_path = StatePath::LowRank;
+        let low = Edge0Config {
+            state_path: StatePath::LowRank,
+            ..Default::default()
+        };
         full.state_path = StatePath::Full;
         assert_eq!(full.flat_size(), low.flat_size());
 

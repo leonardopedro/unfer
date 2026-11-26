@@ -39,10 +39,7 @@ use unfer_consensus::storage::{FaultPoint, JournalRecord, StorageError, Transiti
 use unfer_protocol::{ConsensusTransaction, IdentityOp, IdentityOpKind};
 
 fn temp_root(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "unfer-d13-{name}-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("unfer-d13-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -98,15 +95,18 @@ impl Case {
         let engine = LocalConsensus::new();
         let journal = dir.join("ledger.log");
         let (mut node, _recovery) =
-            ConsensusNode::open(Box::new(engine.clone()), &journal)
-                .expect("open the journal");
+            ConsensusNode::open(Box::new(engine.clone()), &journal).expect("open the journal");
         if let Some(fault) = fault {
             assert!(
                 node.inject_storage_fault(fault),
                 "a durable node must have a journal to fail"
             );
         }
-        Self { node, journal, engine }
+        Self {
+            node,
+            journal,
+            engine,
+        }
     }
 
     fn submit(&self, tx: ConsensusTransaction) -> u64 {
@@ -163,7 +163,11 @@ fn a_write_failure_before_the_frame_leaves_nothing_and_applies_once() {
 
     // Restart: the journal has no record, so slot 1 is applied exactly once.
     case = case.restart();
-    assert_eq!(case.node.applied_seq(), 0, "recovery must not invent a slot");
+    assert_eq!(
+        case.node.applied_seq(),
+        0,
+        "recovery must not invent a slot"
+    );
     assert_eq!(case.deliver().unwrap(), 1);
     let (applied, identities) = case.state();
     assert_eq!((applied, identities), (1, 1));
@@ -179,8 +183,13 @@ fn a_torn_frame_is_discarded_and_the_slot_applies_once() {
     assert!(case.node.inject_storage_fault(FaultPoint::HalfWrite));
     let halted = case.deliver().expect_err("a torn write must halt");
     assert!(halted.contains("UK-5011"), "{halted}");
-    let on_disk = std::fs::metadata(&case.journal).map(|m| m.len()).unwrap_or(0);
-    assert!(on_disk > 0, "the torn half must be on disk for this to test anything");
+    let on_disk = std::fs::metadata(&case.journal)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    assert!(
+        on_disk > 0,
+        "the torn half must be on disk for this to test anything"
+    );
 
     case = case.restart();
     // The torn tail is discarded by recovery, so nothing is applied twice and
@@ -208,13 +217,19 @@ fn an_uncertain_sync_is_either_durable_or_replayed_but_never_double_applied() {
     // Two admissible worlds: the frame reached the disk (recovery sees it) or it
     // did not. Either way the ledger ends with one identity, never two.
     let applied_before = case.node.applied_seq();
-    case.deliver().expect("the restarted node must make progress");
+    case.deliver()
+        .expect("the restarted node must make progress");
     let (applied, identities) = case.state();
-    assert_eq!(identities, 1, "one identity, however often the slot was seen");
+    assert_eq!(
+        identities, 1,
+        "one identity, however often the slot was seen"
+    );
     assert!(applied == 1, "the watermark covers the slot exactly once");
     note(
         "fail-after-write",
-        &format!("recovered_applied={applied_before} final_applied={applied} identities={identities}"),
+        &format!(
+            "recovered_applied={applied_before} final_applied={applied} identities={identities}"
+        ),
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -277,7 +292,10 @@ fn an_unreadable_journal_refuses_to_open_instead_of_starting_empty() {
     let refused = match ConsensusNode::open(Box::new(engine.clone()), &journal) {
         Ok(_) => {
             std::fs::set_permissions(&journal, original).unwrap();
-            note("permission", "gap: this user can open a read-only journal for writing");
+            note(
+                "permission",
+                "gap: this user can open a read-only journal for writing",
+            );
             let _ = std::fs::remove_dir_all(&dir);
             return;
         }
@@ -299,9 +317,13 @@ fn an_unreadable_journal_refuses_to_open_instead_of_starting_empty() {
     // Given the journal back, the node recovers its prefix instead of starting
     // empty, and the next slot applies exactly once.
     std::fs::set_permissions(&journal, original).unwrap();
-    let (mut node, recovery) = ConsensusNode::open(Box::new(engine), &journal)
-        .expect("the restored journal opens");
-    assert_eq!(recovery.last_slot, Some(1), "the prefix is what recovery found");
+    let (mut node, recovery) =
+        ConsensusNode::open(Box::new(engine), &journal).expect("the restored journal opens");
+    assert_eq!(
+        recovery.last_slot,
+        Some(1),
+        "the prefix is what recovery found"
+    );
     assert_eq!(node.applied_seq(), 0, "the watermark replays from the log");
     node.submit(create(2)).expect("submit after restore");
     let applied = node.sync().expect("both slots apply");
@@ -351,20 +373,31 @@ fn a_refused_operation_is_durable_and_not_retried() {
     assert_eq!(case.deliver().unwrap(), 2, "the refusal advances the slot");
 
     let journal = case.journal.clone();
-    let slot_of_refusal = case.node.refusal(unfer_protocol::submission::Slot(1)).cloned();
+    let slot_of_refusal = case
+        .node
+        .refusal(unfer_protocol::submission::Slot(1))
+        .cloned();
     assert!(slot_of_refusal.is_some(), "slot 1 is recorded as refused");
     case = case.restart();
     // The refusal is replayed, not re-decided: recovery compares the recorded
     // outcome with the new one and halts on a mismatch. Nothing is applied for
     // the refused slot, and the accepted slot behind it is still there.
-    case.deliver().expect("the replay must reproduce both recorded outcomes");
+    case.deliver()
+        .expect("the replay must reproduce both recorded outcomes");
     assert_eq!(case.node.applied_seq(), 2);
-    assert_eq!(case.state(), (2, 1), "only the accepted entry changed state");
+    assert_eq!(
+        case.state(),
+        (2, 1),
+        "only the accepted entry changed state"
+    );
     let records = std::fs::read(&journal).unwrap();
     assert!(!records.is_empty());
     note(
         "refusal",
-        &format!("refused_code={:?} applied=2 identities=1", slot_of_refusal.map(|r| r.code)),
+        &format!(
+            "refused_code={:?} applied=2 identities=1",
+            slot_of_refusal.map(|r| r.code)
+        ),
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -393,7 +426,10 @@ fn the_journal_format_is_what_recovery_reads() {
     assert_eq!(recovery.records.len(), 1);
     assert_eq!(recovery.last_slot, Some(1));
     assert_eq!(recovery.torn_tail_bytes, 0);
-    note("journal-format", &format!("bytes={len} records=1 last_slot=1 torn=0"));
+    note(
+        "journal-format",
+        &format!("bytes={len} records=1 last_slot=1 torn=0"),
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -412,10 +448,10 @@ mod processes {
     use std::thread;
     use std::time::Duration;
 
+    use super::note;
     use super::support::{
         Deployment, Node, committed, digest, transaction, wait_at_least, wait_digest,
     };
-    use super::note;
 
     fn cluster_digest(deployment: &Deployment) -> String {
         // Node 1 is the reference; every assertion that compares replicas reads
@@ -429,7 +465,11 @@ mod processes {
         let mut nodes = fixture.spawn_all();
 
         let first = fixture.submit(0, 1, &transaction(1));
-        assert!(first.0, "the acknowledged submission must commit: {}", first.2);
+        assert!(
+            first.0,
+            "the acknowledged submission must commit: {}",
+            first.2
+        );
         let acknowledged = wait_digest(&fixture.configs[0], 1);
         assert_eq!(committed(&acknowledged), 1);
         note("process/acknowledged", &format!("digest={acknowledged}"));
@@ -447,7 +487,10 @@ mod processes {
         );
         assert_eq!(wait_at_least(&fixture.configs[1], 1), after);
         assert_eq!(wait_at_least(&fixture.configs[2], 1), after);
-        note("process/acknowledged-after-kill", &format!("digest={after}"));
+        note(
+            "process/acknowledged-after-kill",
+            &format!("digest={after}"),
+        );
 
         // Kill the serving node *while* a submission is in flight, at several
         // points in the request's lifetime. Each iteration is one logical
@@ -531,7 +574,11 @@ mod processes {
         nodes[1] = fixture.spawn(1);
         nodes[2] = fixture.spawn(2);
         let retry = fixture.submit(0, 2, &transaction(2));
-        assert!(retry.0, "the healed cluster must accept the retry: {}", retry.2);
+        assert!(
+            retry.0,
+            "the healed cluster must accept the retry: {}",
+            retry.2
+        );
         let healed = wait_digest(&fixture.configs[0], before + 1);
         assert_eq!(committed(&healed), before + 1, "exactly one new slot");
         assert_eq!(wait_digest(&fixture.configs[1], before + 1), healed);
@@ -573,13 +620,19 @@ mod processes {
         // it missed: that is what separates a catch-up from a wait.
         nodes[2] = fixture.spawn(2);
         let recovered = digest(&fixture.configs[2]);
-        note("process/slow-replica-recovered", &format!("replica3={recovered}"));
+        note(
+            "process/slow-replica-recovered",
+            &format!("replica3={recovered}"),
+        );
         let pushed = wait_at_least(&fixture.configs[2], 3);
         assert_eq!(
             pushed, survivors,
             "an idle cluster must push the missed decisions to the rejoined replica"
         );
-        note("process/slow-replica-idle-catch-up", &format!("replica3={pushed}"));
+        note(
+            "process/slow-replica-idle-catch-up",
+            &format!("replica3={pushed}"),
+        );
         // It converges when the cluster next decides, not before: the measured
         // limit D11 names, restated here as part of the recovery matrix.
         let fourth = fixture.submit(0, 4, &transaction(4));

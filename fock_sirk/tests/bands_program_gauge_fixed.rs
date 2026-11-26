@@ -420,7 +420,7 @@ fn parity(s: &QuantumState) -> QuantumState {
                 + inner.modes.get(&1).copied().unwrap_or(0);
             odd += n * count;
         }
-        let sign = if odd % 2 == 0 { 1.0 } else { -1.0 };
+        let sign = if odd.is_multiple_of(2) { 1.0 } else { -1.0 };
         out.components.insert(state.clone(), *amp * sign);
     }
     out

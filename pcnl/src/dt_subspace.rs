@@ -127,7 +127,7 @@ impl BasisKind {
 
 /// The layout span of `block`: `(start, len)` in the flat `P`-vector.
 ///
-/// Taken from [`DtShapes::layout`] rather than hard-coded, so a change to the
+/// Taken from [`crate::policy_model::DtShapes::layout`] rather than hard-coded, so a change to the
 /// model's parameter order moves this with it.
 pub fn block_span(shapes: &crate::policy_model::DtShapes, block: Block) -> (usize, usize) {
     let layout = shapes.layout();

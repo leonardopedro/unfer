@@ -271,7 +271,7 @@ impl TalerExchange {
             .iter()
             .map(|(id, r)| (*id, r.owner.clone(), r.balance))
             .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out.sort_by_key(|entry| entry.0);
         out
     }
 
@@ -282,7 +282,7 @@ impl TalerExchange {
             .iter()
             .map(|(did, bal)| (did.clone(), *bal))
             .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out.sort_by_key(|entry| entry.0.clone());
         out
     }
 

@@ -7,7 +7,7 @@
 //! honest state of affairs before this module. There is one now:
 //! **EmbeddingGemma 2** (Google DeepMind, 740M modular — text/code at the
 //! 270M slice up), whose vectors any OpenAI-compatible endpoint can produce
-//! ([`HttpEmbedder`]), and an offline lexical arm ([`HashingEmbedder`]).
+//! (`HttpEmbedder`), and an offline lexical arm ([`HashingEmbedder`]).
 //!
 //! # The honesty rule, borrowed from xerj
 //!
@@ -29,7 +29,7 @@
 //!
 //! # Dependency discipline
 //!
-//! [`HttpEmbedder`] sits behind the existing `llm-http` feature, like
+//! `HttpEmbedder` sits behind the existing `llm-http` feature, like
 //! `formalize::llm::HttpTransport`: the crate's own pipeline needs no
 //! network and no TLS. The trait, the hasher, and the math are always
 //! available, so `mm0web` — which reaches the network through `curl`, not
@@ -83,7 +83,7 @@ pub trait Embedder: Send + Sync {
     /// Embed one text. Default: a batch of one.
     fn embed_one(&self, text: &str) -> Result<Embedding, EmbedError> {
         let mut v = self.embed_batch(std::slice::from_ref(&text))?;
-        v.pop().ok_or_else(|| EmbedError::Count { want: 1, got: 0 })
+        v.pop().ok_or(EmbedError::Count { want: 1, got: 0 })
     }
 }
 
@@ -171,7 +171,7 @@ impl HashingEmbedder {
         HashingEmbedder { dims: dims.max(1) }
     }
 
-    fn bump(&self, acc: &mut Vec<f32>, key: &[u8], weight: f32) {
+    fn bump(&self, acc: &mut [f32], key: &[u8], weight: f32) {
         let h = fnv1a(key);
         // The sign trick of feature hashing: one bit steers the contribution
         // to ±, which keeps the expected contribution of a collision at 0

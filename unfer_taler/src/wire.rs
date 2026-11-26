@@ -114,10 +114,10 @@ impl WireGateway for SimulatedWireGateway {
 
     fn import(&mut self, wires: Vec<WireRef>) {
         for wire in wires {
-            if let Some(suffix) = wire.wire_id.strip_prefix("taler-wire:") {
-                if let Ok(n) = u64::from_str_radix(suffix, 16) {
-                    self.next_id = self.next_id.max(n);
-                }
+            if let Some(suffix) = wire.wire_id.strip_prefix("taler-wire:")
+                && let Ok(n) = u64::from_str_radix(suffix, 16)
+            {
+                self.next_id = self.next_id.max(n);
             }
             self.wires.insert(wire.wire_id.clone(), wire);
         }

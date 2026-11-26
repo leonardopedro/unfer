@@ -80,9 +80,10 @@ mod gpu {
     }
 
     pub fn main() {
-        let bundle = match std::env::args().nth(1).or_else(|| {
-            std::env::var("AUSTRAL_GPU_BUNDLE").ok()
-        }) {
+        let bundle = match std::env::args()
+            .nth(1)
+            .or_else(|| std::env::var("AUSTRAL_GPU_BUNDLE").ok())
+        {
             Some(path) => path,
             None => {
                 eprintln!(
@@ -103,8 +104,7 @@ mod gpu {
         let bundle_meta = &loaded.bundle;
         let element = avm_gpu::schema::Element::of_profile(&bundle_meta.numeric_profile)
             .unwrap_or(avm_gpu::schema::Element::U32);
-        if bundle_meta.numeric_profile != "wgsl-f32-v1"
-            || element != avm_gpu::schema::Element::F32
+        if bundle_meta.numeric_profile != "wgsl-f32-v1" || element != avm_gpu::schema::Element::F32
         {
             eprintln!(
                 "austral_pointwise: {bundle} is profile {}; this example needs \
@@ -178,16 +178,12 @@ mod gpu {
         let imag_bits: Vec<u32> = narrowed_imag.iter().map(|v| v.to_bits()).collect();
 
         let selection = Selection::default();
-        let real_run = run::run_with_iterations(
-            &loaded,
-            &[real_bits],
-            true,
-            &selection,
-            ITERATIONS,
-        );
+        let real_run =
+            run::run_with_iterations(&loaded, &[real_bits], true, &selection, ITERATIONS);
         let (real_run, imag_run) = match real_run {
             Ok(real_run) => {
-                match run::run_with_iterations(&loaded, &[imag_bits], true, &selection, ITERATIONS) {
+                match run::run_with_iterations(&loaded, &[imag_bits], true, &selection, ITERATIONS)
+                {
                     Ok(imag_run) => (real_run, imag_run),
                     Err(failure) => unavailable(failure),
                 }

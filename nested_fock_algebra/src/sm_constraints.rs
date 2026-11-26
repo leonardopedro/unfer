@@ -67,9 +67,9 @@ pub fn structure(a: usize, b: usize, c: usize) -> f64 {
 /// Symmetrized `q^T t p` on four real Higgs coordinates.
 pub fn higgs_charge(t: &[[f64; 4]; 4]) -> E {
     let mut terms = Vec::new();
-    for r in 0..4 {
-        for s in 0..4 {
-            let c = t[r][s];
+    for (r, row) in t.iter().enumerate() {
+        for (s, c) in row.iter().enumerate() {
+            let c = *c;
             if c != 0.0 {
                 let qr = E::coordinate(coord::phi(r as u32));
                 let ps = E::momentum(coord::phi(s as u32));
@@ -173,9 +173,9 @@ pub fn matter_current(sector: Sector) -> E {
                 for generation in 0..3 {
                     for color in 0..up.colors() {
                         for spin in 0..2 {
-                            for r in 0..2 {
-                                for s in 0..2 {
-                                    let c = t[r][s];
+                            for (r, row) in t.iter().enumerate() {
+                                for (s, c) in row.iter().enumerate() {
+                                    let c = *c;
                                     if c != C::new(0.0, 0.0) {
                                         let species = if r == 0 { up } else { down };
                                         let other = if s == 0 { up } else { down };
@@ -284,9 +284,9 @@ pub fn higgs_jet_charge(sector: Sector) -> E {
     };
     let mut terms = Vec::new();
     for i in 0..3 {
-        for r in 0..4 {
-            for s in 0..4 {
-                let c = t[r][s];
+        for (r, row) in t.iter().enumerate() {
+            for (s, c) in row.iter().enumerate() {
+                let c = *c;
                 if c == 0.0 {
                     continue;
                 }

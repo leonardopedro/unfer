@@ -507,7 +507,10 @@ impl GoldenValue {
     pub fn to_value(&self) -> Result<ReplicatedValue, WireError> {
         match self {
             GoldenValue::Noop => Ok(ReplicatedValue::Noop),
-            GoldenValue::Command { schema, payload_hex } => {
+            GoldenValue::Command {
+                schema,
+                payload_hex,
+            } => {
                 let payload = hex::decode(payload_hex).map_err(|_| WireError::Truncated {
                     needed: payload_hex.len() / 2,
                     had: 0,

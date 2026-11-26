@@ -102,7 +102,7 @@ pub(crate) mod tests {
         })
         .to_string();
         let c = CString::new(req).expect("NUL-free json");
-        unfer_ffi::uk_action_submit(c.as_ptr() as *const u8, c.as_bytes().len() as i64)
+        unfer_ffi::uk_action_submit(c.as_ptr(), c.as_bytes().len() as i64)
     }
 
     fn pending_list() -> Vec<Value> {

@@ -1760,10 +1760,9 @@ pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
         // about, so the inline path below stays; it is the RAM-only kernel.
         let ctx = handles::current_caller();
         let class = ctx.effect_kind_of(&record.effect);
-        let dispatched = outbox::with_kernel(|ob| {
-            outbox::apply_action(ob, &record, class, &ctx.tag.principal)
-        })
-        .map_err(|e| Diagnostic::new(Code::UNKNOWN_OUTCOME, e, Severity::Error))?;
+        let dispatched =
+            outbox::with_kernel(|ob| outbox::apply_action(ob, &record, class, &ctx.tag.principal))
+                .map_err(|e| Diagnostic::new(Code::UNKNOWN_OUTCOME, e, Severity::Error))?;
         if let Some(outcome) = dispatched {
             let applied = match outcome {
                 Ok(outbox::DispatchOutcome::Applied(v))
@@ -1791,11 +1790,13 @@ pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
                     handles::mark_unknown_outcome(action_handle);
                     handles::owner_log(
                         "kernel.audit",
-                        &format!(
-                            "action {action_handle} UNKNOWN_OUTCOME (UK-1010): {reason}"
-                        ),
+                        &format!("action {action_handle} UNKNOWN_OUTCOME (UK-1010): {reason}"),
                     );
-                    return Err(Diagnostic::new(Code::UNKNOWN_OUTCOME, reason, Severity::Error));
+                    return Err(Diagnostic::new(
+                        Code::UNKNOWN_OUTCOME,
+                        reason,
+                        Severity::Error,
+                    ));
                 }
                 Err(e @ outbox::DispatchError::Unrecorded(_)) => {
                     handles::mark_unknown_outcome(action_handle);
@@ -1889,7 +1890,9 @@ pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
                 handles::mark_unknown_outcome(action_handle);
                 return Err(Diagnostic::new(
                     Code::UNKNOWN_OUTCOME,
-                    format!("effect for action {action_handle} has an uncertain outcome ({reason})"),
+                    format!(
+                        "effect for action {action_handle} has an uncertain outcome ({reason})"
+                    ),
                     Severity::Error,
                 ));
             }
@@ -5745,7 +5748,11 @@ mod tests {
         let handle = submit_action("send_notification", r#"{"to":"alice"}"#);
         assert!(handle > 0);
         handles::set_sensitive_latch("test_module", true);
-        assert_eq!(uk_action_apply(handle), -5000, "a refusal is definite, not unknown");
+        assert_eq!(
+            uk_action_apply(handle),
+            -5000,
+            "a refusal is definite, not unknown"
+        );
         handles::set_sensitive_latch("test_module", false);
 
         // The action never left Pending, and the refusal is durable.
@@ -5756,10 +5763,12 @@ mod tests {
             .expect("dispatch stream");
         let last: serde_json::Value = serde_json::from_slice(records.last().unwrap()).unwrap();
         assert_eq!(last["state"], "Refused");
-        assert!(last["detail"]["refused"]
-            .as_str()
-            .unwrap()
-            .contains("sensitive-forward"));
+        assert!(
+            last["detail"]["refused"]
+                .as_str()
+                .unwrap()
+                .contains("sensitive-forward")
+        );
 
         handles::reset_durable_for_tests();
         handles::clear_local_sink_for_tests();

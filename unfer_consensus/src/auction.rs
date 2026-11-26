@@ -352,8 +352,8 @@ mod tests {
         let before = format!("{l:?}");
 
         // Below the floor.
-        assert!(l
-            .apply_op(
+        assert!(
+            l.apply_op(
                 alice,
                 &AuctionOpKind::Bid {
                     lot_id: AuctionId([1u8; 32]),
@@ -362,12 +362,13 @@ mod tests {
                 },
                 3,
             )
-            .is_err());
+            .is_err()
+        );
         assert_eq!(format!("{l:?}"), before);
 
         // The seller bidding on its own lot.
-        assert!(l
-            .apply_op(
+        assert!(
+            l.apply_op(
                 seller,
                 &AuctionOpKind::Bid {
                     lot_id: AuctionId([1u8; 32]),
@@ -376,13 +377,21 @@ mod tests {
                 },
                 4,
             )
-            .is_err());
+            .is_err()
+        );
         assert_eq!(format!("{l:?}"), before);
 
         // Closing an invented lot id.
-        assert!(l
-            .apply_op(alice, &AuctionOpKind::Close { lot_id: AuctionId([9u8; 32]) }, 5)
-            .is_err());
+        assert!(
+            l.apply_op(
+                alice,
+                &AuctionOpKind::Close {
+                    lot_id: AuctionId([9u8; 32])
+                },
+                5
+            )
+            .is_err()
+        );
         assert_eq!(format!("{l:?}"), before);
     }
 

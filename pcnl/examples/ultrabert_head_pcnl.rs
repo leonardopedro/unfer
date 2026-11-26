@@ -480,6 +480,7 @@ fn make_subspace(
     AffineSubspace::isotropic(map.to_vec(), basis, cfg.sigma).expect("subspace")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_restricted(
     table: &EmbeddingTable,
     map: &[f32],
@@ -515,7 +516,7 @@ fn run_restricted(
             } else {
                 attempts += 1;
                 accepts += usize::from(step.accepted);
-                if (t - cfg.burn) % cfg.thin == 0 {
+                if (t - cfg.burn).is_multiple_of(cfg.thin) {
                     kept.push(z.clone());
                     trace.push(phi);
                 }
@@ -544,6 +545,7 @@ fn run_restricted(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_full(
     table: &EmbeddingTable,
     map: &[f32],
@@ -587,7 +589,7 @@ fn run_full(
                 az += usize::from(sz.accepted);
                 nw += 1;
                 aw += usize::from(sw.accepted);
-                if (t - cfg.burn) % cfg.thin == 0 {
+                if (t - cfg.burn).is_multiple_of(cfg.thin) {
                     kept.push(target.lift(&z, &w));
                     trace.push(phi);
                 }

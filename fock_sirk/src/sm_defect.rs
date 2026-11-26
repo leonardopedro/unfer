@@ -64,6 +64,9 @@ fn mul_up(a: f64, b: f64) -> f64 {
     up(a * b)
 }
 
+// An enclosed numeric carrier: these methods take `self` by value (the type is
+// `Copy`) and mirror the scalar operators, so they stay inherent.
+#[allow(clippy::should_implement_trait)]
 impl Interval {
     pub fn point(x: f64) -> Self {
         assert!(x.is_finite(), "interval endpoints must be finite");
@@ -129,6 +132,7 @@ pub struct ComplexInterval {
     pub im: Interval,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl ComplexInterval {
     pub fn point(x: C) -> Self {
         Self {
@@ -316,7 +320,7 @@ fn defect_action_envelope(
 /// change as the remainder. Shared by the SM cell path and the finite fixture
 /// so the two cannot drift apart.
 fn sampled_sup(sample: &impl Fn(f64) -> f64, time: f64, max_steps: usize) -> f64 {
-    if !(time > 0.0) {
+    if time <= 0.0 || time.is_nan() {
         return sample(0.0);
     }
     let tolerance = 1e-3;
@@ -699,24 +703,17 @@ pub fn reduced_generator_enclosure(h: &DMatrix<C>, v: &DMatrix<C>) -> Vec<Vec<Co
 /// disc uses directed complex magnitudes; the maximum row upper endpoint bounds
 /// every eigenvalue of every matrix in the interval family.
 fn hermitian_growth_upper(generator: &[Vec<ComplexInterval>]) -> Interval {
-    let n = generator.len();
     let half = Interval::point(0.5);
     let mut bound = 0.0_f64;
-    for row in 0..n {
+    for (row, generator_row) in generator.iter().enumerate() {
         let mut radius = 0.0_f64;
-        for column in 0..n {
+        for (column, cell) in generator_row.iter().enumerate() {
             if row == column {
                 continue;
             }
             // Re G[row][column] = (G[row][column] + conj G[column][row]) / 2.
-            let re = generator[row][column]
-                .re
-                .add(generator[column][row].re)
-                .mul(half);
-            let im = generator[row][column]
-                .im
-                .sub(generator[column][row].im)
-                .mul(half);
+            let re = cell.re.add(generator[column][row].re).mul(half);
+            let im = cell.im.sub(generator[column][row].im).mul(half);
             let re_abs = abs_upper(re);
             let im_abs = abs_upper(im);
             let modulus = add_up(mul_up(re_abs, re_abs), mul_up(im_abs, im_abs)).sqrt();
@@ -915,7 +912,7 @@ pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
     for column in 0..2 {
         let mut d = DVector::<C>::zeros(4);
         for row in 0..2 {
-            d += &v.column(row) * (C::i() * generator[(row, column)]);
+            d += v.column(row) * (C::i() * generator[(row, column)]);
         }
         d -= (&h * &v).column(column).into_owned();
         defect_square += d.norm_squared();
@@ -1202,7 +1199,7 @@ pub fn certificate_json(terms: &DefectTerms, hashes: &CertificateHashes) -> Valu
     })
 }
 
-fn number<'a>(map: &'a Map<String, Value>, key: &'static str) -> Result<f64, DefectError> {
+fn number(map: &Map<String, Value>, key: &'static str) -> Result<f64, DefectError> {
     map.get(key)
         .and_then(Value::as_f64)
         .ok_or(DefectError::Missing(key))

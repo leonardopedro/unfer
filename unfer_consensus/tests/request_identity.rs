@@ -6,8 +6,8 @@
 
 use std::time::Duration;
 
-use unfer_consensus::idempotency::{payload_digest, RequestId};
-use unfer_consensus::{sign_transaction, ConsensusNode, Keypair, LocalConsensus, MintAuthority};
+use unfer_consensus::idempotency::{RequestId, payload_digest};
+use unfer_consensus::{ConsensusNode, Keypair, LocalConsensus, MintAuthority, sign_transaction};
 use unfer_protocol::submission::Watermark;
 use unfer_protocol::{CertificateOp, CertificateOpKind, Code, ConsensusTransaction};
 
@@ -173,11 +173,14 @@ fn a_client_that_invents_incarnations_is_bounded_and_can_retire_a_run() {
 
     for incarnation in 1..=(limit as u64) {
         let tx = mint_tx(&authority, "did:unfer:bob", 10, incarnation);
-        let submission = node.submit_request(&request_in(incarnation, 1), tx).unwrap();
+        let submission = node
+            .submit_request(&request_in(incarnation, 1), tx)
+            .unwrap();
         node.settle(submission, Duration::from_millis(100));
     }
     assert_eq!(
-        node.admissions().incarnations("federation-main", "did:unfer:alice"),
+        node.admissions()
+            .incarnations("federation-main", "did:unfer:alice"),
         limit
     );
 
@@ -186,7 +189,11 @@ fn a_client_that_invents_incarnations_is_bounded_and_can_retire_a_run() {
         .submit_request(&request_in(limit as u64 + 1, 1), overflow.clone())
         .expect_err("a new incarnation beyond the limit must be refused");
     assert_eq!(error.code, Code::REQUEST_QUOTA);
-    assert!(error.message.contains("incarnations"), "got: {}", error.message);
+    assert!(
+        error.message.contains("incarnations"),
+        "got: {}",
+        error.message
+    );
     assert_eq!(
         node.watermark(),
         Watermark(limit as u64),

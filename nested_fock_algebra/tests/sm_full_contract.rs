@@ -202,11 +202,17 @@ fn all_four_yukawa_components_obey_full_gauge_covariance() {
             }
         }
         let real = higgs_real_generator(weak);
-        for b in 0..4 {
+        let q_matter: Vec<&MatterMatrix> = (0..4)
+            .map(|a| &model().matter[&Variable::Q(coord::phi(a as u32))])
+            .collect();
+        let real_columns: Vec<[f64; 4]> = (0..4)
+            .map(|b| std::array::from_fn(|a| real[a][b]))
+            .collect();
+        for (b, real_b) in real_columns.iter().enumerate() {
             let mut derivative = MatterMatrix::new();
-            for a in 0..4 {
-                for (&(r, s), &x) in &model().matter[&Variable::Q(coord::phi(a as u32))] {
-                    add(&mut derivative, r, s, x * real[a][b]);
+            for (a, matter_a) in q_matter.iter().enumerate() {
+                for (&(r, s), &x) in *matter_a {
+                    add(&mut derivative, r, s, x * real_b[a]);
                 }
             }
             matrix_close(
@@ -285,7 +291,7 @@ fn real_majorana_quadratic_form_matches_complex_car_with_constant_retained() {
         let m = a / 2;
         let create = E::Ladder(L::FermionCreate(m));
         let annihilate = E::Ladder(L::FermionAnnihilate(m));
-        if a % 2 == 0 {
+        if a.is_multiple_of(2) {
             E::Sum(vec![create, annihilate])
         } else {
             E::Sum(vec![create.scaled(C::i()), annihilate.scaled(-C::i())])
@@ -428,9 +434,9 @@ fn manuscript_majorana_spin_frame_matches_all_spatial_kinetic_blocks() {
     // i gamma0 maps the opposite-complex-structure right singlet to the left;
     // after the right spin-basis change, the Yukawa spin contraction is identity.
     let mass = multiply2(to_complex(mgamma[0]), eps_adjoint);
-    for r in 0..2 {
-        for s in 0..2 {
-            close(mass[r][s], C::new(if r == s { 1.0 } else { 0.0 }, 0.0));
+    for (r, row) in mass.iter().enumerate() {
+        for (s, value) in row.iter().enumerate() {
+            close(*value, C::new(if r == s { 1.0 } else { 0.0 }, 0.0));
         }
     }
 }

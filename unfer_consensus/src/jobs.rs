@@ -237,7 +237,10 @@ impl FenceTable {
                 "RESOURCE_HELD",
                 format!(
                     "resource '{resource}' is held by '{}' under fence {}; a claim needs a release first",
-                    self.holders.get(resource).map(String::as_str).unwrap_or("unknown"),
+                    self.holders
+                        .get(resource)
+                        .map(String::as_str)
+                        .unwrap_or("unknown"),
                     self.render(resource)
                 ),
             ));
@@ -290,7 +293,11 @@ impl FenceTable {
                 ),
             )
         })?;
-        self.install(next.clone(), self.holders.get(&fence.resource).cloned(), false);
+        self.install(
+            next.clone(),
+            self.holders.get(&fence.resource).cloned(),
+            false,
+        );
         Ok(next)
     }
 
@@ -362,6 +369,12 @@ pub struct JobClaim {
 impl JobClaim {
     /// Construct a claim the queue never issued, for a sibling module's
     /// "present a stale fence" test.
+    /// Only the crate's own tests build a claim directly; it is otherwise
+    /// minted through the quorum path, so it does not exist in a release lib.
+    /// The sole caller sits behind `feature = "network"`, so a default-feature
+    /// test build legitimately leaves this unused.
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn for_test(job: &str, fence: Fence) -> Self {
         Self {
             job: job.to_string(),
@@ -394,17 +407,31 @@ pub const JOB_COMMAND_SCHEMA: u16 = 2;
 /// the state is unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JobCommand {
-    Claim { resource: String, holder: String },
+    Claim {
+        resource: String,
+        holder: String,
+    },
     TakeOver {
         resource: String,
         epoch: u64,
         holder: String,
     },
-    Renew { claim: JobClaim },
-    Release { claim: JobClaim },
-    Reclaim { resource: String, holder: String },
-    Settle { claim: JobClaim },
-    Disable { claim: JobClaim },
+    Renew {
+        claim: JobClaim,
+    },
+    Release {
+        claim: JobClaim,
+    },
+    Reclaim {
+        resource: String,
+        holder: String,
+    },
+    Settle {
+        claim: JobClaim,
+    },
+    Disable {
+        claim: JobClaim,
+    },
 }
 
 /// The enforcement interface for a protected external effect (D14 step 2).
@@ -443,16 +470,16 @@ impl OrderedMockSink {
 
 impl FencedSink for OrderedMockSink {
     fn apply(&mut self, fence: &Fence, payload: &str) -> Result<(), Diagnostic> {
-        if let Some(seen) = self.seen.get(&fence.resource) {
-            if fence.is_older_than(seen) || fence == seen {
-                return Err(stale(
-                    "STALE_FENCE",
-                    format!(
-                        "sink refused ({}, epoch {}, generation {}): it already applied epoch {}, generation {}",
-                        fence.resource, fence.epoch, fence.generation, seen.epoch, seen.generation
-                    ),
-                ));
-            }
+        if let Some(seen) = self.seen.get(&fence.resource)
+            && (fence.is_older_than(seen) || fence == seen)
+        {
+            return Err(stale(
+                "STALE_FENCE",
+                format!(
+                    "sink refused ({}, epoch {}, generation {}): it already applied epoch {}, generation {}",
+                    fence.resource, fence.epoch, fence.generation, seen.epoch, seen.generation
+                ),
+            ));
         }
         self.seen.insert(fence.resource.clone(), fence.clone());
         self.applied.push((
@@ -686,7 +713,12 @@ impl JobQueue {
     /// cannot reach the sink at all; the sink then re-checks, because its
     /// ordering knowledge is its own and a fence that was current when the
     /// worker started may not be current when the effect arrives.
-    pub fn settle(&mut self, claim: &JobClaim, sink: &mut dyn FencedSink, payload: &str) -> Result<(), Diagnostic> {
+    pub fn settle(
+        &mut self,
+        claim: &JobClaim,
+        sink: &mut dyn FencedSink,
+        payload: &str,
+    ) -> Result<(), Diagnostic> {
         if !self.valid_claim(claim) {
             return Err(self.stale_claim(claim, "settle"));
         }
@@ -709,17 +741,21 @@ impl JobQueue {
                 return Err(stale(
                     "JOB_UNKNOWN",
                     format!("resource '{resource}' is not registered"),
-                ))
+                ));
             }
             Some(JobState::Fired) | Some(JobState::Disabled) => {
                 return Err(stale(
                     "JOB_NOT_CLAIMABLE",
                     format!("resource '{resource}' is not claimable"),
-                ))
+                ));
             }
             Some(JobState::Claimed) | Some(JobState::Queued) => {}
         }
-        let current_epoch = self.fences.current(resource).map(|fence| fence.epoch).unwrap_or(0);
+        let current_epoch = self
+            .fences
+            .current(resource)
+            .map(|fence| fence.epoch)
+            .unwrap_or(0);
         if epoch <= current_epoch {
             return Err(stale(
                 "STALE_EPOCH",
@@ -747,23 +783,25 @@ impl JobQueue {
                 return Err(stale(
                     "JOB_UNKNOWN",
                     format!("resource '{resource}' is not registered"),
-                ))
+                ));
             }
             Some(JobState::Fired) | Some(JobState::Disabled) => {
                 return Err(stale(
                     "JOB_NOT_RECLAIMABLE",
                     format!("resource '{resource}' cannot be reclaimed"),
-                ))
+                ));
             }
             Some(JobState::Claimed) | Some(JobState::Queued) => {}
         }
         let fence = match self.fences.current(resource) {
-            Some(current) if !self.fences.is_released(resource) => current.successor().ok_or_else(|| {
-                stale(
-                    "FENCE_EXHAUSTED",
-                    format!("the fence space for '{resource}' is exhausted"),
-                )
-            })?,
+            Some(current) if !self.fences.is_released(resource) => {
+                current.successor().ok_or_else(|| {
+                    stale(
+                        "FENCE_EXHAUSTED",
+                        format!("the fence space for '{resource}' is exhausted"),
+                    )
+                })?
+            }
             _ => self.fences.claim(&self.deployment, resource, holder)?,
         };
         self.fences
@@ -787,9 +825,7 @@ impl JobQueue {
             } => self.take_over(resource, *epoch, holder).map(|_| ()),
             JobCommand::Renew { claim } => self.renew(claim).map(|_| ()),
             JobCommand::Release { claim } => self.unclaim(claim),
-            JobCommand::Reclaim { resource, holder } => {
-                self.reclaim(resource, holder).map(|_| ())
-            }
+            JobCommand::Reclaim { resource, holder } => self.reclaim(resource, holder).map(|_| ()),
             JobCommand::Settle { claim } => self.mark_fired(claim),
             JobCommand::Disable { claim } => self.disable(claim),
         }
@@ -808,7 +844,8 @@ impl JobQueue {
                 claim.fence.epoch,
                 claim.fence.generation,
                 match self.fences.current(&claim.job) {
-                    Some(fence) => format!("epoch {}, generation {}", fence.epoch, fence.generation),
+                    Some(fence) =>
+                        format!("epoch {}, generation {}", fence.epoch, fence.generation),
                     None => "no fence".to_string(),
                 }
             ),
@@ -848,7 +885,10 @@ mod tests {
         let claim = q.claim_in("dep", "job", "worker").expect("claim");
         let stale = Fence::new("dep", "job", 1, 2);
         assert!(q.renew_at("job", &stale).is_err(), "renew needs current");
-        assert!(q.unclaim_at("job", &stale).is_err(), "release needs current");
+        assert!(
+            q.unclaim_at("job", &stale).is_err(),
+            "release needs current"
+        );
         assert!(
             q.mark_fired_at("job", &stale).is_err(),
             "fire needs current"
@@ -904,7 +944,9 @@ mod tests {
         // Simulate a failed fire: unclaim re-queues; a later claim retries.
         q.unclaim(&claim).unwrap();
         assert_eq!(q.state("settle-cert-ops"), Some(JobState::Queued));
-        let retry = q.claim("settle-cert-ops", "worker-1").expect("retry claimable");
+        let retry = q
+            .claim("settle-cert-ops", "worker-1")
+            .expect("retry claimable");
         q.mark_fired(&retry).unwrap();
         assert_eq!(q.state("settle-cert-ops"), Some(JobState::Fired));
         // The fences are strictly ordered across the retry.
@@ -943,7 +985,10 @@ mod tests {
         let mut q = JobQueue::new();
         q.enqueue("job");
         let _first = q.claim("job", "worker-0").unwrap();
-        assert!(q.claim("job", "worker-1").is_err(), "second claim must be refused");
+        assert!(
+            q.claim("job", "worker-1").is_err(),
+            "second claim must be refused"
+        );
     }
 
     #[test]
@@ -960,7 +1005,11 @@ mod tests {
     #[test]
     fn generation_overflow_advances_the_epoch_instead_of_wrapping() {
         let mut table = FenceTable::new();
-        table.install(Fence::new("dep", "res", 2, u64::MAX - 1), Some("w".into()), false);
+        table.install(
+            Fence::new("dep", "res", 2, u64::MAX - 1),
+            Some("w".into()),
+            false,
+        );
         let last = table.current("res").unwrap().clone();
         let next = table.renew(&last).unwrap();
         assert_eq!((next.epoch, next.generation), (2, u64::MAX));
@@ -984,6 +1033,9 @@ mod tests {
             table.renew(&top).is_err(),
             "a fence space with no successor must refuse rather than wrap"
         );
-        assert!(table.admits(&top), "the current fence is still the current one");
+        assert!(
+            table.admits(&top),
+            "the current fence is still the current one"
+        );
     }
 }

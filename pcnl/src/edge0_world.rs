@@ -28,7 +28,7 @@
 //!   `correlated_questions_are_not_a_product_of_marginals`.
 //!
 //! Two questions in one world share the hidden hypothesis. Their marginals are
-//! therefore *not* independent, and [`joint_law`] enumerates the actual joint.
+//! therefore *not* independent, and [`World::joint_law`] enumerates the actual joint.
 //! `EDGE0_RLCD_PLAN.md` §3 is explicit that per-question marginals "do not
 //! determine a joint law of several answers"; this module makes that
 //! testable instead of a prose caveat.
@@ -154,7 +154,9 @@ impl WorldManifest {
     }
 
     pub fn new(seed: u64, train: usize, dev: usize, calibration: usize, test: usize) -> Self {
-        assert!(FAMILIES >= 4, "each split needs at least one family");
+        // Compile-time, not a runtime assert on a constant: `FAMILIES` is a
+        // `const`, so a too-small value should fail the build.
+        const { assert!(FAMILIES >= 4, "each split needs at least one family") };
         let counts = [train, dev, calibration, test];
         // Family ownership is a property of the family, not of how many worlds
         // a split happens to hold: one family per split, the rest to train.

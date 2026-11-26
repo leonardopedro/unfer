@@ -133,7 +133,7 @@ impl Edge0Config {
         if self.d == 0 || !self.d.is_multiple_of(self.heads) {
             return Err("d must be a positive multiple of heads".into());
         }
-        if self.groups == 0 || self.experts == 0 || self.experts % self.groups != 0 {
+        if self.groups == 0 || self.experts == 0 || !self.experts.is_multiple_of(self.groups) {
             return Err("experts must be a positive multiple of groups".into());
         }
         if self.top_k == 0 || self.top_k > self.experts {
@@ -388,13 +388,13 @@ impl QuestionInput {
         if self.options.len() != self.kind.options_count() {
             return Err("declared options do not match the question schema".into());
         }
-        if let QuestionKind::Score { levels } = self.kind {
-            if levels > config.max_levels {
-                return Err(format!(
-                    "score levels {levels} exceed the configured maximum {}",
-                    config.max_levels
-                ));
-            }
+        if let QuestionKind::Score { levels } = self.kind
+            && levels > config.max_levels
+        {
+            return Err(format!(
+                "score levels {levels} exceed the configured maximum {}",
+                config.max_levels
+            ));
         }
         for &t in self.tokens.iter().chain(&self.options) {
             if t as usize >= config.vocab {
@@ -448,23 +448,21 @@ impl PathOutput {
 
     /// Read the marginal as plain `f64`s (evaluation, not gradient paths).
     pub fn marginal_vec(&self) -> Result<Vec<f64>> {
-        Ok(self
-            .marginal()?
+        self.marginal()?
             .to_dtype(candle_core::DType::F64)?
-            .to_vec1::<f64>()?)
+            .to_vec1::<f64>()
     }
 
     pub fn policy_vec(&self) -> Result<Vec<f64>> {
-        Ok(self
-            .policy
+        self.policy
             .to_dtype(candle_core::DType::F64)?
-            .to_vec1::<f64>()?)
+            .to_vec1::<f64>()
     }
 
     pub fn path_probs_vec(&self) -> Result<Vec<Vec<f64>>> {
         self.path_probs
             .iter()
-            .map(|p| Ok(p.to_dtype(candle_core::DType::F64)?.to_vec1::<f64>()?))
+            .map(|p| p.to_dtype(candle_core::DType::F64)?.to_vec1::<f64>())
             .collect()
     }
 }
@@ -653,9 +651,9 @@ pub fn forward_with(
     input: &ModelInput<'_>,
     routing: Routing,
 ) -> Result<ModelOutput> {
-    config.validate().map_err(|e| candle_core::Error::Msg(e))?;
+    config.validate().map_err(candle_core::Error::Msg)?;
     for q in input.questions {
-        q.validate(config).map_err(|e| candle_core::Error::Msg(e))?;
+        q.validate(config).map_err(candle_core::Error::Msg)?;
     }
     let s = Edge0Slices::from_theta(theta, config)?;
     let state_rep = encode_state_with(&s, config, input.state, routing)?;
@@ -963,11 +961,9 @@ pub fn census(config: &Edge0Config) -> ParamCensus {
         }
     }
     let per_block_expert = config.state_blocks * config.experts * config.latent * config.d;
-    let routed_active = if config.experts == 0 {
-        0
-    } else {
-        per_block_expert * config.top_k / config.experts
-    };
+    let routed_active = (per_block_expert * config.top_k)
+        .checked_div(config.experts)
+        .unwrap_or(0);
     ParamCensus {
         total: config.flat_size(),
         per_component,

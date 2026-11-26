@@ -356,7 +356,7 @@ impl RotationHead {
         if dim == 0 {
             return Err(RotationError::Shape("embedding dimension is zero".into()));
         }
-        if hidden.iter().any(|&h| h == 0) {
+        if hidden.contains(&0) {
             return Err(RotationError::Shape(
                 "tanh layers must be non-empty when present".into(),
             ));
@@ -414,8 +414,8 @@ impl RotationHead {
         let mut scales = Vec::with_capacity(self.flat_size());
         for (fin, fout) in self.layers() {
             let s = (fin as f64).sqrt().max(1.0);
-            scales.extend(std::iter::repeat(s).take(fin * fout));
-            scales.extend(std::iter::repeat(1.0).take(fout));
+            scales.extend(std::iter::repeat_n(s, fin * fout));
+            scales.extend(std::iter::repeat_n(1.0, fout));
         }
         scales
     }
@@ -765,7 +765,7 @@ impl BornPotential {
             }
             psi = u_matrix.matmul(&psi)?;
         }
-        Ok(psi.flatten_all()?)
+        psi.flatten_all()
     }
 }
 
@@ -965,6 +965,7 @@ pub fn mh_pcn_centered_step<P: Potential>(
 /// `beta_i² sigma² s_i²`.  Equal betas reproduce the scalar kernel.  The
 /// vector is a fixed kernel parameter, so it must be frozen before retained
 /// draws; adapting it inside the kept window would invalidate the sample.
+#[allow(clippy::too_many_arguments)]
 pub fn mh_pcn_centered_step_betas<P: Potential>(
     potential: &P,
     lambda: f64,
@@ -996,6 +997,7 @@ pub fn mh_pcn_centered_step_betas<P: Potential>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mh_pcn_centered_step_with<P: Potential, F: Fn(usize) -> f64>(
     potential: &P,
     lambda: f64,
@@ -1451,7 +1453,7 @@ impl SessionConfig {
             ));
         }
         if self.sampler == Sampler::ParallelTempering {
-            if self.chains < 2 || self.chains % 2 != 0 {
+            if self.chains < 2 || !self.chains.is_multiple_of(2) {
                 return Err(RotationError::Value(
                     "parallel tempering needs an even number of chains".into(),
                 ));
@@ -1900,9 +1902,7 @@ impl RotationSession {
         let scales = self.head.prior_scales();
         let mut per_chain: Vec<Vec<Vec<f64>>> = vec![Vec::new(); chain_count];
         for (draw, theta) in self.retained.iter().enumerate() {
-            let Some(&(chain, _)) = self.retained_provenance.get(draw) else {
-                return None;
-            };
+            let &(chain, _) = self.retained_provenance.get(draw)?;
             if chain < chain_count && theta.len() == flat {
                 per_chain[chain].push(theta.iter().map(|v| f64::from(*v)).collect());
             }
@@ -2032,8 +2032,7 @@ impl RotationSession {
         } else {
             self.config.chains
         };
-        let available =
-            (self.config.steps - self.config.burn + self.config.thin - 1) / self.config.thin;
+        let available = (self.config.steps - self.config.burn).div_ceil(self.config.thin);
         let take = self.config.draws.min(available * ladders);
         let base = take / ladders;
         let extra = take % ladders;
@@ -2158,7 +2157,7 @@ impl RotationSession {
                     accepted += 1;
                 }
                 if step >= self.config.burn
-                    && (step - self.config.burn) % self.config.thin == 0
+                    && (step - self.config.burn).is_multiple_of(self.config.thin)
                     && selected_steps[i].binary_search(&step).is_ok()
                 {
                     retained.push(chain.theta.clone());
@@ -2282,11 +2281,11 @@ impl RotationSession {
         };
         let bytes = serde_json::to_vec_pretty(&ck)
             .map_err(|e| RotationError::Format(format!("serialize checkpoint: {e}")))?;
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| RotationError::Io(format!("create {}: {e}", parent.display())))?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| RotationError::Io(format!("create {}: {e}", parent.display())))?;
         }
         let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
         let mut f = std::fs::File::create(&tmp)

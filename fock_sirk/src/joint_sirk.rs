@@ -149,7 +149,7 @@ impl FiniteWindowAction {
             .cloned()
             .collect();
         let n = labels.len();
-        let mut components = n.checked_mul(n).unwrap_or(usize::MAX);
+        let mut components = n.saturating_mul(n);
         if components > options.max_cached_components {
             return Err(JointSirkError::CacheBudget {
                 components,
@@ -169,7 +169,7 @@ impl FiniteWindowAction {
                 &NestedVector::from([(b.clone(), C::new(1.0, 0.0))]),
                 options.action_limits,
             )?;
-            components = components.checked_add(image.len()).unwrap_or(usize::MAX);
+            components = components.saturating_add(image.len());
             if components > options.max_cached_components {
                 return Err(JointSirkError::CacheBudget {
                     components,
@@ -198,7 +198,7 @@ impl FiniteWindowAction {
         let mut work = 0usize;
         for (b, &a) in state {
             let j = *self.indices.get(b).ok_or(ActionError::UnsupportedBasis)?;
-            work = work.checked_add(self.images[j].len()).unwrap_or(usize::MAX);
+            work = work.saturating_add(self.images[j].len());
             if work > limits.max_work {
                 return Err(ActionError::WorkLimit {
                     limit: limits.max_work,
@@ -252,7 +252,10 @@ impl FiniteWindowAction {
     }
 
     /// Inverse of `coords`, with the same component guard and the same
-    /// zero-dropping rule `projected` applies to its image.
+    /// zero-dropping rule `projected` applies to its image. The `from_` prefix
+    /// names the inverse of [`Self::coords`]; it is a projection map, not a
+    /// constructor, so the usual no-`self` convention does not apply.
+    #[allow(clippy::wrong_self_convention)]
     fn from_coords(
         &self,
         coordinates: &[C],
@@ -309,7 +312,7 @@ fn coords_inner_product(a: &[C], b: &[C]) -> C {
     {
         // SAFETY: Advanced SIMD is part of the aarch64 baseline, and both
         // slices are read only at indices below `min(a.len(), b.len())`.
-        return unsafe { coords_inner_product_neon(a, b) };
+        unsafe { coords_inner_product_neon(a, b) }
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
@@ -584,7 +587,11 @@ impl JointSirkResult {
     }
     /// Largest Arnoldi step count over the rational basis solves.
     pub fn max_shift_solve_iterations(&self) -> usize {
-        self.shift_solve_iterations.iter().copied().max().unwrap_or(0)
+        self.shift_solve_iterations
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0)
     }
     /// Largest Arnoldi step count over the bounded-resolvent solves.
     pub fn max_function_solve_iterations(&self) -> usize {
@@ -910,47 +917,50 @@ where
     let h_proj = (&reduced + reduced.adjoint()) * C::new(0.5, 0.0);
     let (projected_resolvent, function_generator, function_bounds, function_iterations) =
         match options.method {
-        JointKrylovMethod::ForwardProducts => {
-            (None, h_proj.clone() * C::new(0.0, -1.0), Vec::new(), Vec::new())
-        }
-        JointKrylovMethod::ShiftInvert {
-            relative_tolerance,
-            max_iterations,
-        } => {
-            if shifts.iter().any(|z| z.re != 0.0 || z.im <= 0.0) {
-                return Err(JointSirkError::Invalid(
-                    "Hashimoto A=-iH requires z=i gamma with gamma>0".into(),
-                ));
-            }
-            let shift = shifts[m - 1];
-            let gamma = shift.im;
-            let mut bounded = DMatrix::<C>::zeros(rank, rank);
-            let mut bounds = Vec::new();
-            let mut iterations_used = Vec::new();
-            for j in 0..rank {
-                let (inverse, bound, used) = shift_solve(
-                    &matvec,
-                    &projected_matvec,
-                    window,
-                    &orthonormal[j],
-                    shift,
-                    options,
-                    relative_tolerance,
-                    max_iterations,
-                )?;
-                bounds.push(bound);
-                iterations_used.push(used);
-                for i in 0..rank {
-                    bounded[(i, j)] = -C::i() * joint_inner_product(&orthonormal[i], &inverse);
+            JointKrylovMethod::ForwardProducts => (
+                None,
+                h_proj.clone() * C::new(0.0, -1.0),
+                Vec::new(),
+                Vec::new(),
+            ),
+            JointKrylovMethod::ShiftInvert {
+                relative_tolerance,
+                max_iterations,
+            } => {
+                if shifts.iter().any(|z| z.re != 0.0 || z.im <= 0.0) {
+                    return Err(JointSirkError::Invalid(
+                        "Hashimoto A=-iH requires z=i gamma with gamma>0".into(),
+                    ));
                 }
+                let shift = shifts[m - 1];
+                let gamma = shift.im;
+                let mut bounded = DMatrix::<C>::zeros(rank, rank);
+                let mut bounds = Vec::new();
+                let mut iterations_used = Vec::new();
+                for j in 0..rank {
+                    let (inverse, bound, used) = shift_solve(
+                        &matvec,
+                        &projected_matvec,
+                        window,
+                        &orthonormal[j],
+                        shift,
+                        options,
+                        relative_tolerance,
+                        max_iterations,
+                    )?;
+                    bounds.push(bound);
+                    iterations_used.push(used);
+                    for i in 0..rank {
+                        bounded[(i, j)] = -C::i() * joint_inner_product(&orthonormal[i], &inverse);
+                    }
+                }
+                let inverse = bounded.clone().try_inverse().ok_or_else(|| {
+                    JointSirkError::Invalid("singular bounded-resolvent compression".into())
+                })?;
+                let generator = DMatrix::<C>::identity(rank, rank) * C::new(gamma, 0.0) - inverse;
+                (Some(bounded), generator, bounds, iterations_used)
             }
-            let inverse = bounded.clone().try_inverse().ok_or_else(|| {
-                JointSirkError::Invalid("singular bounded-resolvent compression".into())
-            })?;
-            let generator = DMatrix::<C>::identity(rank, rank) * C::new(gamma, 0.0) - inverse;
-            (Some(bounded), generator, bounds, iterations_used)
-        }
-    };
+        };
     Ok(JointSirkResult {
         h_proj,
         projected_resolvent,

@@ -116,7 +116,7 @@ fn main() {
     );
     let burn = steps / 4;
     let draws = steps - burn;
-    let probes = |d: usize| d.min(4).max(1);
+    let probes = |d: usize| d.clamp(1, 4);
     for &d in &dims {
         let target = StandardGaussian { dim: d };
         // A negligible kernel prior leaves the standard Gaussian as the target.

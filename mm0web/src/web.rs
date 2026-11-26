@@ -1150,10 +1150,10 @@ fn search(cfg: &Config, query: &str) -> SearchOutcome {
         let by_key: HashMap<String, usize> =
             rows.iter().enumerate().map(|(i, h)| (h.key(), i)).collect();
         for key in xerj_keys {
-            if let Some(&i) = by_key.get(&key) {
-                if !xerj.contains(&i) {
-                    xerj.push(i);
-                }
+            if let Some(&i) = by_key.get(&key)
+                && !xerj.contains(&i)
+            {
+                xerj.push(i);
             }
         }
     }

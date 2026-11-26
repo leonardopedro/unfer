@@ -206,7 +206,7 @@ pub fn gap_interval(theta_o: f64, theta_e: f64, delta_o: f64, delta_e: f64) -> (
 pub fn temple_lower_bound(theta: f64, residual: f64, beta: f64) -> Option<f64> {
     debug_assert!(residual >= 0.0, "Temple residual must be non-negative");
     let gap_to_second = beta - theta;
-    if !(gap_to_second > 0.0) || residual >= gap_to_second {
+    if gap_to_second <= 0.0 || gap_to_second.is_nan() || residual >= gap_to_second {
         return None;
     }
     Some(theta - residual * residual / gap_to_second)

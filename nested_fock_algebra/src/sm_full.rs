@@ -219,7 +219,7 @@ pub fn su3_generators() -> [[[C; 3]; 3]; 8] {
     t
 }
 
-/// Computed from [T_a,T_b]=i f_abc T_c, not a separate hard-coded f table.
+/// Computed from `[T_a,T_b]=i f_abc T_c`, not a separate hard-coded f table.
 pub fn su3_structure() -> [[[f64; 8]; 8]; 8] {
     let t = su3_generators();
     let mut f = [[[0.0; 8]; 8]; 8];
@@ -754,26 +754,26 @@ pub mod cadabra_import {
                 if name == "I" || name == "i" {
                     return Ok(constant(C::i()));
                 }
-                if let Some((prefix, index)) = name.get(..1).zip(name.get(1..)) {
-                    if (prefix == "q" || prefix == "p") && index.chars().all(|x| x.is_ascii_digit())
-                    {
-                        let m = index
-                            .parse::<u32>()
-                            .map_err(|_| "invalid coordinate index")?;
-                        if m >= BOSON_MODES {
-                            return Err("SM coordinate index outside 163".into());
-                        }
-                        let mut p = SmPolynomial::default();
-                        p.add(
-                            vec![if prefix == "q" {
-                                Variable::Q(m)
-                            } else {
-                                Variable::P(m)
-                            }],
-                            C::new(1.0, 0.0),
-                        );
-                        return Ok(p);
+                if let Some((prefix, index)) = name.get(..1).zip(name.get(1..))
+                    && (prefix == "q" || prefix == "p")
+                    && index.chars().all(|x| x.is_ascii_digit())
+                {
+                    let m = index
+                        .parse::<u32>()
+                        .map_err(|_| "invalid coordinate index")?;
+                    if m >= BOSON_MODES {
+                        return Err("SM coordinate index outside 163".into());
                     }
+                    let mut p = SmPolynomial::default();
+                    p.add(
+                        vec![if prefix == "q" {
+                            Variable::Q(m)
+                        } else {
+                            Variable::P(m)
+                        }],
+                        C::new(1.0, 0.0),
+                    );
+                    return Ok(p);
                 }
                 Err(format!(
                     "unknown Cadabra scalar/coordinate: {}",

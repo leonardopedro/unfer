@@ -326,10 +326,10 @@ impl RecomputeIndex {
         // Same hub guarantee as at build: link the newcomer to its closest
         // hub when it has none.
         let hubs = hubs_of(&adjacency, idx + 1);
-        if !adjacency[idx].iter().any(|j| hubs.contains(j)) {
-            if let Some((_, h)) = scored.iter().find(|(_, j)| hubs.contains(j)) {
-                adjacency[idx].push(*h);
-            }
+        if !adjacency[idx].iter().any(|j| hubs.contains(j))
+            && let Some((_, h)) = scored.iter().find(|(_, j)| hubs.contains(j))
+        {
+            adjacency[idx].push(*h);
         }
         self.texts.push(text);
         self.write_adjacency(&adjacency);

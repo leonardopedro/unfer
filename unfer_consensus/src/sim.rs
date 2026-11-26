@@ -1,7 +1,7 @@
 //! D12: a deterministic fault scheduler over the production transition core.
 //!
 //! The harness does **not** reimplement the node. Every replica is a real
-//! [`ConsensusNode`] over its own real [`TransitionLog`](crate::storage::TransitionLog);
+//! [`ConsensusNode`] over its own real [`TransitionLog`];
 //! what the harness replaces is the *environment*: which decision a replica is
 //! told about and when, whether it can reach the quorum, what its next journal
 //! append returns, and whether its process is running at all. Those are the
@@ -10,28 +10,28 @@
 //!
 //! Three rules keep the model honest:
 //!
-//! * **The consensus engine is an assumption.** One [`Cluster`] holds the
-//!   decided log; `get_log` only reveals the prefix a replica has been *told*
-//!   about ([`EngineView::horizon`]). The harness never claims to test ordering
+//! * **The consensus engine is an assumption.** One `Cluster` holds the decided
+//!   log; `get_log` only reveals the prefix a replica has been *told* about
+//!   (`EngineView::horizon`). The harness never claims to test ordering
 //!   — it consumes it as an explicit input, so a schedule is a statement about
 //!   the application layer only.
 //! * **The business logic is the production logic.** Applying an entry, the
 //!   admission book, the idempotency store, the journal comparison on restore
 //!   and the refusal/halt distinction all come from `node.rs` and `storage.rs`.
 //! * **Nondeterminism is registered, not avoided.** Every choice the harness
-//!   makes is recorded in a [`Trace`] with its class and site id, and the same
-//!   seed plus the same action list reproduces the same trace and the same state
-//!   digests ([`Sim::fingerprint`]).
+//!   makes is recorded in a `Trace` with its class and site id, and the same seed
+//!   plus the same action list reproduces the same trace and the same state
+//!   digests (`Sim::fingerprint`).
 //!
 //! ## What is deterministic here and what is not
 //!
 //! The trace records three separate classes, because they fail differently:
 //!
-//! * [`ChoiceClass::Content`] — which request (and which *encoding* of it, e.g.
-//!   a re-signed duplicate) a client submits. A bug here is a bad client.
-//! * [`ChoiceClass::Scheduling`] — delivery, partition, crash and restore.
-//!   A bug here is a scheduler or a host, not the node.
-//! * [`ChoiceClass::Fuel`] — how many steps a bounded run may take. A bug here
+//! * `ChoiceClass::Content` — which request (and which *encoding* of it, e.g. a
+//!   re-signed duplicate) a client submits. A bug here is a bad client.
+//! * `ChoiceClass::Scheduling` — delivery, partition, crash and restore. A bug
+//!   here is a scheduler or a host, not the node.
+//! * `ChoiceClass::Fuel` — how many steps a bounded run may take. A bug here
 //!   is a truncated run being mistaken for a passing one, so a run that ends on
 //!   the fuel bound is reported as such rather than as success.
 
@@ -53,7 +53,7 @@ use crate::certs::MintAuthority;
 use crate::engine::ConsensusEngine;
 use crate::idempotency::RequestId;
 use crate::node::ConsensusNode;
-use crate::signing::{sign_transaction, Keypair};
+use crate::signing::{Keypair, sign_transaction};
 use crate::storage::FaultPoint;
 
 // ---------------------------------------------------------------------------
@@ -98,11 +98,7 @@ pub struct Trace {
 
 impl Trace {
     pub fn push(&mut self, class: ChoiceClass, site: &'static str, value: u64) {
-        self.choices.push(Choice {
-            class,
-            site,
-            value,
-        });
+        self.choices.push(Choice { class, site, value });
     }
 
     /// Choices of one class, in order. A saved trace can be diffed on this to
@@ -278,9 +274,7 @@ impl ConsensusEngine for EngineView {
     }
 
     fn current_seq(&self) -> u64 {
-        self.cluster
-            .len()
-            .min(self.horizon.load(Ordering::SeqCst))
+        self.cluster.len().min(self.horizon.load(Ordering::SeqCst))
     }
 
     fn receipt(&self, id: SubmissionId) -> ReceiptState {
@@ -363,7 +357,11 @@ impl Request {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     /// A client submits `request` to `replica` under a **fresh** request id.
-    Admit { client: usize, replica: usize, request: Request },
+    Admit {
+        client: usize,
+        replica: usize,
+        request: Request,
+    },
     /// The same client retries its **last** request id: the duplicate case.
     Retry { client: usize, replica: usize },
     /// The replica learns every decided slot up to the cluster head.
@@ -561,7 +559,12 @@ impl Sim {
     /// duplicate case a real duplicate rather than a different request.
     pub fn request_id(&mut self, client: usize) -> RequestId {
         let entry = &mut self.clients[client];
-        let id = RequestId::new("sim-deployment", entry.did.clone(), entry.incarnation, entry.next_seq);
+        let id = RequestId::new(
+            "sim-deployment",
+            entry.did.clone(),
+            entry.incarnation,
+            entry.next_seq,
+        );
         entry.next_seq += 1;
         id
     }
@@ -636,7 +639,8 @@ impl Sim {
             }
             Action::Retry { client, replica } => {
                 let Some(id) = self.last_request[client].clone() else {
-                    effect.note = Some("no request to retry; the client has not submitted".to_string());
+                    effect.note =
+                        Some("no request to retry; the client has not submitted".to_string());
                     self.trace
                         .push(ChoiceClass::Content, "content.retry-without-request", 0);
                     return Ok(effect);
@@ -671,8 +675,11 @@ impl Sim {
                 effect.note = Some("healed: full log delivered".to_string());
             }
             Action::Fault { replica } => {
-                self.trace
-                    .push(ChoiceClass::Scheduling, "sched.storage-fault", replica as u64);
+                self.trace.push(
+                    ChoiceClass::Scheduling,
+                    "sched.storage-fault",
+                    replica as u64,
+                );
                 let slot = self.replica_mut(replica)?;
                 match slot.node.as_mut() {
                     Some(node) => {
@@ -681,7 +688,9 @@ impl Sim {
                             "next journal append fails before the write: armed={armed}"
                         ));
                     }
-                    None => effect.note = Some("the process is down: no journal to fail".to_string()),
+                    None => {
+                        effect.note = Some("the process is down: no journal to fail".to_string())
+                    }
                 }
             }
             Action::Crash { replica } => {
@@ -728,7 +737,8 @@ impl Sim {
                 Err(error) => panic!("the walk used an invalid action: {error}"),
             }
         }
-        self.trace.push(ChoiceClass::Fuel, "fuel.depth", steps as u64);
+        self.trace
+            .push(ChoiceClass::Fuel, "fuel.depth", steps as u64);
         effects
     }
 
@@ -749,7 +759,10 @@ impl Sim {
                 effect.client = Some(format!("accepted {}", submission.0));
             }
             Err(diagnostic) => {
-                effect.client = Some(format!("refused {}: {}", diagnostic.code, diagnostic.message));
+                effect.client = Some(format!(
+                    "refused {}: {}",
+                    diagnostic.code, diagnostic.message
+                ));
             }
         }
         Ok(())
@@ -767,7 +780,9 @@ impl Sim {
                 effect.refusals = report
                     .refusals
                     .iter()
-                    .map(|(slot, refusal)| (slot.0, format!("{} {}", refusal.code, refusal.message)))
+                    .map(|(slot, refusal)| {
+                        (slot.0, format!("{} {}", refusal.code, refusal.message))
+                    })
                     .collect();
             }
             Err(diagnostic) => {
@@ -932,11 +947,15 @@ impl Sim {
     }
 
     pub fn is_up(&self, replica: usize) -> bool {
-        self.replica_ref(replica).map(|slot| slot.is_up()).unwrap_or(false)
+        self.replica_ref(replica)
+            .map(|slot| slot.is_up())
+            .unwrap_or(false)
     }
 
     pub fn applied(&self, replica: usize) -> u64 {
-        self.replica_ref(replica).map(|slot| slot.applied()).unwrap_or(0)
+        self.replica_ref(replica)
+            .map(|slot| slot.applied())
+            .unwrap_or(0)
     }
 
     pub fn digest(&self, replica: usize) -> String {
@@ -999,9 +1018,10 @@ impl Sim {
             .ok()
             .and_then(|slot| slot.node.as_mut())
         {
-            Some(node) => node
-                .settle(SubmissionId(submission), Duration::from_millis(0))
-                .state,
+            Some(node) => {
+                node.settle(SubmissionId(submission), Duration::from_millis(0))
+                    .state
+            }
             None => ReceiptState::Unknown(UnknownReason::Unsubmitted),
         }
     }
@@ -1134,7 +1154,11 @@ impl Report {
             match &self.counterexample {
                 Some((actions, why)) => format!(
                     "{} ({})",
-                    actions.iter().map(|action| action.label()).collect::<Vec<_>>().join(" "),
+                    actions
+                        .iter()
+                        .map(|action| action.label())
+                        .collect::<Vec<_>>()
+                        .join(" "),
                     why
                 ),
                 None => "none".to_string(),
@@ -1144,15 +1168,22 @@ impl Report {
 }
 
 /// Run one action list from scratch and report its state key and violations.
-fn run_script(seed: u64, root: &Path, index: u64, actions: &[Action]) -> (String, Vec<String>, String) {
+fn run_script(
+    seed: u64,
+    root: &Path,
+    index: u64,
+    actions: &[Action],
+) -> (String, Vec<String>, String) {
     let mut sim = Sim::new(seed, root.join(format!("run-{index}")), 3, 2);
     for action in actions {
         // A harness misuse is a bug in the explorer, not a schedule outcome.
-        sim.step(*action).expect("the explorer ran an invalid action");
+        sim.step(*action)
+            .expect("the explorer ran an invalid action");
     }
     // Fuel is its own class: a run that stops on the bound is not a proof, and
     // saying so in the trace keeps a truncated run from reading like a pass.
-    sim.trace.push(ChoiceClass::Fuel, "fuel.depth", actions.len() as u64);
+    sim.trace
+        .push(ChoiceClass::Fuel, "fuel.depth", actions.len() as u64);
     let result = (sim.state_key(), sim.violations.clone(), sim.fingerprint());
     sim.clean();
     result
@@ -1290,135 +1321,134 @@ impl Witness {
 /// *production* node, so a witness that stops holding after a refactor is a
 /// discovery rather than a stale fixture.
 pub fn witness(guard: Guard, seed: u64, root: &Path) -> Witness {
-    let (script, keeps, describe): (Vec<Action>, fn(&Sim) -> bool, fn(&Sim) -> String) =
-        match guard {
-            Guard::Dedup => (
-                vec![
-                    Action::Admit {
-                        client: 0,
-                        replica: 0,
-                        request: Request::AuthorizedMint,
-                    },
-                    Action::Retry {
-                        client: 0,
-                        replica: 1,
-                    },
-                    Action::Deliver { replica: 0 },
-                ],
-                |sim: &Sim| {
-                    sim.cluster.len() == 2 && sim.applied(0) == 2 && sim.supply(0) == 100
+    #[allow(clippy::type_complexity)]
+    let (script, keeps, describe): (Vec<Action>, fn(&Sim) -> bool, fn(&Sim) -> String) = match guard
+    {
+        Guard::Dedup => (
+            vec![
+                Action::Admit {
+                    client: 0,
+                    replica: 0,
+                    request: Request::AuthorizedMint,
                 },
-                |sim: &Sim| {
-                    format!(
-                        "two committed entries for one mint (slots {}), one application: \
+                Action::Retry {
+                    client: 0,
+                    replica: 1,
+                },
+                Action::Deliver { replica: 0 },
+            ],
+            |sim: &Sim| sim.cluster.len() == 2 && sim.applied(0) == 2 && sim.supply(0) == 100,
+            |sim: &Sim| {
+                format!(
+                    "two committed entries for one mint (slots {}), one application: \
                          supply is {} and both replicas applied {} of {} slot(s)",
-                        sim.cluster.len(),
-                        sim.supply(0),
-                        sim.applied(0),
-                        sim.cluster.len()
-                    )
+                    sim.cluster.len(),
+                    sim.supply(0),
+                    sim.applied(0),
+                    sim.cluster.len()
+                )
+            },
+        ),
+        Guard::Rejection => (
+            vec![
+                Action::Admit {
+                    client: 1,
+                    replica: 0,
+                    request: Request::UnauthorizedMint,
                 },
-            ),
-            Guard::Rejection => (
-                vec![
-                    Action::Admit {
-                        client: 1,
-                        replica: 0,
-                        request: Request::UnauthorizedMint,
-                    },
-                    Action::Deliver { replica: 0 },
-                    Action::Deliver { replica: 0 },
-                ],
-                |sim: &Sim| {
-                    sim.applied(0) == 1
-                        && sim.refusals(0) == vec![(1, Code::CERT_MINT_NOT_AUTHORIZED)]
-                        && sim.halted(0).is_none()
-                        && sim.supply(0) == 0
-                },
-                |sim: &Sim| {
-                    format!(
-                        "the unauthorized mint is refused at slot 1 ({}), the watermark is {} \
+                Action::Deliver { replica: 0 },
+                Action::Deliver { replica: 0 },
+            ],
+            |sim: &Sim| {
+                sim.applied(0) == 1
+                    && sim.refusals(0) == vec![(1, Code::CERT_MINT_NOT_AUTHORIZED)]
+                    && sim.halted(0).is_none()
+                    && sim.supply(0) == 0
+            },
+            |sim: &Sim| {
+                format!(
+                    "the unauthorized mint is refused at slot 1 ({}), the watermark is {} \
                          and the replica is not halted; supply {}",
-                        sim.refusals(0)
-                            .first()
-                            .map(|(_, code)| code.to_string())
-                            .unwrap_or_else(|| "no refusal".to_string()),
-                        sim.applied(0),
-                        sim.supply(0)
-                    )
+                    sim.refusals(0)
+                        .first()
+                        .map(|(_, code)| code.to_string())
+                        .unwrap_or_else(|| "no refusal".to_string()),
+                    sim.applied(0),
+                    sim.supply(0)
+                )
+            },
+        ),
+        Guard::Restart => (
+            vec![
+                Action::Crash { replica: 1 },
+                Action::Admit {
+                    client: 0,
+                    replica: 0,
+                    request: Request::AuthorizedMint,
                 },
-            ),
-            Guard::Restart => (
-                vec![
-                    Action::Crash { replica: 1 },
-                    Action::Admit {
-                        client: 0,
-                        replica: 0,
-                        request: Request::AuthorizedMint,
-                    },
-                    Action::Deliver { replica: 0 },
-                    Action::Admit {
-                        client: 1,
-                        replica: 0,
-                        request: Request::UnauthorizedMint,
-                    },
-                    Action::Deliver { replica: 0 },
-                    Action::Restore { replica: 1 },
-                    Action::Deliver { replica: 1 },
-                ],
-                |sim: &Sim| {
-                    sim.applied(1) == sim.cluster.len()
-                        && sim.cluster.len() == 2
-                        && sim.digest(1) == sim.digest(0)
+                Action::Deliver { replica: 0 },
+                Action::Admit {
+                    client: 1,
+                    replica: 0,
+                    request: Request::UnauthorizedMint,
                 },
-                |sim: &Sim| {
-                    format!(
-                        "a replica restarted over its journal applied {} of {} slot(s) and holds \
+                Action::Deliver { replica: 0 },
+                Action::Restore { replica: 1 },
+                Action::Deliver { replica: 1 },
+            ],
+            |sim: &Sim| {
+                sim.applied(1) == sim.cluster.len()
+                    && sim.cluster.len() == 2
+                    && sim.digest(1) == sim.digest(0)
+            },
+            |sim: &Sim| {
+                format!(
+                    "a replica restarted over its journal applied {} of {} slot(s) and holds \
                          the same digest as its peer ({})",
-                        sim.applied(1),
-                        sim.cluster.len(),
-                        sim.digest(1)
-                    )
+                    sim.applied(1),
+                    sim.cluster.len(),
+                    sim.digest(1)
+                )
+            },
+        ),
+        Guard::Revoke => (
+            vec![
+                Action::Crash { replica: 2 },
+                Action::Admit {
+                    client: 0,
+                    replica: 0,
+                    request: Request::IdentityCreate,
                 },
-            ),
-            Guard::Revoke => (
-                vec![
-                    Action::Crash { replica: 2 },
-                    Action::Admit {
-                        client: 0,
-                        replica: 0,
-                        request: Request::IdentityCreate,
-                    },
-                    Action::Deliver { replica: 0 },
-                    Action::Admit {
-                        client: 0,
-                        replica: 0,
-                        request: Request::IdentityRevoke,
-                    },
-                    Action::Deliver { replica: 0 },
-                    Action::Deliver { replica: 1 },
-                    Action::Restore { replica: 2 },
-                    Action::Deliver { replica: 2 },
-                ],
-                |sim: &Sim| {
-                    let did = &sim.clients[0].did;
-                    sim.identity_revoked(2, did) == Some(true)
-                        && sim.digest(2) == sim.digest(0)
-                        && sim.applied(2) == 2
+                Action::Deliver { replica: 0 },
+                Action::Admit {
+                    client: 0,
+                    replica: 0,
+                    request: Request::IdentityRevoke,
                 },
-                |sim: &Sim| {
-                    let did = &sim.clients[0].did;
-                    format!(
-                        "a replica that was down for create and revoke replays both in log order: \
+                Action::Deliver { replica: 0 },
+                Action::Deliver { replica: 1 },
+                Action::Restore { replica: 2 },
+                Action::Deliver { replica: 2 },
+            ],
+            |sim: &Sim| {
+                let did = &sim.clients[0].did;
+                sim.identity_revoked(2, did) == Some(true)
+                    && sim.digest(2) == sim.digest(0)
+                    && sim.applied(2) == 2
+            },
+            |sim: &Sim| {
+                let did = &sim.clients[0].did;
+                format!(
+                    "a replica that was down for create and revoke replays both in log order: \
                          revoked={:?}, applied={}, digest {} vs peer {}",
-                        sim.identity_revoked(2, did),
-                        sim.applied(2),
-                        sim.digest(2),
-                        sim.digest(0)
-                    )
-                },
-            ),
-        };
+                    sim.identity_revoked(2, did),
+                    sim.applied(2),
+                    sim.digest(2),
+                    sim.digest(0)
+                )
+            },
+        ),
+    };
 
     let minimized = minimize(seed, root, &script, keeps);
     let runroot = root.join(format!("witness-{:?}", guard));
@@ -1426,7 +1456,8 @@ pub fn witness(guard: Guard, seed: u64, root: &Path) -> Witness {
     for action in &minimized {
         sim.step(*action).expect("the witness script is invalid");
     }
-    sim.trace.push(ChoiceClass::Fuel, "fuel.depth", minimized.len() as u64);
+    sim.trace
+        .push(ChoiceClass::Fuel, "fuel.depth", minimized.len() as u64);
     let holds = keeps(&sim);
     let outcome = describe(&sim);
     let fingerprint = sim.fingerprint();

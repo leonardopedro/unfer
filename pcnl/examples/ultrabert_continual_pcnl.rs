@@ -218,7 +218,7 @@ impl Cfg {
                 "--calibrate-joint needs one joint round: --tasks '0,1,2,3'"
             );
             assert!(
-                cfg.arm.as_deref().map_or(true, |a| a == "independent"),
+                cfg.arm.as_deref().is_none_or(|a| a == "independent"),
                 "--calibrate-joint is a joint baseline; use --arm independent"
             );
             cfg.arm = Some(String::from("independent"));
@@ -431,7 +431,7 @@ fn sample_round(
             } else {
                 count_w += 1;
                 accepts_w += usize::from(sw.accepted);
-                if (t - cfg.burn) % cfg.thin == 0 {
+                if (t - cfg.burn).is_multiple_of(cfg.thin) {
                     draws.push(target.lift(&z, &w));
                 }
             }

@@ -42,7 +42,7 @@ fn dev() -> &'static Device {
 
 #[test]
 fn manifest_splits_are_disjoint_and_ids_precede_questions() {
-    let manifest = WorldManifest::new(2026_11_15, 64, 16, 16, 32);
+    let manifest = WorldManifest::new(20_261_115, 64, 16, 16, 32);
     manifest.assert_disjoint();
     let mut seen = std::collections::BTreeSet::new();
     for split in Split::ALL {
@@ -71,7 +71,7 @@ fn manifest_splits_are_disjoint_and_ids_precede_questions() {
         "question ids must distinguish worlds"
     );
     // Content hash identifies the materialised list, not just the seed.
-    let again = WorldManifest::new(2026_11_15, 64, 16, 16, 32);
+    let again = WorldManifest::new(20_261_115, 64, 16, 16, 32);
     assert_eq!(manifest.content_hash(), again.content_hash());
     let different = WorldManifest::new(7, 64, 16, 16, 32);
     assert_ne!(manifest.content_hash(), different.content_hash());
@@ -751,10 +751,12 @@ fn correctness_reward_is_not_a_proper_scoring_rule() {
 
 #[test]
 fn head_chart_exposes_the_exact_likelihood_and_freezes_upstream_parameters() {
-    let mut cfg = CampaignConfig::default();
-    cfg.updates = 0;
-    cfg.warm_start = 0;
-    cfg.worlds = [3, 1, 1, 1];
+    let cfg = CampaignConfig {
+        updates: 0,
+        warm_start: 0,
+        worlds: [3, 1, 1, 1],
+        ..Default::default()
+    };
     let samples = build_samples(&cfg);
     let theta = reference_theta(&cfg.model, 5);
     let potential = Edge0Potential::head_only(cfg.model.clone(), samples);
@@ -795,11 +797,13 @@ fn head_chart_exposes_the_exact_likelihood_and_freezes_upstream_parameters() {
 
 #[test]
 fn campaign_arms_execute_and_report_finite_endpoints() {
-    let mut cfg = CampaignConfig::default();
-    cfg.worlds = [6, 2, 2, 4];
-    cfg.updates = 4;
-    cfg.warm_start = 2;
-    cfg.batch_worlds = 2;
+    let cfg = CampaignConfig {
+        worlds: [6, 2, 2, 4],
+        updates: 4,
+        warm_start: 2,
+        batch_worlds: 2,
+        ..Default::default()
+    };
     let report = run(&cfg).unwrap();
     assert_eq!(report.arms.len(), 6);
     assert!(report.arms.iter().any(|a| a.arm == Arm::Rlcd));

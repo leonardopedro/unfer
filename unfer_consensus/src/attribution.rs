@@ -499,34 +499,40 @@ mod tests {
         let before = format!("{ledger:?}");
 
         // The offerer is not the author, so it cannot approve its own offer.
-        assert!(ledger
-            .apply_op(adidas, &AttributionOpKind::Approve { credit_id: id }, 4)
-            .is_err());
+        assert!(
+            ledger
+                .apply_op(adidas, &AttributionOpKind::Approve { credit_id: id }, 4)
+                .is_err()
+        );
         assert_eq!(format!("{ledger:?}"), before);
 
         // An invented credit id.
-        assert!(ledger
-            .apply_op(
-                kanye,
-                &AttributionOpKind::Approve {
-                    credit_id: AttributionCreditId([7u8; 32]),
-                },
-                5,
-            )
-            .is_err());
+        assert!(
+            ledger
+                .apply_op(
+                    kanye,
+                    &AttributionOpKind::Approve {
+                        credit_id: AttributionCreditId([7u8; 32]),
+                    },
+                    5,
+                )
+                .is_err()
+        );
         assert_eq!(format!("{ledger:?}"), before);
 
         // An offer whose derived item nobody registered.
         let unknown = item("unregistered", 9);
-        assert!(ledger
-            .apply_op(
-                adidas,
-                &AttributionOpKind::OfferAttribution {
-                    offer: offer(&unknown, &sketch, 100, false),
-                },
-                6,
-            )
-            .is_err());
+        assert!(
+            ledger
+                .apply_op(
+                    adidas,
+                    &AttributionOpKind::OfferAttribution {
+                        offer: offer(&unknown, &sketch, 100, false),
+                    },
+                    6,
+                )
+                .is_err()
+        );
         assert_eq!(format!("{ledger:?}"), before);
     }
 

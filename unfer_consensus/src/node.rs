@@ -15,10 +15,10 @@ use crate::auction::AuctionLedger;
 use crate::certs::{CertificateLedger, MintAuthority};
 use crate::engine::ConsensusEngine;
 use crate::idempotency::{
-    transaction_key, AdmissionBook, AdmittedOutcome, IdempotencyStore, RequestId,
+    AdmissionBook, AdmittedOutcome, IdempotencyStore, RequestId, transaction_key,
 };
 use crate::identity::IdentityRegistry;
-use crate::jobs::{ClaimState, FencedSink, Fence, JobClaim, JobQueue, JobState};
+use crate::jobs::{ClaimState, Fence, FencedSink, JobClaim, JobQueue, JobState};
 use crate::storage::{
     DedupUpdate, FenceRecord, JournalRecord, RecordedOutcome, RequestRecord, StorageError,
     TransitionLog, TransitionRecord,
@@ -141,8 +141,7 @@ impl ConsensusNode {
             if let JournalRecord::Request(request) = record {
                 node.admissions
                     .record(&request.id, request.submission, request.digest);
-                node.admissions
-                    .settle(&request.id, request.outcome.clone());
+                node.admissions.settle(&request.id, request.outcome.clone());
                 node.request_of
                     .insert(request.submission.0, request.id.clone());
             }
@@ -282,7 +281,8 @@ impl ConsensusNode {
     pub fn claim_job(&mut self, job: &str, holder: &str) -> Result<JobClaim, Diagnostic> {
         let before = self.jobs.clone();
         let claim = self.jobs.claim(job, holder)?;
-        if let Err(error) = self.record_fence(&claim, ClaimState::Claimed, Some(holder.to_string())) {
+        if let Err(error) = self.record_fence(&claim, ClaimState::Claimed, Some(holder.to_string()))
+        {
             self.jobs = before;
             return Err(error);
         }
@@ -440,9 +440,9 @@ impl ConsensusNode {
                 self.request_of.insert(submission.0, id.clone());
                 Ok(submission)
             }
-            crate::idempotency::AdmissionVerdict::Duplicate(
-                AdmittedOutcome::Pending { submission },
-            )
+            crate::idempotency::AdmissionVerdict::Duplicate(AdmittedOutcome::Pending {
+                submission,
+            })
             | crate::idempotency::AdmissionVerdict::Duplicate(AdmittedOutcome::Accepted {
                 submission,
                 ..
@@ -463,28 +463,24 @@ impl ConsensusNode {
                     Severity::Error,
                 ))
             }
-            crate::idempotency::AdmissionVerdict::BelowRetention { floor } => {
-                Err(Diagnostic::new(
-                    Code::REQUEST_BELOW_RETENTION,
-                    format!(
-                        "request {} is at or below the retained floor {floor}: this node can no \
+            crate::idempotency::AdmissionVerdict::BelowRetention { floor } => Err(Diagnostic::new(
+                Code::REQUEST_BELOW_RETENTION,
+                format!(
+                    "request {} is at or below the retained floor {floor}: this node can no \
                          longer tell a retry from a first delivery, so it refuses rather than \
                          applying the action twice",
-                        id.label()
-                    ),
-                    Severity::Error,
-                ))
-            }
-            crate::idempotency::AdmissionVerdict::AtCapacity { capacity } => {
-                Err(Diagnostic::new(
-                    Code::REQUEST_QUOTA,
-                    format!(
-                        "admission is at capacity ({capacity} retained requests) and no client \
+                    id.label()
+                ),
+                Severity::Error,
+            )),
+            crate::idempotency::AdmissionVerdict::AtCapacity { capacity } => Err(Diagnostic::new(
+                Code::REQUEST_QUOTA,
+                format!(
+                    "admission is at capacity ({capacity} retained requests) and no client \
                          has acknowledged a retention floor; acknowledge settled requests and retry"
-                    ),
-                    Severity::Error,
-                ))
-            }
+                ),
+                Severity::Error,
+            )),
             crate::idempotency::AdmissionVerdict::IncarnationsExhausted { limit, known } => {
                 Err(Diagnostic::new(
                     Code::REQUEST_QUOTA,
@@ -503,7 +499,12 @@ impl ConsensusNode {
     /// D06 follow-up: declare an incarnation finished so its principal regains
     /// incarnation headroom. The client must never retry a request under a
     /// retired incarnation, because its floor is gone with the window.
-    pub fn retire_incarnation(&mut self, deployment: &str, principal: &str, incarnation: u64) -> bool {
+    pub fn retire_incarnation(
+        &mut self,
+        deployment: &str,
+        principal: &str,
+        incarnation: u64,
+    ) -> bool {
         let retired = self
             .admissions
             .retire_incarnation(deployment, principal, incarnation);
@@ -531,10 +532,10 @@ impl ConsensusNode {
     /// verification instead. Used at ingress *and* on replay, so a committed
     /// entry is checked by every node rather than only by its submitter.
     fn verify_ingress(&self, tx: &ConsensusTransaction) -> Result<(), Diagnostic> {
-        if let ConsensusTransaction::CertificateOp(_) = tx {
-            if self.certs.is_threshold_authority() {
-                return self.certs.verify_threshold_mint(tx);
-            }
+        if let ConsensusTransaction::CertificateOp(_) = tx
+            && self.certs.is_threshold_authority()
+        {
+            return self.certs.verify_threshold_mint(tx);
         }
         crate::signing::verify_transaction(tx)
     }
@@ -696,11 +697,7 @@ impl ConsensusNode {
     /// repeated here on purpose: ingress verification only covers what *this*
     /// node submitted, and every node must independently refuse a tampered
     /// entry that arrives through the log.
-    fn apply_committed(
-        &mut self,
-        seq: u64,
-        tx: &ConsensusTransaction,
-    ) -> Result<(), ApplyFailure> {
+    fn apply_committed(&mut self, seq: u64, tx: &ConsensusTransaction) -> Result<(), ApplyFailure> {
         if let Err(diagnostic) = self.verify_ingress(tx) {
             return Err(ApplyFailure::from(seq, diagnostic));
         }
@@ -739,9 +736,7 @@ impl ConsensusNode {
                 submission: receipt.id,
                 slot: *slot,
             },
-            ReceiptState::Refused { refusal, .. } => {
-                AdmittedOutcome::Rejected(refusal.clone())
-            }
+            ReceiptState::Refused { refusal, .. } => AdmittedOutcome::Rejected(refusal.clone()),
             ReceiptState::Pending | ReceiptState::Unknown(_) => return Ok(()),
         };
         if self.admissions.admission(&request).map(|a| &a.outcome) == Some(&outcome) {
@@ -2160,18 +2155,21 @@ mod tests {
 
         // The good suffix applied; the refused entry left nothing behind.
         assert_eq!(node.certs().total_supply(), 150);
-        assert!(node
-            .certs()
-            .utxo(&crate::certs::commit_coin(100, &alice.did(), &[1u8; 32]))
-            .is_some());
-        assert!(node
-            .certs()
-            .utxo(&crate::certs::commit_coin(50, &alice.did(), &[3u8; 32]))
-            .is_some());
-        assert!(node
-            .certs()
-            .utxo(&crate::certs::commit_coin(500, &bob.did(), &[2u8; 32]))
-            .is_none());
+        assert!(
+            node.certs()
+                .utxo(&crate::certs::commit_coin(100, &alice.did(), &[1u8; 32]))
+                .is_some()
+        );
+        assert!(
+            node.certs()
+                .utxo(&crate::certs::commit_coin(50, &alice.did(), &[3u8; 32]))
+                .is_some()
+        );
+        assert!(
+            node.certs()
+                .utxo(&crate::certs::commit_coin(500, &bob.did(), &[2u8; 32]))
+                .is_none()
+        );
     }
 
     #[test]
@@ -2207,10 +2205,8 @@ mod tests {
         // Slot 2 is missing entirely; the next entry was committed at 3.
         log.push_at(3, signed_mint(&authority, &alice.did(), 50, [2u8; 32], 2));
 
-        let mut node = ConsensusNode::with_mint_authority(
-            Box::new(log),
-            MintAuthority::Only(authority.did()),
-        );
+        let mut node =
+            ConsensusNode::with_mint_authority(Box::new(log), MintAuthority::Only(authority.did()));
         let err = node.sync().unwrap_err();
         assert_eq!(err.code, Code::UNKNOWN_OUTCOME);
         assert_eq!(
@@ -2242,10 +2238,8 @@ mod tests {
         let log = ScriptedLog::new();
         log.push_at(1, mint);
 
-        let mut node = ConsensusNode::with_mint_authority(
-            Box::new(log),
-            MintAuthority::Only(authority.did()),
-        );
+        let mut node =
+            ConsensusNode::with_mint_authority(Box::new(log), MintAuthority::Only(authority.did()));
         let report = node.sync_report().unwrap();
         assert_eq!(report.refusals.len(), 1);
         assert_eq!(report.refusals[0].1.code, Code::INVALID_SIGNATURE);
@@ -2354,7 +2348,11 @@ mod tests {
             Watermark(2),
             "replay reached the recorded watermark"
         );
-        assert_eq!(node.certs.total_supply(), 150, "state was rebuilt by replay");
+        assert_eq!(
+            node.certs.total_supply(),
+            150,
+            "state was rebuilt by replay"
+        );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -2398,8 +2396,13 @@ mod tests {
         node.engine
             .submit(signed_mint(&authority, "did:unfer:bob", 100, [1u8; 32], 1))
             .unwrap();
-        node.journal.as_mut().unwrap().inject(crate::storage::FaultPoint::HalfWrite);
-        let error = node.sync().expect_err("an unrecorded transition is not a success");
+        node.journal
+            .as_mut()
+            .unwrap()
+            .inject(crate::storage::FaultPoint::HalfWrite);
+        let error = node
+            .sync()
+            .expect_err("an unrecorded transition is not a success");
         assert_eq!(error.code, Code::UNKNOWN_OUTCOME);
         match node.halted() {
             Some(HaltReason::Failed { slot, refusal }) => {
@@ -2452,7 +2455,10 @@ mod tests {
         let retried = node
             .submit_request(&request, tx)
             .expect("the recovered book answers the retry");
-        assert_eq!(retried, submission, "the retry reuses the recorded submission");
+        assert_eq!(
+            retried, submission,
+            "the retry reuses the recorded submission"
+        );
         let receipt = node.settle(retried, Duration::from_millis(100));
         assert_eq!(receipt.slot(), Some(Slot(1)));
         assert_eq!(
@@ -2479,7 +2485,10 @@ mod tests {
         // Record the transition first, so the injected failure hits the
         // *request binding* write and not the application transition itself.
         assert_eq!(node.sync().unwrap(), 1);
-        node.journal.as_mut().unwrap().inject(crate::storage::FaultPoint::BeforeWrite);
+        node.journal
+            .as_mut()
+            .unwrap()
+            .inject(crate::storage::FaultPoint::BeforeWrite);
         let receipt = node.settle(submission, Duration::from_millis(100));
         assert_eq!(
             receipt.state,

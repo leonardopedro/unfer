@@ -5,7 +5,7 @@ use unfer_protocol::submission::ReceiptState;
 use unfer_protocol::{ChunkRef, ConsensusTransaction, ContentOp, ContentRef, Diagnostic};
 
 use crate::chunk::{Chunker, compute_cid};
-use crate::crypto::{content_object_id, derive_aes_key, DataKeypair, ObjectKey};
+use crate::crypto::{DataKeypair, ObjectKey, content_object_id, derive_aes_key};
 use crate::magnet::{build_magnet_uri, content_cid_from_chunks};
 
 /// How long `publish` waits for its content entry to be committed and applied
@@ -194,12 +194,9 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut node = ConsensusNode::open(
-            Box::new(LocalConsensus::new()),
-            dir.join("ledger.log"),
-        )
-        .expect("open a journaled node")
-        .0;
+        let mut node = ConsensusNode::open(Box::new(LocalConsensus::new()), dir.join("ledger.log"))
+            .expect("open a journaled node")
+            .0;
         let kp = Keypair::generate();
         let mut id_tx = ConsensusTransaction::IdentityOp(unfer_protocol::IdentityOp {
             did: kp.did(),
@@ -345,9 +342,7 @@ mod tests {
 
     impl unfer_consensus::ConsensusEngine for NeverCommits {
         fn submit(&self, _tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
-            Ok(self
-                .next
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+            Ok(self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
         }
 
         fn get_log(&self, _from_seq: u64) -> Vec<(u64, ConsensusTransaction)> {

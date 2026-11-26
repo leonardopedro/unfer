@@ -16,10 +16,7 @@ use std::path::{Path, PathBuf};
 use unfer_consensus::sim::{self, Action, Guard, Sim};
 
 fn temp_root(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "unfer-d12-{name}-{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("unfer-d12-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("could not create the schedule root");
     root
@@ -84,14 +81,25 @@ fn the_same_trace_produces_the_same_state() {
         for action in script {
             sim.step(action).unwrap();
         }
-        (sim.fingerprint(), sim.trace().render(), sim.violations.clone())
+        (
+            sim.fingerprint(),
+            sim.trace().render(),
+            sim.violations.clone(),
+        )
     };
 
     let first = run(7, "a");
     let second = run(7, "b");
     assert_eq!(first.0, second.0, "same trace must produce the same state");
-    assert_eq!(first.1, second.1, "same trace must produce the same choices");
-    assert!(first.2.is_empty(), "no invariant may be violated: {:?}", first.2);
+    assert_eq!(
+        first.1, second.1,
+        "same trace must produce the same choices"
+    );
+    assert!(
+        first.2.is_empty(),
+        "no invariant may be violated: {:?}",
+        first.2
+    );
 
     // A different seed is only allowed to change what the *client* chose; this
     // script fixes every action, so the state must not move at all. That is the
@@ -113,7 +121,11 @@ fn the_domain_applies_and_refuses_as_specified() {
     assert!(sim.violations.is_empty(), "{:?}", sim.violations);
     assert_eq!(sim.cluster.len(), 2);
     for replica in 0..3 {
-        assert_eq!(sim.applied(replica), 2, "replica {replica} applied the prefix");
+        assert_eq!(
+            sim.applied(replica),
+            2,
+            "replica {replica} applied the prefix"
+        );
         assert!(sim.halted(replica).is_none());
         assert_eq!(
             sim.refusals(replica),
@@ -147,10 +159,7 @@ fn a_bounded_exhaustive_search_finds_no_violation() {
     );
     assert!(report.leaves > 0, "the search executed no leaf schedule");
     assert!(report.prefixes > report.leaves, "the search never branched");
-    save(
-        "bounded-search.txt",
-        &format!("{}\n", report.render()),
-    );
+    save("bounded-search.txt", &format!("{}\n", report.render()));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -185,7 +194,10 @@ fn a_deep_search_to_depth_five_finds_no_violation() {
         "the deep search found a violation: {}",
         report.render()
     );
-    assert!(report.leaves > 0, "the deep search executed no leaf schedule");
+    assert!(
+        report.leaves > 0,
+        "the deep search executed no leaf schedule"
+    );
     save(
         &format!("bounded-search-depth{depth}.txt"),
         &format!("{}\n", report.render()),
@@ -311,7 +323,11 @@ fn a_storage_failure_halts_instead_of_skipping() {
     sim.step(Action::Fault { replica: 0 }).unwrap();
     let effect = sim.step(Action::Deliver { replica: 0 }).unwrap();
     assert!(
-        effect.halted.as_deref().unwrap_or_default().contains("UK-5011"),
+        effect
+            .halted
+            .as_deref()
+            .unwrap_or_default()
+            .contains("UK-5011"),
         "expected a storage halt, got {:?}",
         effect
     );
@@ -322,7 +338,11 @@ fn a_storage_failure_halts_instead_of_skipping() {
     // halted node is not a state anyone may read: nothing was acknowledged, and
     // `journal_error()` is set. The restore below proves the durable path never
     // double-counts it.
-    println!("after the halted apply: applied={} supply={}", sim.applied(0), sim.supply(0));
+    println!(
+        "after the halted apply: applied={} supply={}",
+        sim.applied(0),
+        sim.supply(0)
+    );
     assert!(sim.violations.is_empty(), "{:?}", sim.violations);
 
     // Restoring the process does not magically skip the slot: the journal is
@@ -334,4 +354,3 @@ fn a_storage_failure_halts_instead_of_skipping() {
     assert_eq!(sim.supply(0), 100);
     let _ = std::fs::remove_dir_all(&root);
 }
-

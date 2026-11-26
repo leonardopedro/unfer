@@ -248,7 +248,7 @@ impl QuantumState {
     /// space, and a Krylov sequence started in `range(P_N)` never leaves it.
     /// Compressing on both sides of the matvec is therefore the supported way
     /// to run a truncation-controlled solve: see
-    /// [`fock_sirk::solve_forward_sirk_truncated`].
+    /// `fock_sirk::solve_forward_sirk_truncated`.
     ///
     /// Dropping mass changes the norm — this is a projection, not a
     /// renormalization; callers that need a unit vector rescale afterwards.

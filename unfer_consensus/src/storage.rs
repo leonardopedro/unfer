@@ -48,8 +48,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use unfer_protocol::submission::SubmissionId;
 use unfer_protocol::Code;
+use unfer_protocol::submission::SubmissionId;
 
 use crate::idempotency::{AdmittedOutcome, RequestId};
 
@@ -180,7 +180,10 @@ impl std::fmt::Display for StorageError {
         match self {
             StorageError::Io(reason) => write!(f, "storage write failed: {reason}"),
             StorageError::Uncertain(reason) => {
-                write!(f, "storage sync failed after the write (durability unknown): {reason}")
+                write!(
+                    f,
+                    "storage sync failed after the write (durability unknown): {reason}"
+                )
             }
             StorageError::Corrupt { offset, reason } => {
                 write!(f, "corrupt log at offset {offset}: {reason}")
@@ -244,20 +247,22 @@ impl TransitionLog {
     /// truncated and reported; corruption is an error and nothing is truncated.
     pub fn open(path: impl Into<PathBuf>) -> Result<(Self, Recovery), StorageError> {
         let path = path.into();
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(|error| {
-                    StorageError::Io(format!("could not create {}: {error}", parent.display()))
-                })?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|error| {
+                StorageError::Io(format!("could not create {}: {error}", parent.display()))
+            })?;
         }
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
             .open(&path)
-            .map_err(|error| StorageError::Io(format!("could not open {}: {error}", path.display())))?;
+            .map_err(|error| {
+                StorageError::Io(format!("could not open {}: {error}", path.display()))
+            })?;
         let mut log = Self {
             path,
             file,
@@ -318,12 +323,11 @@ impl TransitionLog {
                     reason: "record checksum does not match its payload".to_string(),
                 });
             }
-            let record: JournalRecord = serde_json::from_slice(payload).map_err(|error| {
-                StorageError::Corrupt {
+            let record: JournalRecord =
+                serde_json::from_slice(payload).map_err(|error| StorageError::Corrupt {
                     offset: offset as u64,
                     reason: format!("record payload does not decode: {error}"),
-                }
-            })?;
+                })?;
             if let JournalRecord::Transition(t) = &record {
                 match last_slot {
                     Some(previous) if t.slot <= previous => {
@@ -338,17 +342,17 @@ impl TransitionLog {
                     _ => last_slot = Some(t.slot),
                 }
             }
-            if let JournalRecord::Request(request) = &record {
-                if let Some(slot) = request.slot {
-                    let known = last_slot.map(|last| slot <= last).unwrap_or(false);
-                    if !known {
-                        return Err(StorageError::Corrupt {
-                            offset: offset as u64,
-                            reason: format!(
-                                "request record names slot {slot}, but the log's last transition is {last_slot:?}"
-                            ),
-                        });
-                    }
+            if let JournalRecord::Request(request) = &record
+                && let Some(slot) = request.slot
+            {
+                let known = last_slot.map(|last| slot <= last).unwrap_or(false);
+                if !known {
+                    return Err(StorageError::Corrupt {
+                        offset: offset as u64,
+                        reason: format!(
+                            "request record names slot {slot}, but the log's last transition is {last_slot:?}"
+                        ),
+                    });
                 }
             }
             records.push(record);
@@ -379,8 +383,8 @@ impl TransitionLog {
     /// Nothing is published until the sync returns, so a reader never sees a
     /// record that is not durable.
     pub fn append(&mut self, record: &JournalRecord) -> Result<(), StorageError> {
-        let payload = serde_json::to_vec(record)
-            .map_err(|error| StorageError::Encode(error.to_string()))?;
+        let payload =
+            serde_json::to_vec(record).map_err(|error| StorageError::Encode(error.to_string()))?;
         if payload.len() > MAX_PAYLOAD as usize {
             return Err(StorageError::Encode(format!(
                 "record of {} bytes exceeds the {MAX_PAYLOAD}-byte limit",
@@ -603,7 +607,10 @@ mod tests {
         log.append(&request(5)).unwrap();
         drop(log);
         assert!(
-            matches!(TransitionLog::open(&path), Err(StorageError::Corrupt { .. })),
+            matches!(
+                TransitionLog::open(&path),
+                Err(StorageError::Corrupt { .. })
+            ),
             "a request cannot settle at a slot the log never recorded"
         );
         let _ = fs::remove_dir_all(path.parent().unwrap());
@@ -613,7 +620,7 @@ mod tests {
     fn a_partial_header_at_eof_is_torn() {
         let path = temp_path("partial-header");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, &[0x45, 0x46]).unwrap();
+        fs::write(&path, [0x45, 0x46]).unwrap();
         let (_, recovery) = TransitionLog::open(&path).unwrap();
         assert!(recovery.records.is_empty());
         assert_eq!(recovery.torn_tail_bytes, 2);

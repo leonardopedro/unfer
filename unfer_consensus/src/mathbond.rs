@@ -587,8 +587,8 @@ mod tests {
         let before = format!("{l:?}");
 
         // Zero amount.
-        assert!(l
-            .apply_op(
+        assert!(
+            l.apply_op(
                 investor(),
                 &MathBondOpKind::Invest {
                     bond_id: id,
@@ -596,12 +596,13 @@ mod tests {
                 },
                 3,
             )
-            .is_err());
+            .is_err()
+        );
         assert_eq!(format!("{l:?}"), before);
 
         // Overfunding past the principal.
-        assert!(l
-            .apply_op(
+        assert!(
+            l.apply_op(
                 investor(),
                 &MathBondOpKind::Invest {
                     bond_id: id,
@@ -609,12 +610,13 @@ mod tests {
                 },
                 4,
             )
-            .is_err());
+            .is_err()
+        );
         assert_eq!(format!("{l:?}"), before);
 
         // A bond id that was never issued.
-        assert!(l
-            .apply_op(
+        assert!(
+            l.apply_op(
                 investor(),
                 &MathBondOpKind::Invest {
                     bond_id: MathBondId([7u8; 32]),
@@ -622,7 +624,8 @@ mod tests {
                 },
                 5,
             )
-            .is_err());
+            .is_err()
+        );
         assert_eq!(format!("{l:?}"), before);
     }
 

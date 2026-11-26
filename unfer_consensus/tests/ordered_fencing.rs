@@ -80,7 +80,9 @@ fn two_partitioned_workers_cannot_both_lead() {
     let dir = temp_dir("partitioned");
     let mut node = durable_node(&dir);
 
-    let a = node.claim_job("settle-auction", "worker-a").expect("A claims");
+    let a = node
+        .claim_job("settle-auction", "worker-a")
+        .expect("A claims");
     let refused = node.claim_job("settle-auction", "worker-b");
     assert!(refused.is_err(), "B must not be able to hold the same job");
     let message = refused.unwrap_err().message;
@@ -91,7 +93,10 @@ fn two_partitioned_workers_cannot_both_lead() {
 
     // A's fence is still the current one, and B's attempt changed nothing.
     assert_eq!(node.job_fence("settle-auction"), Some(a.fence()));
-    assert_eq!(node.jobs().fences().holder("settle-auction"), Some("worker-a"));
+    assert_eq!(
+        node.jobs().fences().holder("settle-auction"),
+        Some("worker-a")
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -142,14 +147,25 @@ fn claim_and_settle_replay_are_refused() {
 #[test]
 fn generation_overflow_advances_the_epoch() {
     let mut table = FenceTable::new();
-    table.install(Fence::new("dep", "res", 7, u64::MAX), Some("w".into()), false);
+    table.install(
+        Fence::new("dep", "res", 7, u64::MAX),
+        Some("w".into()),
+        false,
+    );
     let top = table.current("res").unwrap().clone();
     let advanced = table.renew(&top).expect("epoch advances");
     assert_eq!((advanced.epoch, advanced.generation), (8, 1));
-    assert!(top.is_older_than(&advanced), "strictly ordered across the reset");
+    assert!(
+        top.is_older_than(&advanced),
+        "strictly ordered across the reset"
+    );
 
     // The very top of the space has no successor: refused, not wrapped.
-    table.install(Fence::new("dep", "res", u64::MAX, u64::MAX), Some("w".into()), false);
+    table.install(
+        Fence::new("dep", "res", u64::MAX, u64::MAX),
+        Some("w".into()),
+        false,
+    );
     let ceiling = table.current("res").unwrap().clone();
     let refused = table.renew(&ceiling);
     assert!(refused.is_err(), "no successor means no fence");
@@ -173,13 +189,18 @@ fn restart_rebuilds_fences_and_job_state() {
         ConsensusNode::open(Box::new(NoEngine), dir.join("ledger.log")).expect("reopen");
     reopened.set_mint_authority(MintAuthority::None);
     assert_eq!(reopened.job_fence("settle-auction"), Some(claim.fence()));
-    assert_eq!(reopened.job_state("settle-auction"), Some(JobState::Claimed));
+    assert_eq!(
+        reopened.job_state("settle-auction"),
+        Some(JobState::Claimed)
+    );
     assert!(
         reopened.claim_job("settle-auction", "worker-b").is_err(),
         "a restart does not release the claim for someone else"
     );
     // The recovered claim still settles, and then the job is fired across a restart.
-    reopened.mark_job_fired(&claim).expect("the current fence settles");
+    reopened
+        .mark_job_fired(&claim)
+        .expect("the current fence settles");
     drop(reopened);
 
     let (after, _recovery) =

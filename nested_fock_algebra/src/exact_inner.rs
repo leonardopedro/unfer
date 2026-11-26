@@ -223,7 +223,7 @@ impl InnerLadder {
                 if basis.fermions.contains(&m) == create {
                     return Ok(None);
                 }
-                let sign = if basis.fermions.range(..m).count() % 2 == 0 {
+                let sign = if basis.fermions.range(..m).count().is_multiple_of(2) {
                     1.0
                 } else {
                     -1.0
@@ -340,7 +340,7 @@ impl InnerExpr {
                 // map in term order, and a term contributes at most one value
                 // per output label, so every label accumulates in the same
                 // term order as the serial path: bit-identical, not merely close.
-                let by_reference = &*input;
+                let by_reference = input;
                 let limits = budget.limits;
                 let joined = std::thread::scope(|scope| {
                     let handles: Vec<_> = terms
@@ -402,10 +402,10 @@ impl InnerExpr {
                         JointOuterBasis::Fermionic(_) => 1,
                         JointOuterBasis::Graded(_) => 2,
                     };
-                    if category == statistics {
-                        if let Some(source) = outer.occupied().next() {
-                            budget.add(&mut inner, source.clone(), *amplitude)?;
-                        }
+                    if category == statistics
+                        && let Some(source) = outer.occupied().next()
+                    {
+                        budget.add(&mut inner, source.clone(), *amplitude)?;
                     }
                 }
                 if inner.is_empty() {

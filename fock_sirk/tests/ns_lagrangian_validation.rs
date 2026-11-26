@@ -1186,7 +1186,7 @@ fn ns_lagrangian_comparison_floor_relbound_commutator() {
 
     let n_max = 2u32;
     let basis = basis_states(n_max);
-    let probes = vec![
+    let probes = [
         lag_state([0, 0, 0]),
         lag_state([1, 0, 0]),
         lag_state([0, 1, 1]),

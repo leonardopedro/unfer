@@ -204,6 +204,7 @@ fn val_nll_mlp(
 /// Train one softmax candidate, keeping the parameter vector with the best
 /// calibration NLL.  Early stopping is evaluated only on the calibration rows;
 /// the test split is never touched here.
+#[allow(clippy::too_many_arguments)]
 fn train_softmax_candidate(
     potential: &MlpHeadPotential,
     theta0: Vec<f32>,
@@ -246,18 +247,17 @@ fn train_softmax_candidate(
             v[i] = b2 * v[i] + (1.0 - b2) * gi * gi;
             theta[i] -= (lr * (m[i] / c1) / ((v[i] / c2).sqrt() + 1e-8)) as f32;
         }
-        if let Some(val) = val {
-            if step % eval_every == 0 || step == steps {
-                if let Some(nll) = val_nll_mlp(val, &theta, hidden, classes) {
-                    if best.as_ref().is_none_or(|b| nll < b.0 - 1e-9) {
-                        best = Some((nll, theta.clone(), step));
-                        stale = 0;
-                    } else {
-                        stale += 1;
-                        if stale >= patience {
-                            break;
-                        }
-                    }
+        if let Some(val) = val
+            && (step % eval_every == 0 || step == steps)
+            && let Some(nll) = val_nll_mlp(val, &theta, hidden, classes)
+        {
+            if best.as_ref().is_none_or(|b| nll < b.0 - 1e-9) {
+                best = Some((nll, theta.clone(), step));
+                stale = 0;
+            } else {
+                stale += 1;
+                if stale >= patience {
+                    break;
                 }
             }
         }
@@ -362,19 +362,19 @@ fn mixed_table(
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed ^ 0x51e1_c7ed);
     let mut rows = Vec::new();
     let mut cal = Vec::new();
-    for class in 0..c {
-        by_class[class].shuffle(&mut rng);
-        if by_class[class].len() < fit_per_class + cal_per_class {
+    for (class, class_rows) in by_class.iter_mut().enumerate() {
+        class_rows.shuffle(&mut rng);
+        if class_rows.len() < fit_per_class + cal_per_class {
             panic!(
                 "class {class} has {} rows, need {}",
-                by_class[class].len(),
+                class_rows.len(),
                 fit_per_class + cal_per_class
             );
         }
-        for &i in &by_class[class][..fit_per_class] {
+        for &i in &class_rows[..fit_per_class] {
             rows.push((x[i * dim..(i + 1) * dim].to_vec(), y[i], false));
         }
-        for &i in &by_class[class][fit_per_class..fit_per_class + cal_per_class] {
+        for &i in &class_rows[fit_per_class..fit_per_class + cal_per_class] {
             cal.push((x[i * dim..(i + 1) * dim].to_vec(), y[i]));
         }
     }
@@ -689,7 +689,7 @@ fn single_step(args: &[String], label: &str, fixture: &EmbeddingTable) {
                 state
                     .amplitudes()
                     .iter()
-                    .map(|a| f64::from(*a).powi(2))
+                    .map(|a| (*a).powi(2))
                     .collect::<Vec<_>>(),
             );
         }

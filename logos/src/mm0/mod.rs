@@ -670,10 +670,10 @@ fn cmd_claims(args: &[String]) -> i32 {
             // A kernel sentence that is not proved says why: identities the
             // certificate does not state and sentences it cannot state are the
             // two things a reader of this corpus needs told apart.
-            if let Outcome::Kernel(k) = outcome {
-                if let Verdict::Unproved(why) = &k.verdict {
-                    println!("         {why}");
-                }
+            if let Outcome::Kernel(k) = outcome
+                && let Verdict::Unproved(why) = &k.verdict
+            {
+                println!("         {why}");
             }
         }
         println!(

@@ -252,9 +252,9 @@ impl CertificateLedger {
     /// A durable image of the ledger (see [`LedgerSnapshot`]).
     pub fn snapshot(&self) -> LedgerSnapshot {
         let mut utxos: Vec<Coin> = self.utxos.values().cloned().collect();
-        utxos.sort_by(|a, b| a.coin_id.0.cmp(&b.coin_id.0));
+        utxos.sort_by_key(|a| a.coin_id.0);
         let mut spent: Vec<Nullifier> = self.spent.iter().copied().collect();
-        spent.sort_by(|a, b| a.0.cmp(&b.0));
+        spent.sort_by_key(|a| a.0);
         LedgerSnapshot {
             mint_authority: self.mint_authority.clone(),
             utxos,
@@ -773,7 +773,7 @@ mod tests {
     /// comparison below covers UTXOs, the spent set, the SMT root, supply and
     /// the serialized coin records, not just the field the caller looked at.
     fn fingerprint(l: &CertificateLedger) -> String {
-        let mut ids: Vec<String> = l.utxos.keys().map(|id| hex::encode(id)).collect();
+        let mut ids: Vec<String> = l.utxos.keys().map(hex::encode).collect();
         ids.sort();
         let coins: Vec<String> = ids
             .iter()
@@ -794,11 +794,7 @@ mod tests {
             })
             .collect();
         let spent: Vec<String> = {
-            let mut s: Vec<String> = l
-                .spent
-                .iter()
-                .map(|n| hex::encode(n.0))
-                .collect();
+            let mut s: Vec<String> = l.spent.iter().map(|n| hex::encode(n.0)).collect();
             s.sort();
             s
         };
@@ -823,7 +819,11 @@ mod tests {
         let ghost = commit_coin(500, alice, &[9u8; 32]);
         let before = fingerprint(&l);
         let err = l
-            .apply_burn(alice, &[coinref(a, 500, alice), coinref(ghost, 500, alice)], 2)
+            .apply_burn(
+                alice,
+                &[coinref(a, 500, alice), coinref(ghost, 500, alice)],
+                2,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::CERT_NONEXISTENT_INPUT);
         assert_eq!(fingerprint(&l), before, "first input must stay unspent");
@@ -859,7 +859,10 @@ mod tests {
         let err = l
             .apply_burn(
                 alice,
-                &[coinref(big1, u64::MAX, alice), coinref(big2, u64::MAX, alice)],
+                &[
+                    coinref(big1, u64::MAX, alice),
+                    coinref(big2, u64::MAX, alice),
+                ],
                 7,
             )
             .unwrap_err();
@@ -869,7 +872,10 @@ mod tests {
         // The succeeding case still works and preserves conservation.
         let mut l = ledger();
         let c = l.apply_mint(&auth(), 300, alice, &[5u8; 32], 8).unwrap();
-        assert_eq!(l.apply_burn(alice, &[coinref(c, 300, alice)], 9).unwrap(), 300);
+        assert_eq!(
+            l.apply_burn(alice, &[coinref(c, 300, alice)], 9).unwrap(),
+            300
+        );
         assert_eq!(l.total_supply(), 0);
         assert!(l.is_spent(&c));
     }

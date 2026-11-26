@@ -293,8 +293,8 @@ impl FiniteFixture {
             // Direct term dB_U/ds, with u_r = s·base[r]: the derivative of
             // `−2/m Σ u_i[y]` plus the pairwise product rule.
             let mut direct_terms = 0.0;
-            for i in 0..m {
-                direct_terms -= 2.0 / m as f64 * self.base[tuple[i]][y];
+            for &ti in &tuple[..m] {
+                direct_terms -= 2.0 / m as f64 * self.base[ti][y];
             }
             for i in 0..m {
                 for j in 0..m {

@@ -200,9 +200,7 @@ pub fn resolve_promise(
     }
     for grant in grants {
         if !pending.grants.contains(*grant) {
-            return Err(format!(
-                "grant '{grant}' was not allocated to promise {id}"
-            ));
+            return Err(format!("grant '{grant}' was not allocated to promise {id}"));
         }
     }
     // Consume the promise: a second resolution has nothing left to resolve.

@@ -83,7 +83,10 @@ fn sum(terms: Vec<InnerExpr>) -> InnerExpr {
 
 /// `n!` as `f64`; the Mehler Gram weight of `He_n`.
 pub fn hermite_gram(n: u32) -> f64 {
-    (1..=u64::from(n)).map(|k| k as f64).product::<f64>().max(1.0)
+    (1..=u64::from(n))
+        .map(|k| k as f64)
+        .product::<f64>()
+        .max(1.0)
 }
 
 fn occupation_norm(occupations: &[u32; 4]) -> f64 {
@@ -180,9 +183,7 @@ impl ScalarMomCont {
             let previous = input.get(&basis).copied().unwrap_or_default();
             input.insert(basis, previous + Complex64::new(amplitude, 0.0));
         }
-        let image = self
-            .hamiltonian()
-            .apply(&input, ActionLimits::default())?;
+        let image = self.hamiltonian().apply(&input, ActionLimits::default())?;
         let mut column = BTreeMap::new();
         for (basis, amplitude) in image {
             let occupations = occupations_of(&basis);
@@ -199,7 +200,9 @@ impl ScalarMomCont {
     pub fn hermite_norm_squared(support: &[([u32; 4], f64)]) -> f64 {
         support
             .iter()
-            .map(|(occupations, coefficient)| coefficient * coefficient * occupation_norm(occupations))
+            .map(|(occupations, coefficient)| {
+                coefficient * coefficient * occupation_norm(occupations)
+            })
             .sum()
     }
 
@@ -266,9 +269,8 @@ impl ScalarMomCont {
                             [],
                         )
                         .expect("valid occupations");
-                        labels.insert(
-                            JointOuterBasis::bosonic([(inner, 1)]).expect("bosonic label"),
-                        );
+                        labels
+                            .insert(JointOuterBasis::bosonic([(inner, 1)]).expect("bosonic label"));
                     }
                 }
             }
@@ -299,26 +301,14 @@ pub const S3_MODES: [(&str, &[[u32; 4]]); 11] = [
     ("1", &[[0, 0, 0, 0]]),
     ("He2(phi)", &[[2, 0, 0, 0]]),
     ("K2", &[[0, 2, 0, 0], [0, 0, 2, 0], [0, 0, 0, 2]]),
-    (
-        "He2(phi)K2",
-        &[[2, 2, 0, 0], [2, 0, 2, 0], [2, 0, 0, 2]],
-    ),
+    ("He2(phi)K2", &[[2, 2, 0, 0], [2, 0, 2, 0], [2, 0, 0, 2]]),
     ("He4(phi)", &[[4, 0, 0, 0]]),
     ("He6(phi)", &[[6, 0, 0, 0]]),
-    (
-        "He4(phi)K2",
-        &[[4, 2, 0, 0], [4, 0, 2, 0], [4, 0, 0, 2]],
-    ),
+    ("He4(phi)K2", &[[4, 2, 0, 0], [4, 0, 2, 0], [4, 0, 0, 2]]),
     ("K4", &[[0, 4, 0, 0], [0, 0, 4, 0], [0, 0, 0, 4]]),
     ("K22", &[[0, 2, 2, 0], [0, 2, 0, 2], [0, 0, 2, 2]]),
-    (
-        "He2(phi)K4",
-        &[[2, 4, 0, 0], [2, 0, 4, 0], [2, 0, 0, 4]],
-    ),
-    (
-        "He2(phi)K22",
-        &[[2, 2, 2, 0], [2, 2, 0, 2], [2, 0, 2, 2]],
-    ),
+    ("He2(phi)K4", &[[2, 4, 0, 0], [2, 0, 4, 0], [2, 0, 0, 4]]),
+    ("He2(phi)K22", &[[2, 2, 2, 0], [2, 2, 0, 2], [2, 0, 2, 2]]),
 ];
 
 /// Mehler Gram weights `‖mode_i‖²` of [`S3_MODES`].
@@ -339,9 +329,7 @@ impl ScalarMomCont {
             .iter()
             .map(|&occupations| (occupations, 1.0))
             .collect();
-        let column = self
-            .hermite_apply(&support)
-            .expect("finite Mehler action");
+        let column = self.hermite_apply(&support).expect("finite Mehler action");
         let coefficients: Vec<f64> = S3_MODES[output]
             .1
             .iter()
@@ -575,7 +563,9 @@ mod tests {
             if occupations != [0, 0, 0, 0] {
                 jet_variance += coefficient * coefficient * norm * norm;
             }
-            if occupations == [2, 2, 0, 0] || occupations == [2, 0, 2, 0] || occupations == [2, 0, 0, 2]
+            if occupations == [2, 2, 0, 0]
+                || occupations == [2, 0, 2, 0]
+                || occupations == [2, 0, 0, 2]
             {
                 coupling += coefficient;
             }
@@ -648,7 +638,10 @@ mod tests {
                 (amplitude - other).norm()
             })
             .sum();
-        assert!(difference > 1e-9, "cross-particle defect vanished: {difference}");
+        assert!(
+            difference > 1e-9,
+            "cross-particle defect vanished: {difference}"
+        );
     }
 
     #[test]

@@ -513,7 +513,7 @@ fn main() {
         let mut capped = 0usize;
         for (i, v) in diag.iter_mut().enumerate() {
             let lo = 1.0 / prior_c[i];
-            if !(*v > lo) {
+            if *v <= lo || v.is_nan() {
                 *v = lo;
                 floored += 1;
             } else if *v > clip * lo {

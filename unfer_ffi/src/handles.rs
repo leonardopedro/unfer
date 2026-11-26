@@ -346,7 +346,9 @@ impl crate::dispatch::EffectSink for LocalEffectSink {
 }
 
 /// Clear the local sink's dedup memory (QA/reset only; the durable dispatcher
-/// log is the real record).
+/// log is the real record). Only this crate's unit tests call it, so it is not
+/// part of the release surface.
+#[cfg(test)]
 pub fn clear_local_sink_for_tests() {
     *LOCAL_SINK_KEYS.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }

@@ -947,7 +947,7 @@ fn sm_full_gauss_with_matter_charge_is_content_sensitive() {
     let mut charged = Vec::new();
     for ghost in 0..12u32 {
         let matrix = window_matrix(&matter_charge(ghost));
-        let off_diagonal = &matrix - DMatrix::from_diagonal(&matrix.diagonal().into());
+        let off_diagonal = &matrix - DMatrix::from_diagonal(&matrix.diagonal());
         assert!(
             off_diagonal.norm() < 1e-12,
             "rho^{ghost} is not diagonal on the window: {:e}",

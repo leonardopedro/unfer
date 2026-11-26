@@ -95,7 +95,7 @@ fn main() {
     let data_seed: u64 = std::env::var("R9_DATA_SEED")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(2026_11_15);
+        .unwrap_or(20_261_115);
     // Declared state-path variant (`full`, `gate`, `lowrank`); the default is
     // the deployed full projection so every earlier budget still reproduces.
     let state_path = match std::env::var("R9_STATE_PATH")

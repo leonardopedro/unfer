@@ -87,9 +87,7 @@ impl Edge0Potential {
                 "policy_w" | "policy_b" | "noul_w" | "noul_b" | "score_w" | "score_thresholds"
             );
             if head {
-                for i in slot.start..slot.start + slot.len {
-                    trainable[i] = true;
-                }
+                trainable[slot.start..slot.start + slot.len].fill(true);
             }
         }
         Self::new(config, samples, trainable)
@@ -557,9 +555,7 @@ pub fn head_chart_enclosure_1d(
     let mut allowed = vec![false; p_total];
     for slot in cfg.layout() {
         if matches!(slot.name, "policy_w" | "policy_b") {
-            for i in slot.start..slot.start + slot.len {
-                allowed[i] = true;
-            }
+            allowed[slot.start..slot.start + slot.len].fill(true);
         }
     }
     let policy_only = dir.iter().enumerate().all(|(i, d)| *d == 0.0 || allowed[i]);

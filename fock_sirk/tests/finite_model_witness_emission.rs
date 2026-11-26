@@ -52,7 +52,8 @@ fn apply_reflection(s: &QuantumState) -> QuantumState {
 }
 
 fn fock_state(occ: &[(u32, u32)]) -> QuantumState {
-    let mut s = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+    let mut s =
+        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
     for &(m, n) in occ {
         for _ in 0..n {
             s = s.apply(&Operator::InnerBosonCreate(m));
@@ -69,7 +70,6 @@ fn fock_state(occ: &[(u32, u32)]) -> QuantumState {
 
 struct Truncated {
     basis: Vec<QuantumState>,
-    index: HashMap<OuterState, usize>,
     columns: Vec<Vec<(usize, f64)>>,
     reflection: Vec<(usize, f64)>,
 }
@@ -112,7 +112,11 @@ impl Truncated {
             let (key, sign) = rs.components.iter().next().map(|(k, v)| (k, v.re)).unwrap();
             reflection[i] = (index[key], sign);
         }
-        Self { basis, index, columns, reflection }
+        Self {
+            basis,
+            columns,
+            reflection,
+        }
     }
 
     fn dim(&self) -> usize {
@@ -221,8 +225,7 @@ fn emit_finite_model_witness_row() {
         "the in-sector ground residual must be tiny: {residual_odd}"
     );
 
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/finite_model_witness");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/finite_model_witness");
     let line = serde_json::json!({
         "kind": "finite_model_witness",
         "hamiltonian": "qcd_ym_hamiltonian(g)",
@@ -243,12 +246,25 @@ fn emit_finite_model_witness_row() {
     } else {
         let fixture = fs::File::open(dir.join("qym_g2_n10_count.ndjson")).expect("Temple fixture");
         let recorded: serde_json::Value = serde_json::from_reader(fixture).expect("Temple JSON");
-        for key in ["kind", "hamiltonian", "coupling", "cutoff", "dimension", "physical"] {
+        for key in [
+            "kind",
+            "hamiltonian",
+            "coupling",
+            "cutoff",
+            "dimension",
+            "physical",
+        ] {
             assert_eq!(line[key], recorded[key], "{key}");
         }
         // Eigenvectors and their residuals vary at roundoff across numerical libraries.
-        for key in ["theta_odd", "theta_even", "beta_lambda2_odd", "temple_bound",
-                    "exact_gap_at_cutoff", "residual_odd"] {
+        for key in [
+            "theta_odd",
+            "theta_even",
+            "beta_lambda2_odd",
+            "temple_bound",
+            "exact_gap_at_cutoff",
+            "residual_odd",
+        ] {
             let difference = line[key].as_f64().unwrap() - recorded[key].as_f64().unwrap();
             assert!(difference.abs() < 1e-10, "{key}: {difference}");
         }

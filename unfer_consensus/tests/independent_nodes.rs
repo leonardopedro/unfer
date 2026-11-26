@@ -23,17 +23,12 @@ mod support;
 use std::path::Path;
 
 use support::{
-    client_json, committed, digest, job_report, run, transaction, wait_digest, Deployment,
+    Deployment, client_json, committed, digest, job_report, run, transaction, wait_digest,
 };
 use unfer_consensus::signing::{Keypair, sign_transaction};
 use unfer_protocol::{ConsensusTransaction, JobFence, JobOp, JobOpKind};
 
-fn job_op(
-    signer: &Keypair,
-    deployment: &str,
-    job: &str,
-    kind: JobOpKind,
-) -> ConsensusTransaction {
+fn job_op(signer: &Keypair, deployment: &str, job: &str, kind: JobOpKind) -> ConsensusTransaction {
     let mut tx = ConsensusTransaction::JobOp(JobOp {
         did: signer.did(),
         deployment: deployment.to_owned(),
@@ -62,11 +57,7 @@ fn two_processes_contend_for_one_job_and_only_one_claim_commits() {
 
     // Registration is itself a consensus transition, so every replica knows the
     // job before either claim is applied.
-    let registered = fixture.submit(
-        0,
-        1,
-        &job_op(&registrar, "1", job, JobOpKind::Register),
-    );
+    let registered = fixture.submit(0, 1, &job_op(&registrar, "1", job, JobOpKind::Register));
     assert!(registered.0, "register failed: {}", registered.2);
     wait_digest(&fixture.configs[0], 1);
 
@@ -98,7 +89,11 @@ fn two_processes_contend_for_one_job_and_only_one_claim_commits() {
     assert!(second.0, "second claim submission failed: {}", second.2);
 
     let winner = wait_digest(&fixture.configs[0], 3);
-    assert_eq!(wait_digest(&fixture.configs[1], 3), winner, "nodes 1 and 2 agree");
+    assert_eq!(
+        wait_digest(&fixture.configs[1], 3),
+        winner,
+        "nodes 1 and 2 agree"
+    );
     assert_eq!(wait_digest(&fixture.configs[2], 3), winner, "node 3 agrees");
 
     let reports = fixture
@@ -111,8 +106,7 @@ fn two_processes_contend_for_one_job_and_only_one_claim_commits() {
     let report = &reports[0];
     assert!(report.contains("\"state\":\"claimed\""), "{report}");
     assert!(
-        report.contains("\"holder\":\"worker-a\"")
-            || report.contains("\"holder\":\"worker-b\""),
+        report.contains("\"holder\":\"worker-a\"") || report.contains("\"holder\":\"worker-b\""),
         "exactly one worker holds the job: {report}"
     );
     assert!(
@@ -139,7 +133,11 @@ fn two_processes_contend_for_one_job_and_only_one_claim_commits() {
         },
     );
     let stale_fire = fixture.submit(2, 4, &stale);
-    assert!(stale_fire.0, "stale fire submission failed: {}", stale_fire.2);
+    assert!(
+        stale_fire.0,
+        "stale fire submission failed: {}",
+        stale_fire.2
+    );
     wait_digest(&fixture.configs[0], 4);
     let still_claimed = job_report(&fixture.configs[0], job);
     assert!(
@@ -198,7 +196,11 @@ fn three_processes_commit_identically_and_one_catches_up_after_a_kill() {
     assert!(transfer.0, "submit through node 2 failed: {}", transfer.2);
 
     let first = wait_digest(&fixture.configs[0], 2);
-    assert_eq!(wait_digest(&fixture.configs[1], 2), first, "nodes 1 and 2 agree");
+    assert_eq!(
+        wait_digest(&fixture.configs[1], 2),
+        first,
+        "nodes 1 and 2 agree"
+    );
     assert_eq!(wait_digest(&fixture.configs[2], 2), first, "node 3 agrees");
 
     // ---- Isolation: each process wrote only its own directory.
@@ -242,13 +244,11 @@ fn three_processes_commit_identically_and_one_catches_up_after_a_kill() {
     )
     .unwrap();
     let tx_path = root.join("tx-1.json");
-    let (ok, _, stderr) = support::submit(
-        &other,
-        &fixture.address(0),
-        9,
-        Path::new(&tx_path),
+    let (ok, _, stderr) = support::submit(&other, &fixture.address(0), 9, Path::new(&tx_path));
+    assert!(
+        !ok,
+        "a command for deployment 2 must not commit into deployment 1"
     );
-    assert!(!ok, "a command for deployment 2 must not commit into deployment 1");
     assert!(
         !stderr.is_empty(),
         "the refusal must say why it was refused"
@@ -286,7 +286,10 @@ fn three_processes_commit_identically_and_one_catches_up_after_a_kill() {
     assert!(fourth.0, "submit after the restart failed: {}", fourth.2);
     let fourth_digest = wait_digest(&fixture.configs[0], 4);
     assert_eq!(wait_digest(&fixture.configs[1], 4), fourth_digest);
-    eprintln!("survivors: {fourth_digest}; rejoined: {}", digest(&fixture.configs[2]));
+    eprintln!(
+        "survivors: {fourth_digest}; rejoined: {}",
+        digest(&fixture.configs[2])
+    );
     assert_eq!(
         wait_digest(&fixture.configs[2], 4),
         fourth_digest,

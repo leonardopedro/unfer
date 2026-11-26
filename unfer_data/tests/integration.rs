@@ -1,6 +1,6 @@
 use unfer_consensus::{ConsensusNode, Keypair, LocalConsensus};
-use unfer_data::crypto::{content_object_id, derive_aes_key, ObjectKey};
-use unfer_data::{compute_cid, verify_chunk, Chunker, DataKeypair, DataPublisher};
+use unfer_data::crypto::{ObjectKey, content_object_id, derive_aes_key};
+use unfer_data::{Chunker, DataKeypair, DataPublisher, compute_cid, verify_chunk};
 use unfer_identity::DidManager;
 
 fn make_node() -> ConsensusNode {

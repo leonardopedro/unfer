@@ -124,7 +124,7 @@ pub struct VerifiedRegion {
 impl VerifiedRegion {
     pub fn new(prior_mass: f64, potential_ceiling: f64) -> Self {
         assert!(
-            prior_mass >= 0.0 && prior_mass <= 1.0 && prior_mass.is_finite(),
+            (0.0..=1.0).contains(&prior_mass) && prior_mass.is_finite(),
             "prior mass must be a probability"
         );
         assert!(

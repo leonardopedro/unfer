@@ -72,7 +72,7 @@ fn ce_apply(
         tuple.push(a);
         tuple.sort_unstable();
         let i = position(&tuple, a);
-        let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+        let sign = if i.is_multiple_of(2) { 1.0 } else { -1.0 };
         let target = mask | (1 << a);
         for output in 0..GENERATORS {
             let value = rho[a][(output, rep)];
@@ -98,7 +98,11 @@ fn ce_apply(
                 // generator below `a0`; the pair positions in `T` contribute
                 // `(-1)^{i+j}` from the cochain formula.
                 let below = indices.iter().filter(|&&s| s != a0 && s < a0).count();
-                let sign = if (i + j + below) % 2 == 0 { 1.0 } else { -1.0 };
+                let sign = if (i + j + below).is_multiple_of(2) {
+                    1.0
+                } else {
+                    -1.0
+                };
                 let f = structure(b0, c0, a0);
                 if f != 0.0 {
                     *out.entry((target, rep)).or_default() += C::new(sign * f, 0.0);
@@ -207,10 +211,11 @@ fn harmonic_basis(
     if q.nrows() > 0 && q.ncols() > 0 {
         blocks.push(q.clone());
     }
-    if let Some(prev) = q_prev {
-        if prev.nrows() > 0 && prev.ncols() > 0 {
-            blocks.push(prev.adjoint());
-        }
+    if let Some(prev) = q_prev
+        && prev.nrows() > 0
+        && prev.ncols() > 0
+    {
+        blocks.push(prev.adjoint());
     }
     if blocks.is_empty() {
         return (
@@ -274,10 +279,10 @@ fn representation_closure(rho: &[DMatrix<C>]) -> f64 {
         for b in 0..GENERATORS {
             let commutator = &rho[a] * &rho[b] - &rho[b] * &rho[a];
             let mut expected = DMatrix::zeros(GENERATORS, GENERATORS);
-            for c in 0..GENERATORS {
+            for (c, rho_c) in rho.iter().enumerate().take(GENERATORS) {
                 let f = structure(a, b, c);
                 if f != 0.0 {
-                    expected += rho[c].map(|value| value * C::new(f, 0.0));
+                    expected += rho_c.map(|value| value * C::new(f, 0.0));
                 }
             }
             let residual = &commutator - &expected;

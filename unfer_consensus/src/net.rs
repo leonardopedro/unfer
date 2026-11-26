@@ -37,7 +37,8 @@ use rust_quepaxa::network::{
 };
 use rust_quepaxa::{
     AllowAllAvailability, Decision, DurableRecorderCore, FileRecorderStore, FileRuntimeStore,
-    LaneId, RecorderConfig, ReplicaConfig, ReplicaId, ReplicaRuntimeConfig, SlotIndex, StateMachine,
+    LaneId, RecorderConfig, ReplicaConfig, ReplicaId, ReplicaRuntimeConfig, SlotIndex,
+    StateMachine,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -49,7 +50,7 @@ use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
 use crate::engine::ConsensusEngine;
-use crate::jobs::{Fence, JobCommand, JobQueue, JOB_COMMAND_SCHEMA};
+use crate::jobs::{Fence, JOB_COMMAND_SCHEMA, JobCommand, JobQueue};
 
 /// D10: the schema a replicated ledger submission is read under. A command
 /// under any other schema is refused by name rather than applied as a
@@ -152,8 +153,9 @@ impl LedgerFile {
             .map_err(|error| format!("ledger snapshot encode failed: {error}"))?;
         let parent = self.path.parent().unwrap_or(Path::new("."));
         let temporary = self.path.with_extension("ledger.tmp");
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("could not create ledger dir {}: {error}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("could not create ledger dir {}: {error}", parent.display())
+        })?;
         let mut file = fs::File::create(&temporary)
             .map_err(|error| format!("could not create {}: {error}", temporary.display()))?;
         file.write_all(&bytes)
@@ -389,8 +391,7 @@ impl SharedLedger {
     fn allocate(&self, tx: ConsensusTransaction) -> Result<u64, String> {
         let Some(pump) = &self.submitted else {
             return Err(
-                "this ledger has no submission pump; submit through the node's TLS "
-                    .to_owned()
+                "this ledger has no submission pump; submit through the node's TLS ".to_owned()
                     + "endpoint instead of proposing locally",
             );
         };
@@ -418,8 +419,7 @@ impl SharedLedger {
     pub fn allocate_job(&self, command: JobCommand) -> Result<u64, String> {
         let Some(pump) = &self.submitted else {
             return Err(
-                "this ledger has no submission pump; submit the job command through "
-                    .to_owned()
+                "this ledger has no submission pump; submit the job command through ".to_owned()
                     + "the node's TLS endpoint instead of proposing locally",
             );
         };
@@ -782,8 +782,8 @@ fn default_rpc_timeout_ms() -> u64 {
 const DEFAULT_RPC_TIMEOUT_MS: u64 = 30_000;
 
 fn hex_bytes(field: &str, value: &str) -> Result<Vec<u8>, String> {
-    let bytes = hex::decode(value.trim())
-        .map_err(|error| format!("{field} is not hex: {error}"))?;
+    let bytes =
+        hex::decode(value.trim()).map_err(|error| format!("{field} is not hex: {error}"))?;
     if bytes.is_empty() {
         return Err(format!("{field} is empty"));
     }
@@ -889,7 +889,10 @@ impl DeploymentConfig {
                 .certificate_chain_der
                 .first()
                 .ok_or_else(|| format!("replica {} has no certificate", member.replica.get()))?;
-            if let Some(other) = certificates.insert(certificate.clone(), format!("replica {}", member.replica.get())) {
+            if let Some(other) = certificates.insert(
+                certificate.clone(),
+                format!("replica {}", member.replica.get()),
+            ) {
                 return Err(format!(
                     "replica {} presents the same certificate as {other}",
                     member.replica.get()
@@ -904,8 +907,7 @@ impl DeploymentConfig {
             if client.identity.certificate_chain_der.is_empty() {
                 return Err("a client has no certificate".to_owned());
             }
-            if let Some(other) = client_ids.insert(client.client_id, ()) {
-                let _ = other;
+            if client_ids.insert(client.client_id, ()).is_some() {
                 return Err(format!(
                     "client {} is declared twice",
                     hex::encode(client.client_id)
@@ -918,7 +920,10 @@ impl DeploymentConfig {
                     hex::encode(client.client_id)
                 ));
             }
-            certificates.insert(certificate, format!("client {}", hex::encode(client.client_id)));
+            certificates.insert(
+                certificate,
+                format!("client {}", hex::encode(client.client_id)),
+            );
         }
         Ok(())
     }
@@ -927,14 +932,24 @@ impl DeploymentConfig {
         self.members
             .iter()
             .find(|member| member.replica == replica)
-            .ok_or_else(|| format!("replica {} is not a member of this deployment", replica.get()))
+            .ok_or_else(|| {
+                format!(
+                    "replica {} is not a member of this deployment",
+                    replica.get()
+                )
+            })
     }
 
     fn index_of(&self, replica: ReplicaId) -> Result<usize, String> {
         self.members
             .iter()
             .position(|member| member.replica == replica)
-            .ok_or_else(|| format!("replica {} is not a member of this deployment", replica.get()))
+            .ok_or_else(|| {
+                format!(
+                    "replica {} is not a member of this deployment",
+                    replica.get()
+                )
+            })
     }
 
     /// Every certificate this deployment trusts, in one deterministic order.
@@ -968,7 +983,9 @@ impl DeploymentConfig {
                     .identity
                     .certificate_chain_der
                     .first()
-                    .map(|certificate| (certificate.clone(), PeerIdentity::Client(client.client_id)))
+                    .map(|certificate| {
+                        (certificate.clone(), PeerIdentity::Client(client.client_id))
+                    })
             }))
             .collect()
     }
@@ -986,8 +1003,8 @@ impl DeploymentConfig {
 
 impl NodeConfig {
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let file: NodeFile =
-            serde_json::from_str(text).map_err(|error| format!("node config is not valid JSON: {error}"))?;
+        let file: NodeFile = serde_json::from_str(text)
+            .map_err(|error| format!("node config is not valid JSON: {error}"))?;
         let deployment = DeploymentConfig::from_file(&file.deployment)?;
         let config = Self {
             replica: ReplicaId::new(file.replica),
@@ -1203,7 +1220,12 @@ impl RunningNode {
 /// that applied the same decisions in the same order agree, and any divergence
 /// — a missing commit, a reordered one, a different payload — does not.
 pub fn state_digest(ledger: &SharedLedger) -> String {
-    digest_of(ledger.committed_since(1).iter().map(|(slot, tx)| (*slot, tx)))
+    digest_of(
+        ledger
+            .committed_since(1)
+            .iter()
+            .map(|(slot, tx)| (*slot, tx)),
+    )
 }
 
 /// One job's committed state, read from a node's durable ledger without taking
@@ -1236,7 +1258,8 @@ pub fn state_dir_job(directory: &Path, job: &str) -> Result<String, String> {
             Some(holder) => format!("\"{holder}\""),
             None => "null".to_string(),
         },
-        fence.map(|fence| fence.epoch.to_string())
+        fence
+            .map(|fence| fence.epoch.to_string())
             .unwrap_or_else(|| "null".to_string()),
         fence
             .map(|fence| fence.generation.to_string())
@@ -1275,11 +1298,7 @@ impl ConsensusEngine for ReplayEngine {
         ReceiptState::Pending
     }
 
-    fn wait(
-        &self,
-        id: SubmissionId,
-        _timeout: Duration,
-    ) -> unfer_protocol::submission::Receipt {
+    fn wait(&self, id: SubmissionId, _timeout: Duration) -> unfer_protocol::submission::Receipt {
         unfer_protocol::submission::Receipt::pending(id)
     }
 }
@@ -1354,9 +1373,8 @@ where
     fn receive_decisions(
         &self,
         decisions: Vec<Decision<ReplicatedValue>>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = rust_quepaxa::Result<()>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = rust_quepaxa::Result<()>> + Send + '_>>
+    {
         self.0.receive_decisions(decisions)
     }
 }
@@ -1454,7 +1472,7 @@ where
         return head;
     }
     while lo < hi {
-        let mid = lo + (hi - lo + 1) / 2;
+        let mid = lo + (hi - lo).div_ceil(2);
         if mid > lo && has(mid).await {
             lo = mid;
         } else {
@@ -1489,7 +1507,9 @@ async fn start_replica(
         .iter()
         .map(|member| member.replica)
         .collect::<Vec<_>>();
-    let node_dir = config.state_dir.join(format!("node-{}", config.replica.get()));
+    let node_dir = config
+        .state_dir
+        .join(format!("node-{}", config.replica.get()));
     fs::create_dir_all(&node_dir).map_err(|error| {
         format!(
             "could not create node state dir {}: {error}",
@@ -1563,20 +1583,16 @@ async fn start_replica(
             })?,
     );
     let recorder = DurableRecorderCore::new(
-        RecorderConfig::new(config.replica, members.clone(), 1)
-            .map_err(|error| format!("replica {} recorder config: {error}", config.replica.get()))?,
+        RecorderConfig::new(config.replica, members.clone(), 1).map_err(|error| {
+            format!("replica {} recorder config: {error}", config.replica.get())
+        })?,
         Arc::new(AllowAllAvailability),
         FileRecorderStore::new(
             node_dir.join("recorder.snapshot"),
             PostcardRecorderCodec::default(),
         ),
     )
-    .map_err(|error| {
-        format!(
-            "replica {} recorder store: {error}",
-            config.replica.get()
-        )
-    })?;
+    .map_err(|error| format!("replica {} recorder store: {error}", config.replica.get()))?;
     let server = NetworkNodeServer::bind(
         deployment.members[index].address,
         deployment.deployment,
@@ -1651,9 +1667,7 @@ pub fn submit_client(
         config.deployment.deployment,
         address,
         "localhost",
-        config
-            .deployment
-            .member_address_certificate(address)?,
+        config.deployment.member_address_certificate(address)?,
         tls.client.clone(),
         Arc::new(NetworkMetrics::default()),
     )
@@ -1787,14 +1801,9 @@ impl NetworkCluster {
                 identity: member.identity.clone(),
                 rpc_timeout: Duration::from_millis(DEFAULT_RPC_TIMEOUT_MS),
             };
-            let node = start_replica(
-                &config,
-                ledger.clone(),
-                None,
-                Arc::clone(&metrics),
-            )
-            .await
-            .map_err(storage_error)?;
+            let node = start_replica(&config, ledger.clone(), None, Arc::clone(&metrics))
+                .await
+                .map_err(storage_error)?;
             nodes.push(node);
         }
 
@@ -1990,10 +1999,16 @@ mod tests {
         let reserved = ledger.allocate(tx(1));
         let id_was_refused = reserved.is_err();
         std::fs::set_permissions(&dir, original).unwrap();
-        assert!(id_was_refused, "an unwritable state dir must refuse the reservation");
+        assert!(
+            id_was_refused,
+            "an unwritable state dir must refuse the reservation"
+        );
         assert_eq!(ledger.committed(), 0);
         // Nothing is left queued that a later write could pick up.
-        assert_eq!(ledger.receipt(1), ReceiptState::Unknown(UnknownReason::Unsubmitted));
+        assert_eq!(
+            ledger.receipt(1),
+            ReceiptState::Unknown(UnknownReason::Unsubmitted)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2038,7 +2053,11 @@ mod tests {
 
     #[test]
     fn a_zero_deployment_id_is_refused() {
-        let text = node_json("0", &[(1, "127.0.0.1:17001"), (2, "127.0.0.1:17002")], "/tmp/d11");
+        let text = node_json(
+            "0",
+            &[(1, "127.0.0.1:17001"), (2, "127.0.0.1:17002")],
+            "/tmp/d11",
+        );
         let error = NodeConfig::from_json(&text).unwrap_err();
         assert!(error.contains("deployment id must not be zero"), "{error}");
     }
@@ -2099,7 +2118,10 @@ mod tests {
             node.get("certificate_hex").unwrap().as_str().unwrap(),
         );
         let error = SubmitConfig::from_json(&submit).unwrap_err();
-        assert!(error.contains("is not declared by this deployment"), "{error}");
+        assert!(
+            error.contains("is not declared by this deployment"),
+            "{error}"
+        );
     }
 
     fn mem_ledger() -> SharedLedger {
@@ -2111,7 +2133,9 @@ mod tests {
     fn append_is_idempotent_across_replicas_sharing_one_ledger() {
         let ledger = mem_ledger();
         let transaction = tx(1);
-        let id = ledger.allocate(transaction.clone()).expect("durable reserve");
+        let id = ledger
+            .allocate(transaction.clone())
+            .expect("durable reserve");
         let value = encode_ledger_value(id, &transaction).unwrap();
 
         // Both live nodes see the same decision and both apply it.
@@ -2134,14 +2158,22 @@ mod tests {
         let value = encode_ledger_value(id, &transaction).unwrap();
 
         // The value is the only carrier: it decodes without the outbox.
-        assert_eq!(decode_ledger_value(&value).unwrap(), Some((id, transaction)));
+        assert_eq!(
+            decode_ledger_value(&value).unwrap(),
+            Some((id, transaction))
+        );
 
         // A different node's ledger: no outbox entry, no payload map entry.
         let peer = mem_ledger();
         assert!(peer.state.lock().unwrap().outbox.is_empty());
-        peer.append(vec![value.clone()]).expect("apply from the value alone");
+        peer.append(vec![value.clone()])
+            .expect("apply from the value alone");
         assert_eq!(peer.committed(), 1);
-        assert_eq!(peer.committed_since(1).len(), 1, "the payload is in the bank");
+        assert_eq!(
+            peer.committed_since(1).len(),
+            1,
+            "the payload is in the bank"
+        );
         assert_eq!(
             peer.receipt(id),
             ReceiptState::Committed(Slot(1)),
@@ -2240,7 +2272,9 @@ mod tests {
             resource: "settle-auction".to_string(),
             holder: "worker-a".to_string(),
         };
-        ledger.allocate_job(command.clone()).expect("durable allocation");
+        ledger
+            .allocate_job(command.clone())
+            .expect("durable allocation");
         let (_, proposed_before) = proposed.try_recv().expect("the pump receives the value");
         drop(ledger);
 
@@ -2255,7 +2289,9 @@ mod tests {
         // Applying the decision settles the fence and drains the pending entry.
         reopened.append(vec![proposed_after]).unwrap();
         assert_eq!(
-            reopened.with_jobs(|jobs| jobs.state("settle-auction")).unwrap(),
+            reopened
+                .with_jobs(|jobs| jobs.state("settle-auction"))
+                .unwrap(),
             Some(JobState::Claimed)
         );
         drop(reopened);
@@ -2320,8 +2356,10 @@ mod tests {
             claim: JobClaim::for_test("settle-auction", fence),
         })
         .unwrap();
-        a.append(vec![stale.clone()]).expect("a refusal is not an apply error");
-        b.append(vec![stale]).expect("a refusal is not an apply error");
+        a.append(vec![stale.clone()])
+            .expect("a refusal is not an apply error");
+        b.append(vec![stale])
+            .expect("a refusal is not an apply error");
         for ledger in [&a, &b] {
             assert_eq!(
                 Some(&newer),
@@ -2329,7 +2367,9 @@ mod tests {
                 "a refused command must not change the fence"
             );
             assert_eq!(
-                ledger.with_jobs(|jobs| jobs.state("settle-auction")).unwrap(),
+                ledger
+                    .with_jobs(|jobs| jobs.state("settle-auction"))
+                    .unwrap(),
                 Some(JobState::Claimed),
                 "a refused command must not change the job state"
             );
@@ -2342,7 +2382,9 @@ mod tests {
     fn the_outbox_is_drained_by_the_decision_and_is_not_needed_to_apply_it() {
         let ledger = mem_ledger();
         let transaction = tx(3);
-        let id = ledger.allocate(transaction.clone()).expect("durable reserve");
+        let id = ledger
+            .allocate(transaction.clone())
+            .expect("durable reserve");
         assert_eq!(ledger.receipt(id), ReceiptState::Pending);
 
         let value = encode_ledger_value(id, &transaction).unwrap();
@@ -2379,8 +2421,15 @@ mod tests {
         let ledger = mem_ledger();
         ledger.append(vec![ReplicatedValue::Noop]).expect("no-op");
         assert_eq!(ledger.committed(), 0);
-        assert_eq!(encode_ledger_value(0, &tx(1)).unwrap().encode().unwrap()[6], 1);
-        assert!(decode_ledger_value(&ReplicatedValue::Noop).unwrap().is_none());
+        assert_eq!(
+            encode_ledger_value(0, &tx(1)).unwrap().encode().unwrap()[6],
+            1
+        );
+        assert!(
+            decode_ledger_value(&ReplicatedValue::Noop)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -2420,7 +2469,8 @@ mod tests {
 
         // Phase 3: reload once more; everything is in the bank now.
         let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let ledger = SharedLedger::new(Some(submitted), Some(LedgerFile::new(&dir))).expect("reload");
+        let ledger =
+            SharedLedger::new(Some(submitted), Some(LedgerFile::new(&dir))).expect("reload");
         assert_eq!(ledger.committed(), 2);
         assert!(ledger.state.lock().unwrap().outbox.is_empty());
 

@@ -173,7 +173,7 @@ pub struct PipelineReport {
 }
 
 /// What retrieval did during the run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct RetrievalReport {
     pub mode: RetrievalMode,
@@ -187,17 +187,6 @@ pub struct RetrievalReport {
     /// for none).
     #[serde(default)]
     pub examples: usize,
-}
-
-impl Default for RetrievalReport {
-    fn default() -> Self {
-        RetrievalReport {
-            mode: RetrievalMode::default(),
-            embedder: None,
-            xerj: None,
-            examples: 0,
-        }
-    }
 }
 
 impl PipelineReport {
@@ -576,15 +565,14 @@ impl RetrievalCtx {
 
     /// Index a freshly remembered lemma (hybrid mode only).
     fn index_lemma(&mut self, store: &LemmaStore, unf_hash: &str) {
-        if let (Some(index), Some(embedder)) = (&mut self.index, &self.embedder) {
-            if let Some(lemma) = store.get(unf_hash) {
-                if let Err(e) = index.insert(embedder.as_ref(), lemma) {
-                    self.warnings.push(format!(
-                        "retrieval: new lemma {unf_hash} not indexed ({e}) — \
-                         subsequent hybrid retrieval sees the store without it"
-                    ));
-                }
-            }
+        if let (Some(index), Some(embedder)) = (&mut self.index, &self.embedder)
+            && let Some(lemma) = store.get(unf_hash)
+            && let Err(e) = index.insert(embedder.as_ref(), lemma)
+        {
+            self.warnings.push(format!(
+                "retrieval: new lemma {unf_hash} not indexed ({e}) — \
+                 subsequent hybrid retrieval sees the store without it"
+            ));
         }
     }
 }

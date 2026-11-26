@@ -2,10 +2,10 @@
 //! wire behaves at every truncation, split and coalescing boundary.
 
 use unfer_protocol::distributed::{
-    decode_exact, decode_frame, preimage, signing_preimage, Command, FrameDecoder, GoldenVector,
-    ReplicatedValue, SignatureVersion, SigningDomain, WireError, GOLDEN_VECTORS, HEADER_BYTES,
-    MAGIC, MAX_BODY_BYTES, MAX_COMMAND_BYTES, MAX_FRAME_BYTES, MAX_DOMAIN_FIELD_BYTES, SCHEMA_BYTES,
-    SIGNATURE_DOMAIN_PREFIX, WIRE_VERSION,
+    Command, FrameDecoder, GOLDEN_VECTORS, GoldenVector, HEADER_BYTES, MAGIC, MAX_BODY_BYTES,
+    MAX_COMMAND_BYTES, MAX_DOMAIN_FIELD_BYTES, MAX_FRAME_BYTES, ReplicatedValue, SCHEMA_BYTES,
+    SIGNATURE_DOMAIN_PREFIX, SignatureVersion, SigningDomain, WIRE_VERSION, WireError,
+    decode_exact, decode_frame, preimage, signing_preimage,
 };
 
 fn frame_hex(vector: &GoldenVector) -> Vec<u8> {
@@ -23,7 +23,11 @@ struct Cursor<'a> {
 impl<'a> Cursor<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
         if self.at + n > self.bytes.len() {
-            return Err(format!("wanted {n} byte(s) at {}, have {}", self.at, self.bytes.len()));
+            return Err(format!(
+                "wanted {n} byte(s) at {}, have {}",
+                self.at,
+                self.bytes.len()
+            ));
         }
         let slice = &self.bytes[self.at..self.at + n];
         self.at += n;
@@ -38,10 +42,14 @@ impl<'a> Cursor<'a> {
     }
     fn u32(&mut self) -> Result<u32, String> {
         let raw = self.take(4)?;
-        Ok(((raw[0] as u32) << 24) | ((raw[1] as u32) << 16) | ((raw[2] as u32) << 8) | raw[3] as u32)
+        Ok(((raw[0] as u32) << 24)
+            | ((raw[1] as u32) << 16)
+            | ((raw[2] as u32) << 8)
+            | raw[3] as u32)
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn independent_decode(bytes: &[u8]) -> Result<(u16, Option<(u16, Vec<u8>)>), String> {
     let mut cursor = Cursor { bytes, at: 0 };
     if cursor.take(4)? != MAGIC {
@@ -120,7 +128,12 @@ fn every_split_point_of_every_vector_streams_to_the_same_value() {
             let mut decoder = FrameDecoder::new();
             let mut values = decoder.push(&bytes[..split]).expect("prefix");
             values.extend(decoder.push(&bytes[split..]).expect("suffix"));
-            assert_eq!(values, vec![vector.value.to_value().unwrap()], "{} split at {split}", vector.name);
+            assert_eq!(
+                values,
+                vec![vector.value.to_value().unwrap()],
+                "{} split at {split}",
+                vector.name
+            );
             assert_eq!(decoder.buffered(), 0, "{} split at {split}", vector.name);
             decoder.finish().expect("nothing pending");
         }
@@ -130,7 +143,12 @@ fn every_split_point_of_every_vector_streams_to_the_same_value() {
         for byte in &bytes {
             values.extend(decoder.push(std::slice::from_ref(byte)).expect("byte"));
         }
-        assert_eq!(values, vec![vector.value.to_value().unwrap()], "{} byte-at-a-time", vector.name);
+        assert_eq!(
+            values,
+            vec![vector.value.to_value().unwrap()],
+            "{} byte-at-a-time",
+            vector.name
+        );
     }
 }
 
@@ -204,7 +222,10 @@ fn trailing_garbage_is_refused_and_two_frames_are_not_one() {
     let (first, used) = decode_frame(&two).expect("first");
     assert_eq!(first, GOLDEN_VECTORS[1].value.to_value().unwrap());
     assert_eq!(used, bytes.len());
-    assert_eq!(decode_exact(&two[used..]).expect("second"), ReplicatedValue::Noop);
+    assert_eq!(
+        decode_exact(&two[used..]).expect("second"),
+        ReplicatedValue::Noop
+    );
 }
 
 #[test]
@@ -253,7 +274,10 @@ fn malformed_headers_are_refused_by_the_rule_they_break() {
 
     let mut bad_kind = good.clone();
     bad_kind[6] = 7;
-    assert_eq!(decode_exact(&bad_kind), Err(WireError::UnknownKind { found: 7 }));
+    assert_eq!(
+        decode_exact(&bad_kind),
+        Err(WireError::UnknownKind { found: 7 })
+    );
 
     // A no-op that declares a body.
     let mut noop_with_body = frame_hex(&GOLDEN_VECTORS[0]);
@@ -294,7 +318,10 @@ fn a_command_is_bounded_at_construction_and_at_decode() {
     let full = Command::new(1, vec![7u8; MAX_COMMAND_BYTES]).expect("exactly at the bound");
     let frame = ReplicatedValue::Command(full.clone()).encode().unwrap();
     assert_eq!(frame.len(), MAX_FRAME_BYTES);
-    assert_eq!(decode_exact(&frame).unwrap(), ReplicatedValue::Command(full));
+    assert_eq!(
+        decode_exact(&frame).unwrap(),
+        ReplicatedValue::Command(full)
+    );
     // An empty payload is a legal command: the schema decides what it means.
     let empty = Command::new(9, Vec::new()).unwrap();
     assert_eq!(
@@ -316,15 +343,30 @@ fn a_frame_for_another_deployment_audience_schema_or_context_has_another_preimag
     let reference = preimages(base);
     assert!(reference.starts_with(SIGNATURE_DOMAIN_PREFIX));
     for other in [
-        SigningDomain { deployment: "prod-us", ..base },
-        SigningDomain { audience: "auction", ..base },
-        SigningDomain { schema: "session", ..base },
-        SigningDomain { context: "lane-2", ..base },
+        SigningDomain {
+            deployment: "prod-us",
+            ..base
+        },
+        SigningDomain {
+            audience: "auction",
+            ..base
+        },
+        SigningDomain {
+            schema: "session",
+            ..base
+        },
+        SigningDomain {
+            context: "lane-2",
+            ..base
+        },
     ] {
         assert_ne!(preimages(other), reference, "{other:?} shares a preimage");
     }
     // The same domain over different bytes differs, and the frame is inside.
-    assert_ne!(signing_preimage(&base, &frame_hex(&GOLDEN_VECTORS[0])).unwrap(), reference);
+    assert_ne!(
+        signing_preimage(&base, &frame_hex(&GOLDEN_VECTORS[0])).unwrap(),
+        reference
+    );
     assert!(reference.ends_with(&frame));
 }
 
@@ -333,8 +375,16 @@ fn domain_separation_is_length_tagged_not_delimited() {
     // Moving a byte across a field boundary must change the preimage: a
     // delimiter-joined layout would collide here.
     let frame = frame_hex(&GOLDEN_VECTORS[0]);
-    let left = SigningDomain { deployment: "ab", audience: "c", ..Default::default() };
-    let right = SigningDomain { deployment: "a", audience: "bc", ..Default::default() };
+    let left = SigningDomain {
+        deployment: "ab",
+        audience: "c",
+        ..Default::default()
+    };
+    let right = SigningDomain {
+        deployment: "a",
+        audience: "bc",
+        ..Default::default()
+    };
     assert_ne!(
         signing_preimage(&left, &frame).unwrap(),
         signing_preimage(&right, &frame).unwrap()
@@ -342,7 +392,10 @@ fn domain_separation_is_length_tagged_not_delimited() {
     // An over-long field is refused, not hashed.
     let long = "x".repeat(MAX_DOMAIN_FIELD_BYTES + 1);
     match signing_preimage(
-        &SigningDomain { deployment: &long, ..Default::default() },
+        &SigningDomain {
+            deployment: &long,
+            ..Default::default()
+        },
         &frame,
     ) {
         Err(WireError::DomainFieldTooLong { field, .. }) => assert_eq!(field, "deployment"),
@@ -373,8 +426,14 @@ fn the_legacy_version_is_sha256_of_the_frame_alone() {
     let legacy = preimage(SignatureVersion::Legacy, &domain, &frame).unwrap();
     assert_eq!(legacy, Sha256::digest(&frame).to_vec());
     // Its whole point: the domain does not enter it.
-    let elsewhere = SigningDomain { deployment: "another", ..domain };
-    assert_eq!(preimage(SignatureVersion::Legacy, &elsewhere, &frame).unwrap(), legacy);
+    let elsewhere = SigningDomain {
+        deployment: "another",
+        ..domain
+    };
+    assert_eq!(
+        preimage(SignatureVersion::Legacy, &elsewhere, &frame).unwrap(),
+        legacy
+    );
     // The domain-separated version does not equal it.
     assert_ne!(
         preimage(SignatureVersion::DomainSeparated, &domain, &frame).unwrap(),

@@ -112,7 +112,7 @@ mod neon {
             i += 2;
         }
         while i < n {
-            a[i] = a[i] + scale * b[i];
+            a[i] += scale * b[i];
             i += 1;
         }
     }

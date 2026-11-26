@@ -147,7 +147,7 @@ impl Vocabulary {
             }
         }
         // Longest phrase first: a two-word name must be tried before its head.
-        entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.0.len()));
         Vocabulary { entries }
     }
 
@@ -158,7 +158,7 @@ impl Vocabulary {
                     .iter()
                     .enumerate()
                     .all(|(k, w)| tokens[pos + k] == *w);
-            fits.then(|| (name.as_str(), *arity, phrase.len()))
+            fits.then_some((name.as_str(), *arity, phrase.len()))
         })
     }
 }
@@ -899,14 +899,14 @@ impl Theory {
         // otherwise be citable.
         let mut theorem_names = Vec::new();
         for line in certificate_text.lines() {
-            if let Some(rest) = line.trim_start().strip_prefix("theorem ") {
-                if let Some(name) = rest.split_whitespace().next() {
-                    theorem_names.push(name.to_string());
-                }
+            if let Some(rest) = line.trim_start().strip_prefix("theorem ")
+                && let Some(name) = rest.split_whitespace().next()
+            {
+                theorem_names.push(name.to_string());
             }
         }
         for o in &obligations {
-            if !theorem_names.iter().any(|t| *t == o.name) {
+            if !theorem_names.contains(&o.name) {
                 return Err(format!(
                     "{} has no theorem `{}`, so the obligation cannot be cited",
                     certificate.display(),

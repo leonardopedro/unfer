@@ -608,13 +608,6 @@ impl DoubleDouble {
         8.0 * UNIT_ROUNDOFF * UNIT_ROUNDOFF * self.magnitude()
     }
 
-    fn neg(self) -> Self {
-        Self {
-            hi: -self.hi,
-            lo: -self.lo,
-        }
-    }
-
     fn add(self, other: Self) -> Self {
         let (s, e) = two_sum(self.hi, other.hi);
         let (hi, lo) = quick_two_sum(s, e + (self.lo + other.lo));
@@ -702,7 +695,7 @@ impl Bounded {
     /// could then be anything, and the caller must refuse rather than decide.
     fn div(self, other: Self) -> Option<Self> {
         let denominator = other.floor();
-        if !(denominator > 0.0) {
+        if denominator <= 0.0 || denominator.is_nan() {
             return None;
         }
         let value = self.value.div(other.value);
@@ -946,13 +939,13 @@ pub fn inertia_below_with(
         let mut block = 1usize;
         if !current.map(|p| acceptable(&p)).unwrap_or(false) {
             let mut best: Option<(usize, f64)> = None;
-            for k in j + 1..n {
-                if let Some(pivot) = rows[k].get(&k) {
-                    if acceptable(pivot) {
-                        let magnitude = pivot.floor();
-                        if best.map(|(_, m)| magnitude > m).unwrap_or(true) {
-                            best = Some((k, magnitude));
-                        }
+            for (k, row) in rows.iter().enumerate().skip(j + 1) {
+                if let Some(pivot) = row.get(&k)
+                    && acceptable(pivot)
+                {
+                    let magnitude = pivot.floor();
+                    if best.map(|(_, m)| magnitude > m).unwrap_or(true) {
+                        best = Some((k, magnitude));
                     }
                 }
             }
@@ -1003,14 +996,11 @@ pub fn inertia_below_with(
                 negative += 1;
             } else {
                 let trace = a.add(d);
-                match trace.certain_sign() {
-                    // Same sign, and it is the trace's: both negative.
-                    Some(sign) => {
-                        if sign < 0 {
-                            negative += 2;
-                        }
+                {
+                    let sign = trace.certain_sign()?;
+                    if sign < 0 {
+                        negative += 2;
                     }
-                    None => return None,
                 }
             }
             worst_ratio = worst_ratio
@@ -1051,8 +1041,7 @@ pub fn inertia_below_with(
             for index in 0..weights.len() {
                 let i = weights[index].0;
                 let (u_i, v_i) = coefficients[index];
-                for position in index..weights.len() {
-                    let (m, w1, w2) = weights[position];
+                for &(m, w1, w2) in &weights[index..] {
                     let update = u_i.mul(w1).add(v_i.mul(w2));
                     let slot = rows[i].entry(m).or_insert(zero);
                     *slot = slot.sub(update);
@@ -1086,9 +1075,7 @@ pub fn inertia_below_with(
 
         // `A[j+1.., j+1..] -= l l\u1d40 d_j`, applied to both triangles.
         for (a, &(i, value_i)) in support.iter().enumerate() {
-            let Some(l_i) = value_i.div(pivot) else {
-                return None;
-            };
+            let l_i = value_i.div(pivot)?;
             // Only the upper half is ever read again (row `i` is read as a
             // pivot row later), so the mirrored half is left stale — it is the
             // storage that holds both triangles that matters for the build.
@@ -1449,7 +1436,7 @@ pub fn lanczos_ritz(
         return None;
     }
     let start_norm = start.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if !(start_norm > 0.0) {
+    if start_norm <= 0.0 || start_norm.is_nan() {
         return None;
     }
     // Arnoldi with two-pass modified Gram–Schmidt. `columns[j] = H v_j` is kept

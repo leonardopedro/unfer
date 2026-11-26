@@ -2,7 +2,7 @@ use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
-use unfer_protocol::distributed::{preimage, SigningDomain, SignatureVersion};
+use unfer_protocol::distributed::{SignatureVersion, SigningDomain, preimage};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
 /// The signing domain every new consensus-transaction signature covers. A
@@ -133,10 +133,7 @@ pub fn signing_message(
 /// the domain-separated frame, then the legacy `sha256(frame)` so signatures
 /// made before D10 still verify. A verifier tries them in order and a signer
 /// only ever produces the first.
-pub fn accepted_messages(
-    domain: &SigningDomain<'_>,
-    tx: &ConsensusTransaction,
-) -> Vec<Vec<u8>> {
+pub fn accepted_messages(domain: &SigningDomain<'_>, tx: &ConsensusTransaction) -> Vec<Vec<u8>> {
     let mut messages = Vec::with_capacity(2);
     if let Ok(message) = signing_message(SignatureVersion::DomainSeparated, domain, tx) {
         messages.push(message);
@@ -151,8 +148,12 @@ pub fn accepted_messages(
 /// zeroed signature, so it panics here instead of failing later at a verifier
 /// far from the mistake.
 pub fn sign_transaction(tx: &mut ConsensusTransaction, keypair: &Keypair) {
-    let msg = signing_message(SignatureVersion::DomainSeparated, &CONSENSUS_SIGNING_DOMAIN, tx)
-        .expect("consensus transaction exceeds the signature frame bound");
+    let msg = signing_message(
+        SignatureVersion::DomainSeparated,
+        &CONSENSUS_SIGNING_DOMAIN,
+        tx,
+    )
+    .expect("consensus transaction exceeds the signature frame bound");
     let sig = keypair.sign(&msg);
     set_signature(tx, sig);
 }
@@ -420,15 +421,20 @@ mod tests {
             kp.sign(&canonical_bytes(&tx)),
             "the legacy signer covers sha256(frame), exactly as before D10"
         );
-        assert!(verify_transaction(&tx).is_ok(), "legacy history still verifies");
-        assert!(verify_identity_op_as(
-            match &tx {
-                ConsensusTransaction::IdentityOp(op) => op,
-                _ => unreachable!(),
-            },
-            kp.public_key()
-        )
-        .is_ok());
+        assert!(
+            verify_transaction(&tx).is_ok(),
+            "legacy history still verifies"
+        );
+        assert!(
+            verify_identity_op_as(
+                match &tx {
+                    ConsensusTransaction::IdentityOp(op) => op,
+                    _ => unreachable!(),
+                },
+                kp.public_key()
+            )
+            .is_ok()
+        );
     }
 
     /// A new signature covers the domain-separated preimage, so it is not a
@@ -449,8 +455,12 @@ mod tests {
         assert_eq!(
             *tx.signature(),
             kp.sign(
-                &signing_message(SignatureVersion::DomainSeparated, &CONSENSUS_SIGNING_DOMAIN, &tx)
-                    .unwrap()
+                &signing_message(
+                    SignatureVersion::DomainSeparated,
+                    &CONSENSUS_SIGNING_DOMAIN,
+                    &tx
+                )
+                .unwrap()
             ),
             "a new signature is over the domain-separated frame"
         );

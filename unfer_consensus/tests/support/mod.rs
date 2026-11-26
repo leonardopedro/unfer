@@ -24,8 +24,8 @@ pub struct Identity {
 }
 
 pub fn identity() -> Identity {
-    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(["localhost".to_owned()])
-        .expect("self-signed certificate");
+    let CertifiedKey { cert, key_pair } =
+        generate_simple_self_signed(["localhost".to_owned()]).expect("self-signed certificate");
     Identity {
         cert_hex: hex::encode(cert.der()),
         key_hex: hex::encode(key_pair.serialize_der()),
@@ -43,10 +43,7 @@ pub fn temp_root(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "unfer-{name}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("unfer-{name}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -191,10 +188,10 @@ impl Node {
     pub fn wait_ready(&self) -> SocketAddr {
         let until = deadline();
         while Instant::now() < until {
-            if let Ok(text) = std::fs::read_to_string(&self.ready) {
-                if let Some(address) = field(&text, "address") {
-                    return address.parse().expect("ready address parses");
-                }
+            if let Ok(text) = std::fs::read_to_string(&self.ready)
+                && let Some(address) = field(&text, "address")
+            {
+                return address.parse().expect("ready address parses");
             }
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -269,13 +266,7 @@ pub fn committed(digest: &str) -> u64 {
 /// The committed job state, read from a node's durable ledger without taking
 /// its lock (`unfer_node job`).
 pub fn job_report(config: &Path, job: &str) -> String {
-    let (ok, stdout, stderr) = run(&[
-        "job",
-        "--config",
-        config.to_str().unwrap(),
-        "--job",
-        job,
-    ]);
+    let (ok, stdout, stderr) = run(&["job", "--config", config.to_str().unwrap(), "--job", job]);
     assert!(ok, "job report failed: {stderr}");
     stdout.trim().to_owned()
 }
@@ -398,7 +389,12 @@ impl Deployment {
     }
 
     /// Write one transaction and submit it to `index` under `id`.
-    pub fn submit(&self, index: usize, id: u64, tx: &ConsensusTransaction) -> (bool, String, String) {
+    pub fn submit(
+        &self,
+        index: usize,
+        id: u64,
+        tx: &ConsensusTransaction,
+    ) -> (bool, String, String) {
         let path = self.root.join(format!("tx-{id}.json"));
         std::fs::write(&path, serde_json::to_vec(tx).unwrap()).unwrap();
         submit(&self.client, &self.address(index), id, &path)

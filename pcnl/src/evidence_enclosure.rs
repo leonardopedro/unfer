@@ -416,6 +416,9 @@ pub struct Iv {
     pub hi: f64,
 }
 
+// Interval arithmetic mirrors the scalar operators but takes `&Iv` and
+// returns `Self` by value, so it stays inherent rather than a `std::ops` impl.
+#[allow(clippy::should_implement_trait)]
 impl Iv {
     pub const fn point(x: f64) -> Self {
         Self { lo: x, hi: x }
@@ -535,7 +538,7 @@ pub fn exp_enclose(x: f64) -> Iv {
         x.is_finite() && x.abs() <= 60.0,
         "exp_enclose is bounded to |x| <= 60"
     );
-    let k = (x / 0.6931471805599453).round();
+    let k = (x / std::f64::consts::LN_2).round();
     let r = Iv::point(x).sub(&Iv::point(k).mul(&LN2));
     let mut term = Iv::point(1.0);
     let mut sum = Iv::point(1.0);

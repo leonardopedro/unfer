@@ -1111,7 +1111,10 @@ mod tests {
             Code::CERT_AMOUNT_MISMATCH,
             Code::MARKET_UNKNOWN_POOL,
         ] {
-            assert!(!code.is_infrastructure(), "{code} is a verdict on the entry");
+            assert!(
+                !code.is_infrastructure(),
+                "{code} is a verdict on the entry"
+            );
         }
     }
 

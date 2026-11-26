@@ -45,7 +45,9 @@ impl Slot {
 
 /// The highest slot a node has applied, contiguously, to its state. Everything
 /// at or below it is reflected in the node; nothing above it may be assumed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub struct Watermark(pub u64);
 
 /// A domain rejection of a committed entry, in a form every node derives
@@ -188,9 +190,7 @@ impl Receipt {
         match &self.state {
             ReceiptState::Refused { refusal, .. } => Some(refusal.diagnostic()),
             ReceiptState::Unknown(reason) => Some(reason.diagnostic()),
-            ReceiptState::Pending => Some(
-                UnknownReason::TimedOut.diagnostic(),
-            ),
+            ReceiptState::Pending => Some(UnknownReason::TimedOut.diagnostic()),
             ReceiptState::Committed(_) => None,
         }
     }
@@ -293,10 +293,7 @@ mod tests {
 
         // An unrecorded outcome is not a refusal either: the effect happened.
         let unrecorded = Receipt::unknown(SubmissionId(9), UnknownReason::Unrecorded);
-        assert_eq!(
-            unrecorded.failure().unwrap().code,
-            Code::UNKNOWN_OUTCOME
-        );
+        assert_eq!(unrecorded.failure().unwrap().code, Code::UNKNOWN_OUTCOME);
 
         // A timeout is not a refusal: the transaction may still commit.
         let unknown = Receipt::unknown(SubmissionId(3), UnknownReason::TimedOut);
@@ -322,10 +319,13 @@ mod tests {
             diagnostic.message
         );
         // A failed halt is not a refusal of the entry, and it is not a gap.
-        assert_ne!(halt, HaltReason::Gap {
-            expected: Slot(7),
-            found: Slot(7)
-        });
+        assert_ne!(
+            halt,
+            HaltReason::Gap {
+                expected: Slot(7),
+                found: Slot(7)
+            }
+        );
     }
 
     #[test]

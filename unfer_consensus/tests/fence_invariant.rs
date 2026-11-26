@@ -66,7 +66,6 @@ impl Pos {
             generation: 1,
         }
     }
-
 }
 
 /// `FenceTable`'s successor rule (`next_position`), with the abstracted top of
@@ -417,8 +416,7 @@ fn explore(mutation: Mutation) -> Exploration {
                                     applied += 1;
                                 }
                                 for v in violations(next) {
-                                    first_violation
-                                        .get_or_insert((state, step, v));
+                                    first_violation.get_or_insert((state, step, v));
                                 }
                                 if seen.insert(*next) {
                                     traces.insert(
@@ -627,9 +625,7 @@ fn the_model_and_the_real_job_queue_agree_on_every_step() {
             // `(epoch, generation + 1)`, which is the abstraction showing through,
             // not a disagreement. The overflow rule itself has its own unit test
             // against the real table.
-            if op == Op::Renew
-                && model.res[resource].fence.map(|p| p.generation) == Some(MAX_GEN)
-            {
+            if op == Op::Renew && model.res[resource].fence.map(|p| p.generation) == Some(MAX_GEN) {
                 op = Op::Release;
             }
             let chosen = if matches!(op, Op::Claim | Op::Reclaim) {
@@ -637,9 +633,9 @@ fn the_model_and_the_real_job_queue_agree_on_every_step() {
             } else {
                 Some(candidates[rng.below(candidates.len())])
             };
-            let presented = chosen.map(|i| pos_of(tokens[i].2.fence()).clone());
-            let stale_presented = presented.is_some()
-                && real.fence(RESOURCES[resource]).map(pos_of) != presented;
+            let presented = chosen.map(|i| pos_of(tokens[i].2.fence()));
+            let stale_presented =
+                presented.is_some() && real.fence(RESOURCES[resource]).map(pos_of) != presented;
 
             let step = Step {
                 op,
@@ -695,7 +691,11 @@ fn the_model_and_the_real_job_queue_agree_on_every_step() {
                 assert!(
                     !accepted_real && !accepted_model,
                     "sequence {sequence} turn {turn}: a stale token was accepted by {} ({})",
-                    if accepted_real { "the queue" } else { "the model" },
+                    if accepted_real {
+                        "the queue"
+                    } else {
+                        "the model"
+                    },
                     step.label()
                 );
             }
@@ -710,7 +710,7 @@ fn the_model_and_the_real_job_queue_agree_on_every_step() {
                 "sequence {sequence} turn {turn}: state diverged after {}",
                 step.label()
             );
-            for v in violations(&model) {
+            if let Some(v) = violations(&model).first() {
                 panic!("model invariant violated in conformance run: {v}");
             }
             compared += 1;
@@ -766,8 +766,7 @@ fn conformance_covers_stale_tokens_and_every_operation() {
             } else {
                 Some(candidates[rng.below(candidates.len())])
             };
-            if chosen.is_some()
-                && matches!(op, Op::Renew | Op::Release | Op::Settle | Op::Disable)
+            if chosen.is_some() && matches!(op, Op::Renew | Op::Release | Op::Settle | Op::Disable)
             {
                 operations.insert(op);
             }
@@ -783,8 +782,8 @@ fn conformance_covers_stale_tokens_and_every_operation() {
                 }
                 (_, Some(index)) => {
                     let token = tokens[index].2.clone();
-                    let stale = real.fence(RESOURCES[resource]).map(pos_of)
-                        != Some(pos_of(token.fence()));
+                    let stale =
+                        real.fence(RESOURCES[resource]).map(pos_of) != Some(pos_of(token.fence()));
                     let result = match op {
                         Op::Renew => real.renew(&token).map(|c| {
                             tokens.push((resource, holder, c));

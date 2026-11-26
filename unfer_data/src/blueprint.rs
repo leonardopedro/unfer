@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use unfer_protocol::ChunkRef;
 
 use crate::chunk::{Chunker, verify_chunk};
-use crate::crypto::{derive_aes_key, open_object, seal_object, DataKeypair, SealedObject};
+use crate::crypto::{DataKeypair, SealedObject, derive_aes_key, open_object, seal_object};
 use crate::magnet::{build_magnet_uri, content_cid_from_chunks};
 
 /// A stored `.cell` archive's content-plane addressing metadata.

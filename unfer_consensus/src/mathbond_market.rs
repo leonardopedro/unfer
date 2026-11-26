@@ -923,8 +923,8 @@ mod tests {
         let before = format!("{l:?}");
 
         // More shares than the LP holds.
-        assert!(l
-            .apply_op(
+        assert!(
+            l.apply_op(
                 "did:unfer:lp",
                 &MarketOpKind::RemoveLiquidity {
                     pool_id: pool_id(),
@@ -932,12 +932,13 @@ mod tests {
                 },
                 3,
             )
-            .is_err());
+            .is_err()
+        );
         assert_eq!(format!("{l:?}"), before);
 
         // Zero deposit.
-        assert!(l
-            .apply_op(
+        assert!(
+            l.apply_op(
                 "did:unfer:lp",
                 &MarketOpKind::AddLiquidity {
                     pool_id: pool_id(),
@@ -945,12 +946,13 @@ mod tests {
                 },
                 4,
             )
-            .is_err());
+            .is_err()
+        );
         assert_eq!(format!("{l:?}"), before);
 
         // An invented pool id.
-        assert!(l
-            .apply_op(
+        assert!(
+            l.apply_op(
                 "did:unfer:lp",
                 &MarketOpKind::AddLiquidity {
                     pool_id: PoolId([9u8; 32]),
@@ -958,7 +960,8 @@ mod tests {
                 },
                 5,
             )
-            .is_err());
+            .is_err()
+        );
         assert_eq!(format!("{l:?}"), before);
     }
 

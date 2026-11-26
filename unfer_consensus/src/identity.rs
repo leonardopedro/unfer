@@ -172,7 +172,7 @@ impl IdentityRegistry {
 mod tests {
     use super::*;
 
-    use crate::signing::{sign_transaction, verify_identity_op_as, Keypair};
+    use crate::signing::{Keypair, sign_transaction, verify_identity_op_as};
     use unfer_protocol::ConsensusTransaction;
 
     /// Build an op signed by `signer`, but carrying `signing_key` — the two
@@ -205,7 +205,14 @@ mod tests {
     }
 
     fn create(kp: &Keypair, seq: u64) -> IdentityOp {
-        op_signed_by(kp, &kp.did(), kp.public_key(), IdentityOpKind::Create, seq, None)
+        op_signed_by(
+            kp,
+            &kp.did(),
+            kp.public_key(),
+            IdentityOpKind::Create,
+            seq,
+            None,
+        )
     }
 
     fn state_of(reg: &IdentityRegistry, did: &str) -> Option<(u64, bool, Option<String>)> {

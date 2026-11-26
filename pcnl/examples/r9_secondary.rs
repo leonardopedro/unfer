@@ -60,9 +60,7 @@ fn quoted(line: &str, key: &str) -> String {
 
 fn num<T: std::str::FromStr>(line: &str, key: &str) -> T {
     let s = after(line, key);
-    let end = s
-        .find(|c: char| c == ',' || c == '}')
-        .expect("terminated number");
+    let end = s.find([',', '}']).expect("terminated number");
     s[..end].parse().unwrap_or_else(|_| panic!("bad {key}"))
 }
 
@@ -658,6 +656,7 @@ fn main() {
         .find(|a| a.starts_with("supervised"))
         .expect("supervised arm");
     println!("== paired RLCD − supervised (per seed; negative favours RLCD) ==");
+    #[allow(clippy::type_complexity)]
     let additive: [(&str, fn(&Pred) -> f64); 4] = [
         ("weighted Brier", q_brier),
         ("raw NLL", q_nll),
@@ -692,6 +691,7 @@ fn main() {
         println!("clustered SE of the across-seed mean, {name:<18} {se:.6}");
     }
     println!();
+    #[allow(clippy::type_complexity)]
     let metrics: [(&str, fn(&Endpoints) -> f64); 11] = [
         ("weighted Brier", |e| e.weighted_brier),
         ("raw NLL", |e| e.raw_nll),

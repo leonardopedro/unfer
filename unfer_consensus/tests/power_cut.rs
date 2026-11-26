@@ -95,7 +95,8 @@ fn child_writer() {
                 .append(true)
                 .open(&path)
                 .expect("child reopens for the partial frame");
-            raw.write_all(&frame).expect("child writes the partial frame");
+            raw.write_all(&frame)
+                .expect("child writes the partial frame");
             raw.sync_all().expect("child syncs");
             // No destructors, no flush, no recovery: the process simply stops.
             std::process::abort();
@@ -253,11 +254,18 @@ fn a_killed_writer_leaves_a_journal_that_recovers_and_continues() {
         let next = slots.last().copied().unwrap() + 1;
         log.append(&transition(next))
             .unwrap_or_else(|error| panic!("round {round}: append after recovery: {error}"));
-        assert!(log.len() > 0, "round {round}: the appended frame has bytes");
+        assert!(
+            !log.is_empty(),
+            "round {round}: the appended frame has bytes"
+        );
         drop(log);
 
         let (_, reopened) = TransitionLog::open(&path).expect("reopen after continuing");
-        assert_eq!(reopened.last_slot, Some(next), "round {round}: the new record survived");
+        assert_eq!(
+            reopened.last_slot,
+            Some(next),
+            "round {round}: the new record survived"
+        );
         assert_eq!(
             recovered_slots(&reopened.records),
             {
@@ -291,11 +299,15 @@ fn a_half_frame_from_a_dead_process_is_discarded_not_reported_as_corruption() {
         recovery.torn_tail_bytes > 0,
         "the abandoned partial frame is a torn tail, not a record"
     );
-    log.append(&transition(4)).expect("appending after a torn tail");
+    log.append(&transition(4))
+        .expect("appending after a torn tail");
     drop(log);
     let (_, reopened) = TransitionLog::open(&path).expect("reopen");
     assert_eq!(reopened.last_slot, Some(4));
-    assert_eq!(reopened.torn_tail_bytes, 0, "the truncation was made durable");
+    assert_eq!(
+        reopened.torn_tail_bytes, 0,
+        "the truncation was made durable"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

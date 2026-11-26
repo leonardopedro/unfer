@@ -149,10 +149,12 @@ pub fn choose_tau_at_risk(conf: &[f64], correct: &[bool], target_risk: f64) -> O
     for k in 0..=TAU_GRID {
         let tau = k as f64 / 100.0;
         let (coverage, risk) = risk_coverage(conf, correct, tau);
-        if coverage > 0.0 && risk.is_finite() && risk <= target_risk + 1e-12 {
-            if best.map_or(true, |(c, _)| coverage > c + 1e-12) {
-                best = Some((coverage, tau));
-            }
+        if coverage > 0.0
+            && risk.is_finite()
+            && risk <= target_risk + 1e-12
+            && best.is_none_or(|(c, _)| coverage > c + 1e-12)
+        {
+            best = Some((coverage, tau));
         }
     }
     best.map(|(_, tau)| tau)
@@ -168,7 +170,7 @@ pub fn choose_tau(conf: &[f64], correct: &[bool]) -> Option<f64> {
         if coverage == 0.0 || accuracy.is_nan() {
             continue;
         }
-        if best.map_or(true, |(a, _)| accuracy > a + 1e-12) {
+        if best.is_none_or(|(a, _)| accuracy > a + 1e-12) {
             best = Some((accuracy, tau));
         }
     }
@@ -214,8 +216,8 @@ mod tests {
         // Two rows in [0.8,0.85) (one right), two in [0.4,0.45) (both wrong).
         let (conf, correct) = pairs(&[(0.81, true), (0.83, false), (0.41, false), (0.43, false)]);
         let (bins, ece, mce) = reliability(&conf, &correct);
-        let hi = bins[16].clone(); // 16/20 = 0.80
-        let lo = bins[8].clone(); // 8/20 = 0.40
+        let hi = bins[16]; // 16/20 = 0.80
+        let lo = bins[8]; // 8/20 = 0.40
         assert_eq!((hi.n, lo.n), (2, 2));
         assert!((hi.mean_confidence() - 0.82).abs() < 1e-12);
         assert!((hi.accuracy() - 0.5).abs() < 1e-12);

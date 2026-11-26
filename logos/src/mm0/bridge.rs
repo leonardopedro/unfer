@@ -44,7 +44,7 @@ pub struct Lowered {
 /// lower to `Entity` agents and the net stays open exactly as the CNL term is),
 /// and the two operators become the `Add64`/`Mul64` primitives that
 /// `unfer/logos/src/austral_codegen` emits for `+` and `*`. A successor is
-/// `Add64(e, 1)` — see [`to_core`].
+/// `Add64(e, 1)` — see `to_core`.
 pub fn lower(expr: &Expr) -> Result<Lowered, String> {
     let core = to_core(expr);
     let mut net = compile_to_net(&core)?;

@@ -43,9 +43,9 @@ fn run() -> Result<(), String> {
     use std::path::PathBuf;
 
     let mut args = std::env::args().skip(1);
-    let command = args.next().ok_or_else(|| {
-        "usage: unfer_node <serve|submit|digest> --config <path> ...".to_owned()
-    })?;
+    let command = args
+        .next()
+        .ok_or_else(|| "usage: unfer_node <serve|submit|digest> --config <path> ...".to_owned())?;
     let mut config: Option<PathBuf> = None;
     let mut ready: Option<PathBuf> = None;
     let mut to: Option<String> = None;
@@ -53,9 +53,7 @@ fn run() -> Result<(), String> {
     let mut id: Option<u64> = None;
     let mut job: Option<String> = None;
     while let Some(flag) = args.next() {
-        let value = args
-            .next()
-            .ok_or_else(|| format!("{flag} needs a value"))?;
+        let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
             "--config" => config = Some(PathBuf::from(value)),
             "--ready" => ready = Some(PathBuf::from(value)),
@@ -76,9 +74,12 @@ fn run() -> Result<(), String> {
 
     match command.as_str() {
         "serve" => serve(&config, ready.as_deref()),
-        "submit" => submit(&config, &to.ok_or_else(|| "missing --to".to_owned())?, &tx
-            .ok_or_else(|| "missing --tx".to_owned())?, id
-            .ok_or_else(|| "missing --id".to_owned())?),
+        "submit" => submit(
+            &config,
+            &to.ok_or_else(|| "missing --to".to_owned())?,
+            &tx.ok_or_else(|| "missing --tx".to_owned())?,
+            id.ok_or_else(|| "missing --id".to_owned())?,
+        ),
         "digest" => digest(&config),
         "job" => job_state(&config, &job.ok_or_else(|| "missing --job".to_owned())?),
         other => Err(format!(
@@ -137,8 +138,12 @@ fn submit(
     let config = SubmitConfig::load(config)?;
     let text = std::fs::read_to_string(tx_path)
         .map_err(|error| format!("could not read {}: {error}", tx_path.display()))?;
-    let transaction: ConsensusTransaction = serde_json::from_str(&text)
-        .map_err(|error| format!("{} is not a consensus transaction: {error}", tx_path.display()))?;
+    let transaction: ConsensusTransaction = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "{} is not a consensus transaction: {error}",
+            tx_path.display()
+        )
+    })?;
     // The client frames the value itself: the reservation id travels inside the
     // payload, so the replica that applies it never needs a local map (D10).
     let value = encode_ledger_value(id, &transaction)?;
@@ -148,7 +153,10 @@ fn submit(
         let client = submit_client(&config, address)?;
         match client.submit(id, vec![value]).await {
             Ok(SubmissionOutcome::Committed(decision)) => {
-                println!("{{\"outcome\":\"committed\",\"slot\":{}}}", decision.slot.get());
+                println!(
+                    "{{\"outcome\":\"committed\",\"slot\":{}}}",
+                    decision.slot.get()
+                );
             }
             Ok(SubmissionOutcome::Accepted) => println!("{{\"outcome\":\"accepted\"}}"),
             Ok(SubmissionOutcome::Duplicate(decision)) => match decision {

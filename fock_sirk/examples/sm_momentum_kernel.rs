@@ -19,9 +19,9 @@ use nested_fock_algebra::exact_inner::{
 };
 use nested_fock_algebra::sm_full::SmParameters;
 use nested_fock_algebra::sm_momentum::{
-    Conventions, GaugeMode, HiggsMode, MomentumPacket, dirac_packet_element,
-    gauge_magnetic_cross, gauge_magnetic_free, higgs_gauge_cross, higgs_potential_constant,
-    scalar_gradient_symbol, transfer_integral, transverse_curl_projector, yukawa_transfer,
+    Conventions, GaugeMode, HiggsMode, MomentumPacket, dirac_packet_element, gauge_magnetic_cross,
+    gauge_magnetic_free, higgs_gauge_cross, higgs_potential_constant, scalar_gradient_symbol,
+    transfer_integral, transverse_curl_projector, yukawa_transfer,
 };
 use num_complex::Complex64 as C;
 use serde_json::{Value, json};
@@ -143,16 +143,8 @@ fn main() {
         );
         shift_expr.d_gamma(&state, limits).expect("shift lift")
     };
-    let one_coefficient = shift_action(1)
-        .values()
-        .next()
-        .copied()
-        .unwrap_or_default();
-    let two_coefficient = shift_action(2)
-        .values()
-        .next()
-        .copied()
-        .unwrap_or_default();
+    let one_coefficient = shift_action(1).values().next().copied().unwrap_or_default();
+    let two_coefficient = shift_action(2).values().next().copied().unwrap_or_default();
     let vacuum_image = shift_expr
         .d_gamma(&NestedVector::new(), limits)
         .expect("vacuum")
@@ -219,7 +211,10 @@ fn main() {
 
     // A rank-2 window (first two orthonormal packet directions).
     let basis = |i: usize| {
-        DVector::from_iterator(n, (0..n).map(|j| C::new(if j == i { 1.0 } else { 0.0 }, 0.0)))
+        DVector::from_iterator(
+            n,
+            (0..n).map(|j| C::new(if j == i { 1.0 } else { 0.0 }, 0.0)),
+        )
     };
     let v = DMatrix::<C>::from_columns(&[basis(0), basis(1)]);
     let g_red = v.adjoint() * &h_orth * &v;

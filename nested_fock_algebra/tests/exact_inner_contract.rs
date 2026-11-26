@@ -241,14 +241,17 @@ fn all_short_two_mode_car_words_match_jordan_wigner() {
             }
             let e = product(&word);
             let matrix = dense_expr(&e, &[], 2);
-            for bits in 0..4 {
+            let columns: Vec<Vec<C>> = (0..4)
+                .map(|bits| matrix.iter().map(|row| row[bits]).collect())
+                .collect();
+            for (bits, column) in columns.iter().enumerate() {
                 let b = B::new([], (0..2).filter(|m| bits & (1 << m) != 0)).unwrap();
-                let mut out = vec![c(0.0); 4];
+                let mut out = [c(0.0); 4];
                 for (b, a) in apply(&e, &ket(b)) {
                     out[inner_index(&b, &[])] += a;
                 }
-                for row in 0..4 {
-                    close(out[row], matrix[row][bits]);
+                for (row, expected) in column.iter().enumerate() {
+                    close(out[row], *expected);
                 }
             }
         }
@@ -270,9 +273,9 @@ fn mixed_factorized_action_and_adjoint_match_independent_tensor_matrices() {
         E::Scalar(c(0.75)),
     ]);
     let reference = dense_expr(&e, &[8], 2);
-    for i in 0..reference.len() {
-        for j in 0..reference.len() {
-            close(reference[i][j], reference[j][i].conj());
+    for (i, row) in reference.iter().enumerate() {
+        for (j, value) in row.iter().enumerate() {
+            close(*value, reference[j][i].conj());
         }
     }
     for n in 0..2 {

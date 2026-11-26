@@ -271,10 +271,12 @@ fn d6_canary_certificate_is_full_space_and_the_dt_scope_stays_open() {
 
 #[test]
 fn e5_head_chart_runs_an_exact_mh_pcn_chain() {
-    let mut cfg = CampaignConfig::default();
-    cfg.updates = 0;
-    cfg.warm_start = 0;
-    cfg.worlds = [3, 1, 1, 1];
+    let cfg = CampaignConfig {
+        updates: 0,
+        warm_start: 0,
+        worlds: [3, 1, 1, 1],
+        ..Default::default()
+    };
     let samples = build_samples(&cfg);
     let model = cfg.model.clone();
     let potential = Edge0Potential::head_only(model.clone(), samples);
@@ -322,10 +324,12 @@ fn e5_head_chart_runs_an_exact_mh_pcn_chain() {
 
 #[test]
 fn e5_reference_record_is_identified_and_its_rate_is_honest() {
-    let mut cfg = CampaignConfig::default();
-    cfg.updates = 0;
-    cfg.warm_start = 0;
-    cfg.worlds = [3, 1, 1, 1];
+    let cfg = CampaignConfig {
+        updates: 0,
+        warm_start: 0,
+        worlds: [3, 1, 1, 1],
+        ..Default::default()
+    };
     let samples = build_samples(&cfg);
     let model = cfg.model.clone();
     let potential = Edge0Potential::head_only(model.clone(), samples);
@@ -495,10 +499,12 @@ fn d1_witness_predictive_enclosure_contains_the_chain_estimate() {
 
 #[test]
 fn e5_single_question_chart_matches_quadrature_reference() {
-    let mut cfg = CampaignConfig::default();
-    cfg.updates = 0;
-    cfg.warm_start = 0;
-    cfg.worlds = [2, 1, 1, 1];
+    let cfg = CampaignConfig {
+        updates: 0,
+        warm_start: 0,
+        worlds: [2, 1, 1, 1],
+        ..Default::default()
+    };
     let samples = build_samples(&cfg);
     let sample = samples
         .iter()

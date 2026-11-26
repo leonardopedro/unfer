@@ -20,11 +20,11 @@
 //!
 //! * [`GaugeMode`] / [`gauge_magnetic_cross`]: the magnetic cross term
 //!   `½ F_lin · F_int` of `¼ Fᵃᵢⱼ Fᵃᵢⱼ` around a declared background packet,
-//!   with the structure constants taken from [`sm_full::su3_structure`] (not a
+//!   with the structure constants taken from [`crate::sm_full::su3_structure`] (not a
 //!   hard-coded table) and the `2π` derivative symbol explicit.
 //! * [`HiggsMode`] / [`higgs_gauge_cross`]: the gauge–Higgs mixing term of
 //!   `|DᵢΦ|²` for `DᵢΦ = 2πiKᵢΦ + i g Tᵃ(Wᵃᵢ ⋆ Φ) + i g′ Y (Bᵢ ⋆ Φ)`,
-//!   using the realification [`sm_full::higgs_real_generator`].
+//!   using the realification [`crate::sm_full::higgs_real_generator`].
 //! * [`yukawa_transfer`]: a chiral matter transition `Y_{ij} Φ_bg(k − l)`,
 //!   i.e. the insertion carries the transferred momentum `k − l`.
 //!
@@ -109,7 +109,10 @@ pub struct MomentumPacket {
 
 impl MomentumPacket {
     pub fn new(center: [f64; 3], width: f64) -> Self {
-        assert!(width > 0.0 && width.is_finite(), "packet width must be positive");
+        assert!(
+            width > 0.0 && width.is_finite(),
+            "packet width must be positive"
+        );
         Self { center, width }
     }
 
@@ -201,8 +204,7 @@ fn gauss_packet_product(g: &Gauss, p: &MomentumPacket) -> Gauss {
         (g.center[2] * inv_g + p.center[2] * inv_p) / inv,
     ];
     let d = sub(g.center, p.center);
-    let amp = g.amp
-        * (-dot(d, d) / (2.0 * (g.sigma * g.sigma + p.width * p.width))).exp();
+    let amp = g.amp * (-dot(d, d) / (2.0 * (g.sigma * g.sigma + p.width * p.width))).exp();
     Gauss {
         amp,
         center,
@@ -333,11 +335,7 @@ pub fn gauge_magnetic_cross(
 
 /// The free (quadratic) magnetic form between two gauge modes of the same
 /// colour: `½ Re ∫ Tᵃᵢⱼ conj(Tᵃᵢⱼ)`.
-pub fn gauge_magnetic_free(
-    bra: &GaugeMode,
-    ket: &GaugeMode,
-    conv: &Conventions,
-) -> C {
+pub fn gauge_magnetic_free(bra: &GaugeMode, ket: &GaugeMode, conv: &Conventions) -> C {
     if bra.color != ket.color {
         return C::new(0.0, 0.0);
     }
@@ -361,15 +359,15 @@ pub fn gauge_magnetic_free(
             if i == ket.direction {
                 conj_coeff[j] += conv.two_pi * C::i();
             }
-            for m in 0..3 {
-                if coeff[m] == C::new(0.0, 0.0) {
+            for (m, c_m) in coeff.iter().enumerate() {
+                if *c_m == C::new(0.0, 0.0) {
                     continue;
                 }
-                for n in 0..3 {
-                    if conj_coeff[n] == C::new(0.0, 0.0) {
+                for (n, c_n) in conj_coeff.iter().enumerate() {
+                    if *c_n == C::new(0.0, 0.0) {
                         continue;
                     }
-                    value += coeff[m] * conj_coeff[n] * product.i2(m, n);
+                    value += *c_m * *c_n * product.i2(m, n);
                 }
             }
         }
@@ -382,7 +380,7 @@ pub fn gauge_magnetic_free(
 /// packet.
 ///
 /// `DᵢΦ = 2π i Kᵢ Φ + i g Tᵃ (Wᵃᵢ ⋆ Φ) + i g′ Y (Bᵢ ⋆ Φ)`, with `Tᵃ` and the
-/// hypercharge factor taken from [`sm_full::higgs_real_generator`]. The returned
+/// hypercharge factor taken from [`crate::sm_full::higgs_real_generator`]. The returned
 /// value is the coefficient of `conj(α_bra) · α_ket` in `Σᵢ Σ_r |(DᵢΦ)_r|²`.
 pub fn higgs_gauge_cross(
     fluct_bra: &HiggsMode,
@@ -441,14 +439,19 @@ pub fn transfer_integral(
     conv: &Conventions,
 ) -> f64 {
     if conv.transfer_sign < 0.0 {
-        return transfer_integral(ket, background, bra, &Conventions {
-            transfer_sign: 1.0,
-            ..*conv
-        });
+        return transfer_integral(
+            ket,
+            background,
+            bra,
+            &Conventions {
+                transfer_sign: 1.0,
+                ..*conv
+            },
+        );
     }
     // Collapse P(k) · B(k − l) over k first.
     let sigma_k2 = bra.width * bra.width + background.width * background.width;
-    let sigma_k = sigma_k2.sqrt();
+    let _sigma_k = sigma_k2.sqrt();
     let sigma = (bra.width * bra.width * background.width * background.width) / sigma_k2;
     let sigma = sigma.sqrt();
     let l_center = sub(bra.center, background.center);
@@ -487,16 +490,12 @@ pub fn yukawa_transfer(
 /// `2π Σ_j k_j s book_kinetic_spin(j)` (`s = +1` right-handed, `−1`
 /// left-handed). This is the free spatial Dirac check the work order asks for:
 /// it is Hermitian, vanishes at `k = 0`, and the two chiralities are negatives.
-pub fn dirac_symbol(
-    k: [f64; 3],
-    right_handed: bool,
-    conv: &Conventions,
-) -> [[C; 2]; 2] {
+pub fn dirac_symbol(k: [f64; 3], right_handed: bool, conv: &Conventions) -> [[C; 2]; 2] {
     let sign = if right_handed { 1.0 } else { -1.0 };
     let mut out = [[C::new(0.0, 0.0); 2]; 2];
-    for j in 0..3 {
+    for (j, k_j) in k.iter().enumerate() {
         let kinetic = book_kinetic_spin(j as u32);
-        let weight = C::new(conv.two_pi * sign * k[j], 0.0);
+        let weight = C::new(conv.two_pi * sign * k_j, 0.0);
         for spin in 0..2 {
             for other in 0..2 {
                 out[spin][other] += weight * kinetic[spin][other];
@@ -582,12 +581,7 @@ mod tests {
     }
 
     /// Ordinary composite Simpson integral over a cube.
-    fn simpson_3d(
-        center: [f64; 3],
-        radius: f64,
-        n: usize,
-        f: impl Fn([f64; 3]) -> f64,
-    ) -> f64 {
+    fn simpson_3d(center: [f64; 3], radius: f64, n: usize, f: impl Fn([f64; 3]) -> f64) -> f64 {
         assert!(n % 2 == 1, "Simpson needs an odd number of points");
         let h = 2.0 * radius / (n - 1) as f64;
         let mut total = 0.0;
@@ -647,10 +641,7 @@ mod tests {
 
         // Collapse the k integral independently: ∫ P(k) B(k − l) dk is the
         // convolution of P with the flipped background, then integrate over l.
-        let flipped = MomentumPacket::new(
-            [-bg.center[0], -bg.center[1], -bg.center[2]],
-            bg.width,
-        );
+        let flipped = MomentumPacket::new([-bg.center[0], -bg.center[1], -bg.center[2]], bg.width);
         let inner = packet_convolution(&bra, &flipped);
         let quad = simpson_3d(inner.center, 9.0 * inner.sigma, 81, |l| {
             inner.amp
@@ -707,7 +698,10 @@ mod tests {
                 ..canonical
             },
         );
-        assert!((no_two_pi - base).norm() > 1e-8, "dropping 2π must be detectable");
+        assert!(
+            (no_two_pi - base).norm() > 1e-8,
+            "dropping 2π must be detectable"
+        );
 
         let flipped = gauge_magnetic_cross(
             &bra,
@@ -733,7 +727,10 @@ mod tests {
         let ket = HiggsMode::new(2, packet([0.15, -0.3, 0.25], 1.1));
         let bg = GaugeMode::new(1, 0, packet([-0.25, 0.2, 0.1], 0.7));
         let value = higgs_gauge_cross(&bra, &ket, &bg, false, &sm, &conv);
-        assert!(value.norm() > 1e-8, "gauge–Higgs mixing must be nonzero, got {value}");
+        assert!(
+            value.norm() > 1e-8,
+            "gauge–Higgs mixing must be nonzero, got {value}"
+        );
         let removed = higgs_gauge_cross(
             &bra,
             &ket,
@@ -745,7 +742,11 @@ mod tests {
                 ..conv
             },
         );
-        assert_eq!(removed, C::new(0.0, 0.0), "removing the cross term zeroes it");
+        assert_eq!(
+            removed,
+            C::new(0.0, 0.0),
+            "removing the cross term zeroes it"
+        );
         let hyper = higgs_gauge_cross(&bra, &ket, &bg, true, &sm, &conv);
         assert!((hyper - value).norm() > 1e-9);
     }
@@ -853,7 +854,10 @@ mod tests {
         let a = packet([0.4, 0.0, 0.0], 0.8);
         let b = packet([-0.2, 0.3, 0.0], 0.9);
         let right = dirac_packet_element(&a, 0, &b, 1, true, &conv);
-        assert!(right.norm() > 1e-8, "distinct packets give a nonzero Dirac entry");
+        assert!(
+            right.norm() > 1e-8,
+            "distinct packets give a nonzero Dirac entry"
+        );
         let left = dirac_packet_element(&a, 0, &b, 1, false, &conv);
         assert!((right + left).norm() < 1e-12, "chiralities are negatives");
     }

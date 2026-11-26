@@ -64,7 +64,8 @@ impl Default for CampaignConfig {
     fn default() -> Self {
         Self {
             model: Edge0Config::tiny(),
-            seed: 2026_11_15,
+            // 2026-11-15, grouped as clippy wants a plain integer literal.
+            seed: 20_261_115,
             data_seed: None,
             batch_unit: BatchUnit::Questions,
             worlds: [24, 8, 8, 16],

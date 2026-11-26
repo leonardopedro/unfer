@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use unfer_consensus::{ConsensusNode, Keypair};
 use unfer_protocol::submission::{ReceiptState, SubmissionId};
-use unfer_protocol::{ConsensusTransaction, DidDocument, Diagnostic, IdentityOp, IdentityOpKind};
+use unfer_protocol::{ConsensusTransaction, Diagnostic, DidDocument, IdentityOp, IdentityOpKind};
 
 /// How long a lifecycle call waits for its transaction to be committed and
 /// applied before reporting an unknown outcome (D05). A local engine settles
@@ -246,13 +246,8 @@ mod tests {
     }
 
     impl unfer_consensus::ConsensusEngine for NeverCommits {
-        fn submit(
-            &self,
-            _tx: ConsensusTransaction,
-        ) -> Result<u64, Diagnostic> {
-            Ok(self
-                .next
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+        fn submit(&self, _tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
+            Ok(self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
         }
 
         fn get_log(&self, _from_seq: u64) -> Vec<(u64, ConsensusTransaction)> {
@@ -276,8 +271,7 @@ mod tests {
         let mut node = ConsensusNode::new(Box::new(engine));
         let kp = Keypair::generate();
         let err = {
-            let mut mgr =
-                DidManager::new(&mut node).with_settle_timeout(Duration::from_millis(20));
+            let mut mgr = DidManager::new(&mut node).with_settle_timeout(Duration::from_millis(20));
             mgr.create_did(&kp, None).unwrap_err()
         };
         // Not created, and not a refusal either: the outcome is unknown here.

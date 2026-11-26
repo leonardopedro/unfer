@@ -107,8 +107,8 @@ fn main() {
     let train_y = teacher.targets(&train_x, noise, teacher_seed);
     let test_x = table.x(Split::Test).to_vec();
     let test_y = teacher.targets(&test_x, noise, teacher_seed ^ 0x55);
-    let train = VectorRegression::new(shapes.clone(), train_x.clone(), train_y, noise, 1.0)
-        .expect("train target");
+    let train =
+        VectorRegression::new(shapes, train_x.clone(), train_y, noise, 1.0).expect("train target");
 
     let prior_c: Vec<f64> = shapes
         .prior_scales()

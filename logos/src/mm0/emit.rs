@@ -180,7 +180,7 @@ pub fn is_ground(claim: &Claim) -> bool {
 
 /// Certify a closed claim by evaluation, cross-checked against the net reducer.
 ///
-/// The returned certificate has not been through mm0 yet: [`verify`] is what
+/// The returned certificate has not been through mm0 yet: `verify` is what
 /// turns the artifact into an answer. Keeping those apart matters, because the
 /// *emitter* is allowed to know arithmetic (it aims the proof) while the
 /// *answer* rests only on what mm0 accepts.
@@ -297,7 +297,7 @@ fn file_text(statement: &str) -> String {
 ///    and covers every claim the equations themselves justify (`a + 0 = a`,
 ///    `a + suc b = suc (a + b)`, `a * 0 = 0`, and anything with a zero in a
 ///    nested operand).
-/// 2. **candidate rules**: [`RULES`], then `hints` in the order given — an
+/// 2. **candidate rules**: `RULES`, then `hints` in the order given — an
 ///    LLM's proposals come last so they cannot shadow the theory's own rules.
 ///    Every candidate is tried by *elaborating it*, not by believing it: mm0-rs
 ///    infers the arguments and either accepts the instantiation or does not.

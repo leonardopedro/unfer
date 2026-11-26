@@ -345,8 +345,8 @@ impl EmbeddingTable {
         }
         let mut train_x = Vec::new();
         let mut train_y = Vec::new();
-        for i in 0..n {
-            if take[i] {
+        for (i, &kept) in take.iter().enumerate().take(n) {
+            if kept {
                 train_x.extend_from_slice(&self.train_x[i * self.dim..(i + 1) * self.dim]);
                 train_y.push(self.train_y[i]);
             }
@@ -522,9 +522,9 @@ impl EmbeddingTable {
         let mut cal_x = Vec::new();
         let mut cal_y = Vec::new();
         let mut flipped = 0usize;
-        for i in 0..n {
+        for (i, &cal) in is_cal.iter().enumerate().take(n) {
             let row = &self.train_x[i * self.dim..(i + 1) * self.dim];
-            if is_cal[i] {
+            if cal {
                 let mut y = self.train_y[i];
                 if self.classes > 1 && rng.random::<f64>() < label_noise {
                     let offset = rng.random_range(1..self.classes) as u32;
@@ -640,7 +640,7 @@ impl MlpHeadPotential {
                 "an MLP head needs at least one hidden layer".into(),
             ));
         }
-        if hidden.iter().any(|&h| h == 0) {
+        if hidden.contains(&0) {
             return Err(EmbeddingError::Shape("a hidden layer has width 0".into()));
         }
         Ok(Self {

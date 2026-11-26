@@ -1,7 +1,7 @@
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 
@@ -478,7 +478,11 @@ mod tests {
         let object = ObjectKey::fresh(&key).unwrap();
         assert!(object.seal_chunk(0, 8, 3, 3, b"x").is_err());
         assert!(object.seal_chunk(0, 8, 0, 0, b"x").is_err());
-        assert!(object.seal_chunk(0, MAX_OBJECT_BYTES + 1, 1, 0, b"x").is_err());
+        assert!(
+            object
+                .seal_chunk(0, MAX_OBJECT_BYTES + 1, 1, 0, b"x")
+                .is_err()
+        );
     }
 
     /// Content-addressed sealing is deterministic in the identifier, so a

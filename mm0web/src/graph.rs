@@ -232,7 +232,7 @@ pub struct Graph {
     pub symbols: HashSet<String>,
     /// Whether the two checkers accepted this submission. Every stored proof
     /// was; a rejected result page was not — and that difference decides how
-    /// an undeclared name is reported (see [`Graph::severe`]).
+    /// an undeclared name is reported (see `Graph::severe`).
     pub accepted: bool,
 }
 
@@ -324,7 +324,7 @@ impl Graph {
         g.variables = bound.difference(&names).cloned().collect();
         g.symbols = spec_symbols.union(&proof_symbols).cloned().collect();
         let mut unknown: Vec<Vec<String>> = Vec::with_capacity(g.decls.len());
-        for i in 0..g.decls.len() {
+        for (i, local) in locals.iter().enumerate().take(g.decls.len()) {
             let mut text = g.decls[i].statement.clone();
             if let Some(p) = &g.decls[i].proof {
                 text.push(' ');
@@ -334,7 +334,7 @@ impl Graph {
             let mut deps: Vec<String> = Vec::new();
             let mut unres: Vec<String> = Vec::new();
             for id in identifiers(&text) {
-                if id == self_name || locals[i].contains(&id) {
+                if id == self_name || local.contains(&id) {
                     continue;
                 }
                 if names.contains(id.as_str()) {
@@ -1108,17 +1108,15 @@ fn binder_names(rest: &str) -> HashSet<String> {
                 }
                 depth += 1;
             }
-            ')' | '}' => {
-                if depth > 0 {
-                    depth -= 1;
-                    if depth == 0 {
-                        if let Some((before, _)) = group.split_once(':') {
-                            for id in identifiers(before) {
-                                out.insert(id);
-                            }
+            ')' | '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some((before, _)) = group.split_once(':') {
+                        for id in identifiers(before) {
+                            out.insert(id);
                         }
-                        continue;
                     }
+                    continue;
                 }
             }
             _ => {}

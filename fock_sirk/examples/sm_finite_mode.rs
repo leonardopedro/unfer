@@ -107,10 +107,10 @@ fn phi_matrix(mode: usize, states: &[Vec<u32>], index: &HashMap<Vec<u32>, usize>
     let mut matrix = DMatrix::zeros(states.len(), states.len());
     for (column, state) in states.iter().enumerate() {
         for (target_mode, create) in [(mode, false), (mode, true)] {
-            if let Some((target, coefficient)) = ladder(state, target_mode, create) {
-                if let Some(&row) = index.get(&target) {
-                    matrix[(row, column)] += coefficient;
-                }
+            if let Some((target, coefficient)) = ladder(state, target_mode, create)
+                && let Some(&row) = index.get(&target)
+            {
+                matrix[(row, column)] += coefficient;
             }
         }
     }
@@ -168,8 +168,7 @@ fn coherent_state(states: &[Vec<u32>], amplitudes: &[f64], mode_count: usize) ->
     let mut vector = DVector::zeros(states.len());
     for (index, state) in states.iter().enumerate() {
         let mut coefficient = 1.0;
-        for mode in 0..mode_count {
-            let occupation = state[mode];
+        for (mode, &occupation) in state.iter().enumerate().take(mode_count) {
             let amplitude = amplitudes.get(mode).copied().unwrap_or(0.0);
             coefficient *= (-0.5 * amplitude * amplitude).exp();
             for level in 1..=occupation {
@@ -186,8 +185,7 @@ fn squeezed_state(states: &[Vec<u32>], squeezing: &[f64], mode_count: usize) -> 
     let mut vector = DVector::zeros(states.len());
     for (index, state) in states.iter().enumerate() {
         let mut coefficient = 1.0;
-        for mode in 0..mode_count {
-            let occupation = state[mode];
+        for (mode, &occupation) in state.iter().enumerate().take(mode_count) {
             let r = squeezing.get(mode).copied().unwrap_or(0.0);
             if occupation % 2 == 1 {
                 coefficient = 0.0;
@@ -527,8 +525,9 @@ fn main() {
     let mut running_checks = Vec::new();
     let mut lambda_hint = LAMBDA;
     let mut alt_lambda_hint = LAMBDA;
-    let mut previous_fixed: Option<(usize, DMatrix<f64>, DMatrix<f64>, DMatrix<f64>)> = None;
-    let mut previous_running: Option<(usize, DMatrix<f64>, DMatrix<f64>, DMatrix<f64>)> = None;
+    type PreviousRow = (usize, DMatrix<f64>, DMatrix<f64>, DMatrix<f64>);
+    let mut previous_fixed: Option<PreviousRow> = None;
+    let mut previous_running: Option<PreviousRow> = None;
     for mode_count in SUPPORT..=MAX_MODE {
         if std::env::var_os("N12_PROGRESS").is_some() {
             eprintln!("main cell start M={mode_count}");

@@ -48,18 +48,15 @@ fn packet(center: [f64; 3], width: f64) -> MomentumPacket {
 }
 
 fn fixture() -> Value {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../docs/fixtures/sm_momentum_kernel.json");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/fixtures/sm_momentum_kernel.json");
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     serde_json::from_str(&text).expect("fixture json")
 }
 
 fn cplx(v: &Value) -> C {
-    C::new(
-        v["re"].as_f64().expect("re"),
-        v["im"].as_f64().expect("im"),
-    )
+    C::new(v["re"].as_f64().expect("re"), v["im"].as_f64().expect("im"))
 }
 
 fn close(a: C, b: C, tol: f64, label: &str) {
@@ -95,13 +92,31 @@ fn fixture_matches_the_live_kernel_entry_by_entry() {
     let fixture = fixture();
     let (magnetic, higgs, yukawa, transfer) = live_elements();
     assert_eq!(fixture["schema"], "sm-momentum-kernel/v1");
-    close(cplx(&fixture["elements"]["magnetic_cross"]), magnetic, 1e-10, "magnetic");
-    close(cplx(&fixture["elements"]["gauge_higgs_cross"]), higgs, 1e-10, "higgs");
-    close(cplx(&fixture["elements"]["yukawa_transfer"]), yukawa, 1e-10, "yukawa");
-    assert!(
-        (fixture["elements"]["transfer_integral"].as_f64().unwrap() - transfer).abs() < 1e-10
+    close(
+        cplx(&fixture["elements"]["magnetic_cross"]),
+        magnetic,
+        1e-10,
+        "magnetic",
     );
-    assert!(fixture["elements"]["higgs_potential_constant"].as_f64().unwrap() > 0.0);
+    close(
+        cplx(&fixture["elements"]["gauge_higgs_cross"]),
+        higgs,
+        1e-10,
+        "higgs",
+    );
+    close(
+        cplx(&fixture["elements"]["yukawa_transfer"]),
+        yukawa,
+        1e-10,
+        "yukawa",
+    );
+    assert!((fixture["elements"]["transfer_integral"].as_f64().unwrap() - transfer).abs() < 1e-10);
+    assert!(
+        fixture["elements"]["higgs_potential_constant"]
+            .as_f64()
+            .unwrap()
+            > 0.0
+    );
 }
 
 #[test]
@@ -112,10 +127,23 @@ fn fixture_records_the_spatial_and_lift_checks() {
     let b = packet([-0.20, 0.30, 0.00], 0.90);
     let right = dirac_packet_element(&a, 0, &b, 1, true, &conv);
     let left = dirac_packet_element(&a, 0, &b, 1, false, &conv);
-    close(cplx(&fixture["elements"]["dirac_right"]), right, 1e-10, "dirac right");
-    close(cplx(&fixture["elements"]["dirac_left"]), left, 1e-10, "dirac left");
+    close(
+        cplx(&fixture["elements"]["dirac_right"]),
+        right,
+        1e-10,
+        "dirac right",
+    );
+    close(
+        cplx(&fixture["elements"]["dirac_left"]),
+        left,
+        1e-10,
+        "dirac left",
+    );
     assert!((right + left).norm() < 1e-12, "chiral signs are opposite");
-    assert!(right.norm() > 1e-8, "distinct packets give a nonzero Dirac entry");
+    assert!(
+        right.norm() > 1e-8,
+        "distinct packets give a nonzero Dirac entry"
+    );
 
     let k = [0.7, -0.2, 0.4];
     let e1 = [1.0, 0.0, 0.0];
@@ -123,13 +151,13 @@ fn fixture_records_the_spatial_and_lift_checks() {
     assert!(
         (fixture["elements"]["longitudinal_curl"].as_f64().unwrap()
             - transverse_curl_projector(k, k, k))
-            .abs()
+        .abs()
             < 1e-12
     );
     assert!(
         (fixture["elements"]["transverse_curl"].as_f64().unwrap()
             - transverse_curl_projector(k, e1, e1))
-            .abs()
+        .abs()
             < 1e-12
     );
     assert!(
@@ -142,7 +170,12 @@ fn fixture_records_the_spatial_and_lift_checks() {
     let c = cplx(&lift["inner_constant"]);
     assert_eq!(lift["vacuum_terms"].as_u64().unwrap(), 0);
     close(cplx(&lift["one_quantum"]), c, 1e-12, "one quantum -> c");
-    close(cplx(&lift["two_quanta"]), 2.0 * c, 1e-12, "two quanta -> 2c");
+    close(
+        cplx(&lift["two_quanta"]),
+        2.0 * c,
+        1e-12,
+        "two quanta -> 2c",
+    );
     assert!(lift["ordered_product_difference"].as_f64().unwrap() > 1e-8);
 }
 
@@ -204,7 +237,10 @@ fn mutations_are_detected_by_the_fixture() {
 
     let reversed = fixture["mutations"]["reverse_transfer"].as_f64().unwrap();
     let forward = transfer_integral(&packets[0], &packets[2], &packets[1], &conv);
-    assert!((reversed - forward).abs() > 1e-9, "transfer reversal must differ");
+    assert!(
+        (reversed - forward).abs() > 1e-9,
+        "transfer reversal must differ"
+    );
 
     let adjoint = cplx(&fixture["mutations"]["drop_yukawa_adjoint"]);
     let y = sm.yu[0][0];
@@ -251,20 +287,30 @@ fn outer_shift_lifts_to_zero_one_and_two_quanta() {
     let limits = ActionLimits::default();
 
     let vacuum = NestedVector::new();
-    assert!(h.d_gamma(&vacuum, limits).expect("vacuum action").is_empty());
+    assert!(
+        h.d_gamma(&vacuum, limits)
+            .expect("vacuum action")
+            .is_empty()
+    );
 
     let mut one = NestedVector::new();
     let one_label = JointOuterBasis::bosonic([(inner.clone(), 1)]).expect("one label");
     one.insert(one_label.clone(), C::new(1.0, 0.0));
     let one_image = h.d_gamma(&one, limits).expect("one-quantum action");
     assert_eq!(one_image.len(), 1);
-    assert!((one_image[&one_label] - c).norm() < 1e-12, "one quantum -> c");
+    assert!(
+        (one_image[&one_label] - c).norm() < 1e-12,
+        "one quantum -> c"
+    );
 
     let mut two = NestedVector::new();
     let two_label = JointOuterBasis::bosonic([(inner, 2)]).expect("two label");
     two.insert(two_label.clone(), C::new(1.0, 0.0));
     let two_image = h.d_gamma(&two, limits).expect("two-quantum action");
-    assert!((two_image[&two_label] - 2.0 * c).norm() < 1e-12, "two quanta -> 2c");
+    assert!(
+        (two_image[&two_label] - 2.0 * c).norm() < 1e-12,
+        "two quanta -> 2c"
+    );
 }
 
 #[test]
@@ -340,14 +386,17 @@ fn one_outer_particle_evolution_has_a_measured_error_budget() {
         assert!(eigen.eigenvalues[i] > 0.0, "Gram positive definite");
         inv[(i, i)] = 1.0 / eigen.eigenvalues[i].sqrt();
     }
-    let s_inv = (&eigen.eigenvectors * inv * eigen.eigenvectors.transpose())
-        .map(|x| C::new(x, 0.0));
+    let s_inv =
+        (&eigen.eigenvectors * inv * eigen.eigenvectors.transpose()).map(|x| C::new(x, 0.0));
     let h = &s_inv * &hermitian * &s_inv;
 
     let time = 0.01;
     let full = (h.clone() * C::new(0.0, -time)).exp();
     let basis = |i: usize| {
-        nalgebra::DVector::from_iterator(n, (0..n).map(|j| C::new(if j == i { 1.0 } else { 0.0 }, 0.0)))
+        nalgebra::DVector::from_iterator(
+            n,
+            (0..n).map(|j| C::new(if j == i { 1.0 } else { 0.0 }, 0.0)),
+        )
     };
     let seed = basis(0);
     let evolved = &full * &seed;
@@ -373,9 +422,7 @@ fn one_outer_particle_evolution_has_a_measured_error_budget() {
     let fixture = fixture();
     let recorded = &fixture["evolution"];
     assert!((recorded["return_full"].as_f64().unwrap() - return_full).abs() < 1e-10);
-    assert!(
-        (recorded["return_compressed"].as_f64().unwrap() - return_compressed).abs() < 1e-10
-    );
+    assert!((recorded["return_compressed"].as_f64().unwrap() - return_compressed).abs() < 1e-10);
     assert!(
         (recorded["first_order_bound"].as_f64().unwrap() - bound).abs() < 1e-10,
         "fixture bound {} vs live {bound}",
