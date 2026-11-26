@@ -735,9 +735,15 @@ jobs:
           python3 scripts/gen_symbol_artifacts check || { echo "FAIL: run scripts/gen_symbol_artifacts"; exit 1; }
       - name: assert uk_* symbols match EXPECTED_SYMBOLS.txt (generated census)
         run: |
+          # LC_ALL=C on both sides: the artifact is in byte order, while a UTF-8
+          # collation locale (en_US.UTF-8 ignores punctuation first) reorders the
+          # nm dump and reports a bogus mismatch — measured 2026-11-26 with the
+          # sets actually identical. Sorting both sides keeps this an order-
+          # canonical set comparison wherever the runner sits.
           nm -D --defined-only target/release/libunfer_ffi.so \
-            | awk '/ T uk_/ {print $3}' | sort > /tmp/got_uk.txt
-          if ! diff -u unfer_ffi/EXPECTED_SYMBOLS.txt /tmp/got_uk.txt; then
+            | awk '/ T uk_/ {print $3}' | LC_ALL=C sort > /tmp/got_uk.txt
+          LC_ALL=C sort unfer_ffi/EXPECTED_SYMBOLS.txt > /tmp/exp_uk.txt
+          if ! diff -u /tmp/exp_uk.txt /tmp/got_uk.txt; then
             echo "FAIL: uk_* symbols mismatch (see diff above)." >&2
             echo "If you added/removed a uk_* symbol, add it to unfer_protocol::symbols and run scripts/gen_symbol_artifacts." >&2
             exit 1
@@ -747,8 +753,9 @@ jobs:
       - name: assert 5 uz_* symbols match EXPECTED_SYMBOLS_ZENODO.txt (zenodo feature)
         run: |
           nm -D --defined-only target/release/libunfer_ffi.so \
-            | awk '/ T uz_/ {print $3}' | sort > /tmp/got_uz.txt
-          if ! diff -u unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt /tmp/got_uz.txt; then
+            | awk '/ T uz_/ {print $3}' | LC_ALL=C sort > /tmp/got_uz.txt
+          LC_ALL=C sort unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt > /tmp/exp_uz.txt
+          if ! diff -u /tmp/exp_uz.txt /tmp/got_uz.txt; then
             echo "FAIL: uz_* symbols mismatch (see diff above)." >&2
             echo "If you added/removed a uz_* symbol, update unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt." >&2
             exit 1
