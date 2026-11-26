@@ -91,8 +91,13 @@ HMC canary moved `rhat_rank` `2.54906 → 1.91680` with `ess_tail` `13.4 → 22.
 `(93/240)`). The per-push lane therefore uses `--structure`: key sequence,
 `gate=`/`sample_space=` words and finiteness must match, magnitudes need not.
 The scheduled `--all` lane uses `--band 0.2`, since its rows are long enough for
-R̂/ESS to mean something. Byte-exact reproduction stays
-`./scripts/check-pcnl-gates` on the recording machine.
+R̂/ESS to mean something. Byte-exact reproduction is still
+`./scripts/check-pcnl-gates` on the recording machine, and the scheduled
+workflow has a second job (`gates-byte-exact`) that runs exactly that command
+with no `--band` on a self-hosted runner carrying the `r13-reference` label.
+That job is inert until such a runner is registered and the
+`RUN_R13_BYTE_EXACT` repository variable is set — the same gate the CUDA smoke
+job uses, so an unregistered label cannot leave a run queued forever.
 
 Readout-only rows also print a `calibration` line, which scores the same 90%
 bands on the split the conditional likelihood was fitted on (train) and reports

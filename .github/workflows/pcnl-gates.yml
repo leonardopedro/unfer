@@ -38,11 +38,19 @@ on:
         description: "skip the >15 min entries (hit-and-run 5,000, tempering)"
         type: boolean
         default: false
+      alts:
+        description: "byte-exact lane only: also run the documented alternates (+~75 min)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Hosted lane: gross-drift net. A hosted runner is a different CPU/libm from
+  # the machine that recorded the logs, so this compares with `--band 0.2`.
+  # ---------------------------------------------------------------------------
   gates:
     name: re-run every committed R13 gate log
     runs-on: ubuntu-latest
@@ -107,5 +115,112 @@ jobs:
         with:
           name: r13-gate-diff
           path: target/r13-logs/gate-diff-*/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Byte-exact lane (self-hosted). The --band above is a portability compromise,
+  # so it cannot answer the question the committed logs actually assert: does
+  # the gate still print *these bytes*? That is only answerable on a host whose
+  # CPU/libm matches the recording machine, which is what the `r13-reference`
+  # label is for. Default comparison (no --band, no --structure) is byte-exact,
+  # so this job runs the plain script.
+  #
+  # Gated on the RUN_R13_BYTE_EXACT repository variable (Settings → Secrets and
+  # variables → Actions → Variables), same discipline as qfm-tomo-e2e-cuda: a
+  # runner-gated job without the variable would sit in `queued` forever and hold
+  # every run hostage. This job runs in parallel with the hosted one on schedule
+  # and dispatch, and adds nothing to the per-push budget.
+  #
+  # A red run here has only two readings, because the platform is ruled out:
+  #   1. a real regression, or
+  #   2. the committed log no longer describes the command (docs/manifest/log
+  #      edited on one side only).
+  # Both are actionable; re-record the log only if the new numbers are what you
+  # mean. The host fingerprint step exists so that a runner which was silently
+  # upgraded (new gcc/libm) is visible in the run, rather than looking like (1).
+  # ---------------------------------------------------------------------------
+  gates-byte-exact:
+    name: byte-exact re-run (self-hosted reference host)
+    if: vars.RUN_R13_BYTE_EXACT == 'true'
+    runs-on: [self-hosted, r13-reference]
+    # Same budget as the hosted lane, plus headroom: this host is the reference
+    # machine, where `--all` measured 6,645 s of gate time (~1 h 55 m).
+    timeout-minutes: 350
+    steps:
+      # Sibling layout mirrors qfm-tomo-e2e-cuda: unfer at
+      # $GITHUB_WORKSPACE/unfer, so ../../dynamic-arctic and ../../australVM
+      # resolve without touching the workspace root.
+      - name: checkout unfer (sibling layout)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          path: unfer
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          repository: leonardopedro/dynamic-arctic
+          ref: main
+          path: dynamic-arctic
+      # Cargo loads every workspace member's manifest even for `-p pcnl`, and
+      # fock_sirk path-deps this manifest (optional `avm-gpu`, but the path must
+      # resolve), exactly as the per-push canary job learned on its first run.
+      - name: checkout australVM (sibling path dep, fock_sirk)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          repository: leonardopedro/australVM
+          # master, not main: australVM's only remote branch is `master`.
+          ref: master
+          path: australVM
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+        with:
+          # rust-toolchain.toml pins this; stating it here keeps rustfmt/clippy
+          # components on the same compiler the logs' *build* used.
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            unfer
+      # Byte-exactness is a property of the host, so name the host in the run.
+      # If these move (OS, glibc, CPU flags, compiler build), a diff is the
+      # platform and not the gate -- see the header of this job.
+      - name: host fingerprint
+        working-directory: unfer
+        run: |
+          set -euo pipefail
+          echo "runner: ${RUNNER_NAME:-?} / ${RUNNER_OS:-?}"
+          uname -a
+          (ldd --version 2>&1 | head -1) || true
+          (lscpu | grep -E 'Model name|Flags' | cut -c1-200) || true
+          rustc -vV | sed -n '1,3p'
+      - name: build the gate binaries
+        working-directory: unfer
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p pcnl \
+            --example vector_regression \
+            --example vector_basins \
+            --example vector_stream
+      - name: structure first (manifest ↔ logs)
+        working-directory: unfer
+        run: bash scripts/check-pcnl-gates --check-manifest
+      # No --band and no --structure: the default comparison is byte-exact, which
+      # is the entire point of this lane. `--all` includes the slow rows and the
+      # canary rows; the documented alternates are opt-in below because the two
+      # long CN probes alone add ~75 min.
+      - name: re-run the gates and require byte-identical summaries
+        working-directory: unfer
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.alts }}" = "true" ]; then
+            bash scripts/check-pcnl-gates --all --alts
+          else
+            bash scripts/check-pcnl-gates --all
+          fi
+      - name: keep the diffs even when the shell failed
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # actions/upload-artifact@v4.6.2
+        with:
+          name: r13-gate-diff-byte-exact
+          path: unfer/target/r13-logs/gate-diff-*/
           if-no-files-found: warn
           retention-days: 30

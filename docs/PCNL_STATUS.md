@@ -7827,8 +7827,15 @@ that every number stays finite (a `NaN` must stay `NaN`), and that the run
 exits 0. Byte-exact reproduction stays `./scripts/check-pcnl-gates` on the
 machine that recorded the logs, which is why that is the default; the
 scheduled `--all` lane, whose rows are long enough for ESS/R̂ to mean something,
-uses `--band 0.2` as a gross-drift net. The lesson generalises: a committed log
-is machine-local evidence, and only structure travels.
+uses `--band 0.2` as a gross-drift net. The scheduled workflow also carries a
+`gates-byte-exact` job — the plain script, `--all`, no band — on a self-hosted
+runner labelled `r13-reference`, so the byte-level claim is checked somewhere
+it can hold. That job is gated on the `RUN_R13_BYTE_EXACT` repository variable
+and stays skipped until a runner with that label is registered; a red result
+there has only two readings, a real regression or a log that no longer
+describes its command, because the host has been held fixed. The lesson
+generalises: a committed log is machine-local evidence, and only structure
+travels between machines.
 
 The four full-parameter rows (`pilot`, `hessian-64`, `lowrank-8`,
 `lowrank-32`) carried a flag the first reconstruction of this table dropped:
