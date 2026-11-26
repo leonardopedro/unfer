@@ -678,6 +678,49 @@ pub fn consensus_decision_delivery_contract() -> Result<ChannelContract, Contrac
     )
 }
 
+/// The schema a peer recorder request is read under.
+pub const RECORDER_RPC_SCHEMA: u16 = 1;
+
+/// The peer recorder RPC as a checked contract.
+///
+/// A replica proposes decisions and reads a peer's frontier through the
+/// certificate-pinned recorder client. Each request names its slot, so the
+/// client claims no arrival order; the authentication is the premise the
+/// construction actually implements (mutual TLS with the member's pinned
+/// certificate), and the bound is the decision batch that the catch-up sender
+/// hands to this same client.
+pub fn consensus_recorder_rpc_contract() -> Result<ChannelContract, ContractError> {
+    let producer = Location::new(
+        Repo::Unfer,
+        "unfer_consensus/src/net.rs",
+        "TlsRecorderClient",
+    )?;
+    let consumer = Location::new(
+        Repo::Unfer,
+        "unfer_consensus/src/net.rs",
+        "NetworkNodeServer",
+    )?;
+    let schema = SchemaId::new("quepaxa.recorder-rpc", RECORDER_RPC_SCHEMA)?;
+    let capacity = UsageCap::new(
+        "decisions per recorder request",
+        MAX_DECISION_BATCH,
+        CapWitness::ProtocolInvariant,
+    )?;
+    ChannelContract::new(
+        producer,
+        consumer,
+        schema,
+        OrderingScope::Unordered,
+        RetryScope::WithinConnection,
+        Authentication::MutualTls,
+        FaultModel::new(Loss::Possible, true),
+        capacity,
+        Delivery::at_least_once(),
+        None,
+        DecisionKind::Monotone,
+    )
+}
+
 /// Opaque evidence that a contract's ordering covers its retry lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OrderedChannel(());
@@ -1041,6 +1084,15 @@ mod tests {
         assert_eq!(contract.capacity().max(), MAX_DECISION_BATCH);
         assert_eq!(contract.capacity().witness(), CapWitness::ProtocolInvariant);
         assert_eq!(contract.delivery().mode(), DeliveryMode::AtLeastOnce);
+    }
+
+    #[test]
+    fn the_recorder_rpc_contract_is_pinned_and_can_carry_a_batch() {
+        let contract = consensus_recorder_rpc_contract().expect("recorder RPC contract");
+        assert_eq!(contract.authentication(), Authentication::MutualTls);
+        assert_eq!(contract.ordering(), OrderingScope::Unordered);
+        assert!(contract.ordered_channel().is_err());
+        assert!(contract.capacity().max() >= MAX_DECISION_BATCH);
     }
 
     #[test]

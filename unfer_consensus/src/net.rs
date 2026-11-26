@@ -46,9 +46,9 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use unfer_protocol::channel_contracts::{
-    CONSENSUS_LEDGER_SCHEMA, ChannelContract, ContractError, MAX_DECISION_BATCH,
+    Authentication, CONSENSUS_LEDGER_SCHEMA, ChannelContract, ContractError, MAX_DECISION_BATCH,
     MAX_SUBMISSION_JOURNAL_BYTES, OrderingScope, RetryScope, consensus_decision_delivery_contract,
-    consensus_live_submission_contract,
+    consensus_live_submission_contract, consensus_recorder_rpc_contract,
 };
 use unfer_protocol::distributed::{Command, ReplicatedValue};
 use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
@@ -126,6 +126,39 @@ fn check_live_decision_delivery_contract() -> Result<ChannelContract, String> {
     let contract = live_decision_delivery_contract()
         .map_err(|error| format!("live decision delivery contract is invalid: {error}"))?;
     check_decision_delivery_contract(contract)
+}
+
+/// D19: the recorder RPC boundary as a checked contract, shared with the
+/// protocol crate so the client and its peer cannot drift into two descriptions.
+pub fn live_recorder_rpc_contract() -> Result<ChannelContract, ContractError> {
+    consensus_recorder_rpc_contract()
+}
+
+/// Refuse a recorder RPC contract that does not carry the premises the client
+/// construction implements: mutual TLS pinned to the member's certificate, and a
+/// request bound that can carry a full catch-up batch (the same client sends
+/// it). Ordering is deliberately not gated here: a recorder request names its
+/// slot, and the ordered apply side is the decision contract's premise.
+fn check_recorder_rpc_contract(contract: &ChannelContract) -> Result<(), String> {
+    let authentication = contract.authentication();
+    if authentication != Authentication::MutualTls {
+        return Err(format!(
+            "recorder RPC is not mutually authenticated (contract says {authentication:?})"
+        ));
+    }
+    let max = contract.capacity().max();
+    if max < MAX_DECISION_BATCH {
+        return Err(format!(
+            "recorder requests are bounded at {max}, below the {MAX_DECISION_BATCH}-decision catch-up batch"
+        ));
+    }
+    Ok(())
+}
+
+fn check_live_recorder_rpc_contract() -> Result<(), String> {
+    let contract = live_recorder_rpc_contract()
+        .map_err(|error| format!("live recorder RPC contract is invalid: {error}"))?;
+    check_recorder_rpc_contract(&contract)
 }
 
 /// Durable ledger snapshot: the committed bank plus this node's outbox.
@@ -1592,6 +1625,7 @@ async fn start_replica(
         )
     })?;
 
+    check_live_recorder_rpc_contract()?;
     let recorder_clients = deployment
         .members
         .iter()
@@ -2099,6 +2133,51 @@ mod tests {
         let error = check_decision_delivery_contract(oversize).unwrap_err();
         assert!(
             error.contains("protocol bound"),
+            "unexpected refusal: {error}"
+        );
+    }
+
+    /// The recorder RPC gate has two premises the construction encodes: the
+    /// client is constructed with mutual TLS and the peer's pinned certificate,
+    /// and it is the same client that carries a full catch-up batch.
+    #[test]
+    fn the_recorder_gate_refuses_plaintext_or_an_undersized_bound() {
+        let contract = |authentication, max| {
+            let producer = Location::new(Repo::Unfer, "producer.rs", "TlsRecorderClient").unwrap();
+            let consumer = Location::new(Repo::Unfer, "consumer.rs", "NetworkNodeServer").unwrap();
+            let schema = SchemaId::new("test.recorder", 1).unwrap();
+            let capacity = UsageCap::new("decisions per request", max, CapWitness::ProtocolInvariant)
+                .unwrap();
+            ChannelContract::new(
+                producer,
+                consumer,
+                schema,
+                OrderingScope::Unordered,
+                RetryScope::WithinConnection,
+                authentication,
+                FaultModel::new(Loss::Possible, true),
+                capacity,
+                Delivery::at_least_once(),
+                None,
+                DecisionKind::Monotone,
+            )
+            .unwrap()
+        };
+
+        let live = live_recorder_rpc_contract().expect("live recorder contract");
+        check_recorder_rpc_contract(&live).expect("the live recorder boundary is admissible");
+
+        let plaintext = contract(Authentication::InProcess, MAX_DECISION_BATCH);
+        let error = check_recorder_rpc_contract(&plaintext).unwrap_err();
+        assert!(
+            error.contains("not mutually authenticated"),
+            "unexpected refusal: {error}"
+        );
+
+        let undersized = contract(Authentication::MutualTls, MAX_DECISION_BATCH - 1);
+        let error = check_recorder_rpc_contract(&undersized).unwrap_err();
+        assert!(
+            error.contains("below the 256-decision catch-up batch"),
             "unexpected refusal: {error}"
         );
     }
