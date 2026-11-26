@@ -46,8 +46,9 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use unfer_protocol::channel_contracts::{
-    CONSENSUS_LEDGER_SCHEMA, ChannelContract, ContractError, MAX_SUBMISSION_JOURNAL_BYTES,
-    OrderingScope, RetryScope, consensus_live_submission_contract,
+    CONSENSUS_LEDGER_SCHEMA, ChannelContract, ContractError, MAX_DECISION_BATCH,
+    MAX_SUBMISSION_JOURNAL_BYTES, OrderingScope, RetryScope, consensus_decision_delivery_contract,
+    consensus_live_submission_contract,
 };
 use unfer_protocol::distributed::{Command, ReplicatedValue};
 use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
@@ -69,10 +70,6 @@ const MAX_JOURNAL_BYTES: usize = MAX_SUBMISSION_JOURNAL_BYTES as usize;
 /// rejoining replica is caught up because its peers look, not because something
 /// else happened.
 const CATCH_UP_INTERVAL: Duration = Duration::from_millis(200);
-
-/// Decisions per push. Bounded so one catch-up frame stays well inside the
-/// transport's frame limit, whatever the size of the log behind it.
-const CATCH_UP_BATCH: u64 = 256;
 
 /// D19: the live submission path as a checked contract, not prose beside the
 /// client and server. The protocol crate owns the contract so the bridge's
@@ -101,6 +98,34 @@ fn check_submission_contract(contract: &ChannelContract) -> Result<(), String> {
         .exactly_once_channel()
         .map_err(|error| format!("live submission is not exactly-once: {error}"))?;
     Ok(())
+}
+
+/// D19: the peer-decision path as a checked contract, shared with the protocol
+/// crate so the sender and the apply side cannot drift into two descriptions.
+pub fn live_decision_delivery_contract() -> Result<ChannelContract, ContractError> {
+    consensus_decision_delivery_contract()
+}
+
+/// Refuse a decision-delivery contract whose ordering does not cover a retry or
+/// whose frame bound exceeds the protocol's. Returns the checked contract so the
+/// catch-up sender sizes its frames from the contract instead of a constant.
+fn check_decision_delivery_contract(contract: ChannelContract) -> Result<ChannelContract, String> {
+    contract
+        .ordered_channel()
+        .map_err(|error| format!("peer decisions are not ordered: {error}"))?;
+    let max = contract.capacity().max();
+    if max > MAX_DECISION_BATCH {
+        return Err(format!(
+            "decision frames are bounded at {max}, above the protocol bound {MAX_DECISION_BATCH}"
+        ));
+    }
+    Ok(contract)
+}
+
+fn check_live_decision_delivery_contract() -> Result<ChannelContract, String> {
+    let contract = live_decision_delivery_contract()
+        .map_err(|error| format!("live decision delivery contract is invalid: {error}"))?;
+    check_decision_delivery_contract(contract)
 }
 
 /// Durable ledger snapshot: the committed bank plus this node's outbox.
@@ -1410,6 +1435,11 @@ where
         decisions: Vec<Decision<ReplicatedValue>>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = rust_quepaxa::Result<()>> + Send + '_>>
     {
+        // The receive side is where an out-of-order or oversize frame would
+        // enter the state machine, so the gate is here and not only at startup.
+        if let Err(error) = check_live_decision_delivery_contract() {
+            return Box::pin(async move { Err(rust_quepaxa::QuePaxaError::TransportError(error)) });
+        }
         // D19-HOOK: H11 (receive: peer decisions applied by the handler)
         self.0.receive_decisions(decisions)
     }
@@ -1430,16 +1460,21 @@ async fn catch_up_loop<V, C, S, E>(
     runtime: Arc<NetworkConsensusHandler<V, C, S, E>>,
     ledger: SharedLedger,
     shutdown: CancellationToken,
-) where
+) -> Result<(), String>
+where
     V: Clone + Ord + Send + Sync + 'static,
     C: AsyncRecorderClient<V> + Send + Sync + 'static,
     S: rust_quepaxa::RuntimeStateStore<V> + Send + 'static,
     E: StateMachine<V> + Send + 'static,
 {
+    // D19: the push is sized and ordered by the checked contract. An ordering
+    // that does not cover a reconnect, or a frame bound above the protocol's,
+    // refuses the loop instead of sending decisions the peer cannot place.
+    let frame = check_live_decision_delivery_contract()?.capacity().max();
     let mut known: BTreeMap<ReplicaId, u64> = BTreeMap::new();
     loop {
         tokio::select! {
-            _ = shutdown.cancelled() => return,
+            _ = shutdown.cancelled() => return Ok(()),
             // D19-HOOK: H03 (timer: periodic catch-up probe)
             _ = tokio::time::sleep(CATCH_UP_INTERVAL) => {}
         }
@@ -1462,7 +1497,7 @@ async fn catch_up_loop<V, C, S, E>(
             }
             let mut from = held + 1;
             while from <= head {
-                let to = (from + CATCH_UP_BATCH - 1).min(head);
+                let to = (from + frame - 1).min(head);
                 let mut batch = Vec::with_capacity((to - from + 1) as usize);
                 for slot in from..=to {
                     match runtime.decision(SlotIndex::new(slot)).await {
@@ -1537,6 +1572,7 @@ async fn start_replica(
     metrics: Arc<NetworkMetrics>,
 ) -> Result<RunningNode, String> {
     check_live_submission_contract()?;
+    check_live_decision_delivery_contract()?;
     let deployment = &config.deployment;
     let index = deployment.index_of(config.replica)?;
     let tls = deployment.node_tls(&config.identity)?;
@@ -1675,7 +1711,12 @@ async fn start_replica(
         ledger.clone(),
         shutdown.clone(),
     );
-    tokio::spawn(catch_up);
+    let catch_up_label = config.replica.get();
+    tokio::spawn(async move {
+        if let Err(error) = catch_up.await {
+            eprintln!("quepaxa node {catch_up_label} stopped catch-up: {error}");
+        }
+    });
     Ok(RunningNode {
         replica_id: config.replica,
         address,
@@ -2015,6 +2056,49 @@ mod tests {
         let error = check_submission_contract(&at_least_once).unwrap_err();
         assert!(
             error.contains("not exactly-once"),
+            "unexpected refusal: {error}"
+        );
+    }
+
+    /// The decision-delivery gate has two premises, and both must refuse a
+    /// contract that does not carry them: ordering that covers a reconnect, and
+    /// a frame bound no larger than the protocol's.
+    #[test]
+    fn the_decision_gate_refuses_unordered_or_oversize_frames() {
+        let contract = |ordering, max| {
+            let producer = Location::new(Repo::Unfer, "producer.rs", "catch_up_loop").unwrap();
+            let consumer = Location::new(Repo::Unfer, "consumer.rs", "receive").unwrap();
+            let schema = SchemaId::new("test.decisions", 1).unwrap();
+            let capacity = UsageCap::new("decisions per frame", max, CapWitness::ProtocolInvariant)
+                .unwrap();
+            ChannelContract::new(
+                producer,
+                consumer,
+                schema,
+                ordering,
+                RetryScope::AcrossReconnects,
+                Authentication::MutualTls,
+                FaultModel::new(Loss::Possible, true),
+                capacity,
+                Delivery::at_least_once(),
+                None,
+                DecisionKind::Monotone,
+            )
+            .unwrap()
+        };
+
+        let live = live_decision_delivery_contract().expect("live decision contract");
+        let checked = check_decision_delivery_contract(live).expect("live frame is admissible");
+        assert_eq!(checked.capacity().max(), MAX_DECISION_BATCH);
+
+        let per_connection = contract(OrderingScope::PerConnection, MAX_DECISION_BATCH);
+        let error = check_decision_delivery_contract(per_connection).unwrap_err();
+        assert!(error.contains("not ordered"), "unexpected refusal: {error}");
+
+        let oversize = contract(OrderingScope::TotalOrder, MAX_DECISION_BATCH + 1);
+        let error = check_decision_delivery_contract(oversize).unwrap_err();
+        assert!(
+            error.contains("protocol bound"),
             "unexpected refusal: {error}"
         );
     }
