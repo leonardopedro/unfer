@@ -40,14 +40,15 @@ The operator keeps the full nonnegative square including `λv⁴/4`, forms the
 
 * Cadabra2 `2.5.15 private` (`nix shell nixpkgs#cadabra2`)
 * `rustc 1.99.0 (b940084d7 2026-09-28)`
-* repository `HEAD = 8563b06` when the record was regenerated (the fixture's
-  `source_revision.git_head` records the same commit)
+* repository `HEAD = 93cccfc` when the record was regenerated (the fixture's
+  `source_revision.git_head` records the same commit; the run started at the
+  pre-rebase hash of that same phi4 tree)
 
 | file | SHA-256 |
 |---|---|
 | `docs/phi4_momentum_nested.cdb` | `669510d3c55d334b065b0d94c6f7a4d402cdf29408865856178c3b475fb8d709` |
 | `docs/fixtures/phi4_momentum_mehler.json` | `9b1e9c15ccbb53c876a4818f8d2898d8faec5f26c54d0664406cbcc9912d15bb` |
-| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `7f368551cb0adde3e4c2b6549adea553444a10500382e2978ea81b8b33d28ef2` |
+| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `491a479affc1aae7e9be65f49fbfbfbe29b73ad36c636ed50a7323cb85017b69` |
 
 The whole record comes from that one run: `source_revision.git_head` and the
 digest above are the run's own. It was produced natively on an **`x86_64`
@@ -1207,7 +1208,7 @@ loaded/quiet pair reached (`3593560` loaded against `2158332` quiet for the
 upper bounds, and compare ratios inside the record, not against another machine.
 
 **Record provenance: the checked-in record is now the native `x86_64` run.** The
-fixture was regenerated at `8563b06` on the `x86_64` host of this note, which
+fixture was regenerated at `93cccfc` on the `x86_64` host of this note, which
 compiles the scalar `dot` fallback rather than the NEON kernel above, and with
 the change-of-basis control of §5.3 in the schema. All `17 × 2` cells completed
 in `9737331 ms` (`162.3 min`) at `4239900 kB` peak RSS. The physics reproduces

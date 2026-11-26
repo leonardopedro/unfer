@@ -3947,7 +3947,7 @@
   "schema": "phi4-momentum-sirk-sweep/v1",
   "source_revision": {
     "crate": "fock_sirk",
-    "git_head": "8563b0612629e8d367312f287b70e45d3ca26871",
+    "git_head": "93cccfc252d55a68c4c85ae6996cf87f29352668",
     "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
     "version": "0.1.0"
   }
