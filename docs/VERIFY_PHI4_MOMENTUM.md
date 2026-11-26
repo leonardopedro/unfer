@@ -1469,16 +1469,22 @@ the §5.11/§5.12 tables are labelled with the host they were measured on.
   sharp budget (§5.3). The conjugation `h' Γ(U)ψ = Γ(U) h ψ` is pinned to
   `1e-12` in `nested_fock_algebra` and the record assertion is in
   `fock_sirk/tests/phi4_momentum_sirk.rs`.
-* Measured: the scalar fallback is not asserted to reproduce the `aarch64`
-  record, it is run. Cross-compiled for `x86_64-unknown-linux-gnu` (GCC `16.2.0`,
-  glibc `2.44`) and executed under `qemu-x86_64` `11.1.2`, all seven tests of
-  `tests/phi4_momentum_sirk.rs` pass — `recorded_cutoff_sweep_matches_the_live_model`
-  included, which pins the live `C = 12` cell to the then-checked-in `aarch64`
-  record at `1e-12`. The
-  printed digits differ from this host's by at most `3.1e-15` absolute and
-  `2.7e-15` relative on the `O(1)` values, and the `C = 8` rank-2 Krylov count
-  moves `18 → 19` where the `1e-13` stop test sits on the crossed boundary
-  (§5.12).
+* Measured: the scalar fallback is not asserted to reproduce the record, it is
+  run — `scripts/check-phi4-scalar-fallback` cross-compiles
+  `tests/phi4_momentum_sirk.rs` for `x86_64-unknown-linux-gnu` (GCC `16.2.0`,
+  glibc `2.44`) and executes it under `qemu-x86_64` `11.1.2` (`~93 s`). Against
+  the checked-in native `x86_64` record all nine tests pass, the two record
+  assertions included, and the digits are close to bit-identical: the `C = 4`,
+  `8`, `12` tails reproduce **exactly** (`0.0e+00`), the rank-2 Krylov counts
+  match to the integer (`6`, `19`, `43`), and only the `m = 4` inside-window
+  errors move — by `2.6e-15` at `C = 8` and `9.0e-15` at `C = 12` (`8e-13` and
+  `4e-12` relative). The earlier build, measured against the `aarch64` record
+  that preceded this one, differed more: `3.1e-15` absolute and `2.7e-15`
+  relative on the `O(1)` values, with the `C = 8` rank-2 count at `18` rather
+  than `19`. So the cross build reproduces the checked-in *x86* arithmetic and
+  it is the `aarch64` NEON kernel that sat on the other side of that `1e-13`
+  boundary — a difference inside one target's two builds, not a verdict on the
+  target (§5.12).
 * Corrected: the rank-4 `C = 28` step row of §5.2 had been quoting that cell's
   shift-solve counts under a bounded-resolvent heading. It now shows the
   resolvent counts; no measurement changed, the label was wrong (§5.11).
