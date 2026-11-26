@@ -934,8 +934,8 @@ fn rational(text: &str) -> f64 {
 }
 
 /// The evidence record's cutoff sweep must stay consistent with the live
-/// operator. `C <= 12` is recomputed here; the `C = 16 … 40` rows (which need up
-/// to a `1.13e8` component budget and the looser `1e-10` solve policy, and cost
+/// operator. `C <= 12` is recomputed here; the `C = 16 … 44` rows (which need up
+/// to a `3e8` component budget and the looser `1e-10` solve policy, and cost
 /// seconds to minutes per cell) are checked for the trend they are quoted for:
 /// the tail keeps shrinking, the inside-window error stays flat, the
 /// `ForwardProducts` diagnostic keeps growing, and every Arnoldi step count is
@@ -959,7 +959,9 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         .collect();
     assert_eq!(
         cutoffs,
-        vec![4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40],
+        vec![
+            4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44
+        ],
         "sweep cutoffs"
     );
     let sizes: Vec<u64> = tails
@@ -969,7 +971,8 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
     assert_eq!(
         sizes,
         vec![
-            15, 70, 210, 495, 1001, 1365, 1820, 2380, 3060, 3876, 4845, 5985, 7315, 8855, 10626
+            15, 70, 210, 495, 1001, 1365, 1820, 2380, 3060, 3876, 4845, 5985, 7315, 8855, 10626,
+            12650, 14950
         ],
         "window sizes"
     );
@@ -989,8 +992,8 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         tail_values[6] < 0.7 * tail_values[4],
         "pushing to C = 24 must keep shrinking the tail: {tail_values:?}"
     );
-    // Indices 7..=14 are C = 26, 28, 30, 32, 34, 36, 38 and 40: every further two
-    // steps of cutoff must still cut the tail by at least 15 %.
+    // Indices 7..=16 are C = 26, 28, 30, 32, 34, 36, 38, 40, 42 and 44: every
+    // further two steps of cutoff must still cut the tail by at least 15 %.
     for (pushed, window) in [
         (7, 26),
         (8, 28),
@@ -1000,6 +1003,8 @@ fn recorded_cutoff_sweep_matches_the_live_model() {
         (12, 36),
         (13, 38),
         (14, 40),
+        (15, 42),
+        (16, 44),
     ] {
         assert!(
             tail_values[pushed] < 0.85 * tail_values[pushed - 1],

@@ -63,11 +63,13 @@ fn shift_invert() -> JointKrylovMethod {
 /// Cutoffs of the outside-window sweep. C = 16 and 20 are the extension past
 /// the window at which the seed's support is fully covered; they need a looser
 /// solve policy (see `sweep_method`) and a larger component budget. C = 22, 24,
-/// 26, 28, 30, 32, 34, 36, 38 and 40 push past 20 to show that the tail keeps
-/// shrinking while the SIRK error stays flat (rank-limited, not window-limited).
-/// C = 40 is the largest window the component budget allows (see
-/// `SWEEP_COMPONENT_BUDGET`).
-const SWEEP_CUTOFFS: [u32; 15] = [4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40];
+/// 26, 28, 30, 32, 34, 36, 38, 40, 42 and 44 push past 20 to show that the tail
+/// keeps shrinking while the SIRK error stays flat (rank-limited, not
+/// window-limited). C = 44 is the largest window the component budget allows
+/// (see `SWEEP_COMPONENT_BUDGET`).
+const SWEEP_CUTOFFS: [u32; 17] = [
+    4, 8, 12, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44,
+];
 
 /// Solve policy per cutoff. The `1e-13` relative residual is affordable while
 /// the window is small, but at C = 20 the smallest scheduled shift
@@ -93,9 +95,10 @@ fn sweep_method(cutoff: u32) -> JointKrylovMethod {
 /// (3060 labels, 9.42e6) needs more than C = 26's 8e6, C = 32 (4845 labels,
 /// 2.36e7 components) needs more than C = 28's 1.2e7, C = 36 (7315 labels,
 /// 5.37e7 components) needs more than C = 32's 2.5e7, C = 38 (8855 labels,
-/// 7.84e7) needs more than C = 36's 6e7, and C = 40 (10626 labels, 1.129e8
-/// components) needs more than C = 38's.
-const SWEEP_COMPONENT_BUDGET: usize = 130_000_000;
+/// 7.84e7) needs more than C = 36's 6e7, C = 40 (10626 labels, 1.129e8
+/// components) needs more than C = 38's, and C = 44 (about 15000 labels, so
+/// n^2 ~ 2.3e8 before the span images) needs more than C = 40's.
+const SWEEP_COMPONENT_BUDGET: usize = 300_000_000;
 
 fn solve(
     h: &InnerExpr,
@@ -306,7 +309,7 @@ fn cutoff_sweep() -> Value {
         let window = ScalarMomCont::window_labels(cutoff);
         let shifts = physical_shifts(t, 8.0, 3.0, 2);
         let method = sweep_method(cutoff);
-        let result = sweep_solve(&h, &initial, &shifts, &window, method.clone());
+        let result = sweep_solve(&h, &initial, &shifts, &window, method);
         let exact = WindowOperator::build(&h, &window).reference_return(&initial, t);
         tail_cells.push(json!({
             "status": "measured",
@@ -338,7 +341,7 @@ fn cutoff_sweep() -> Value {
         let window = ScalarMomCont::window_labels(cutoff);
         let shifts = physical_shifts(t, 14.0, 3.0, 4);
         let method = sweep_method(cutoff);
-        let result = sweep_solve(&h, &initial, &shifts, &window, method.clone());
+        let result = sweep_solve(&h, &initial, &shifts, &window, method);
         let exact = WindowOperator::build(&h, &window).reference_return(&initial, t);
         let forward = sweep_solve(
             &h,
@@ -374,7 +377,7 @@ fn cutoff_sweep() -> Value {
 
     json!({
         "status": "measured",
-        "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; C = 22 ... 28 extend it further to measure the tail's slow decay. Every C >= 16 cell solves to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
+        "note": "the m=2 tail sweep follows the plan literally; at m=2 the ForwardProducts contrast is not yet visible (forward error 1.9e-3, 1.3e-3, 1.3e-3), so the method contrast is recorded at m=4 where it is. C = 16 and 20 extend the plan's C <= 12 range to windows that cover the seed many times over; C = 22 ... 44 extend it further to measure the tail's slow decay and to test whether the rank-4 inside-window error ever leaves its plateau. Every C >= 16 cell solves to 1e-10 relative residual with a 1024-step cap because the smallest scheduled shift stalls just above 1e-13 there",
         "tail_sweep_fixed_rank_2": tail_cells,
         "method_contrast_fixed_rank_4": method_cells,
         "runtime_ms": started.elapsed().as_millis() as u64,
