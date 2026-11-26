@@ -47,13 +47,17 @@ use tokio_util::sync::CancellationToken;
 
 use unfer_protocol::channel_contracts::{
     Authentication, CONSENSUS_LEDGER_SCHEMA, ChannelContract, ContractError, MAX_DECISION_BATCH,
-    MAX_SUBMISSION_JOURNAL_BYTES, consensus_decision_delivery_contract,
-    consensus_live_submission_contract, consensus_recorder_rpc_contract,
+    consensus_decision_delivery_contract, consensus_live_submission_contract,
+    consensus_recorder_rpc_contract,
 };
 // Used only by the contract assertions in this file's test module.
 #[cfg(test)]
 use unfer_protocol::channel_contracts::{OrderingScope, RetryScope};
 use unfer_protocol::distributed::{Command, ReplicatedValue};
+use unfer_protocol::storage_contracts::{
+    StorageContract, consensus_ledger_snapshot_contract, consensus_recorder_snapshot_contract,
+    consensus_runtime_snapshot_contract, consensus_submission_journal_contract,
+};
 use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
@@ -66,7 +70,6 @@ use crate::jobs::{Fence, JOB_COMMAND_SCHEMA, JobCommand, JobQueue};
 pub const LEDGER_TX_SCHEMA: u16 = CONSENSUS_LEDGER_SCHEMA;
 
 const LIVE_NODES: usize = 2;
-const MAX_JOURNAL_BYTES: usize = MAX_SUBMISSION_JOURNAL_BYTES as usize;
 
 /// How often a replica offers its log to a peer that is behind. An idle cluster
 /// has no new decision to carry the offer, which is why this is a timer: a
@@ -164,6 +167,69 @@ fn check_live_recorder_rpc_contract() -> Result<(), String> {
     check_recorder_rpc_contract(&contract)
 }
 
+/// D19: one storage boundary (H05–H07, H10) as a checked contract.
+///
+/// A restart is a read of what the previous incarnation wrote, so the premise is
+/// the publish protocol, not a message: the bytes are synced before the name is
+/// visible, and a damaged file is refused rather than reset to an empty state
+/// that would silently un-commit the node's history. The checked contract is
+/// returned so the caller sizes its store from the contract instead of from a
+/// constant beside the construction.
+fn check_storage_contract(
+    label: &str,
+    contract: Result<StorageContract, ContractError>,
+) -> Result<StorageContract, String> {
+    let contract = contract.map_err(|error| format!("{label} contract is invalid: {error}"))?;
+    contract
+        .atomic_snapshot()
+        .map_err(|error| format!("{label} is not a crash-safe snapshot: {error}"))?;
+    Ok(contract)
+}
+
+fn check_live_runtime_snapshot_contract() -> Result<StorageContract, String> {
+    check_storage_contract(
+        "consensus runtime snapshot",
+        consensus_runtime_snapshot_contract(),
+    )
+}
+
+fn check_live_recorder_snapshot_contract() -> Result<StorageContract, String> {
+    check_storage_contract("recorder snapshot", consensus_recorder_snapshot_contract())
+}
+
+fn check_live_ledger_snapshot_contract() -> Result<StorageContract, String> {
+    check_storage_contract(
+        "replicated ledger snapshot",
+        consensus_ledger_snapshot_contract(),
+    )
+}
+
+/// The submission journal's byte bound, read from its checked contract so the
+/// file the server opens and the bound its exactly-once claim rests on cannot
+/// drift. A contract with no bound cannot back the claim and is refused.
+fn check_live_submission_journal_contract() -> Result<usize, String> {
+    let contract = check_storage_contract(
+        "submission journal",
+        consensus_submission_journal_contract(),
+    )?;
+    journal_bytes(&contract)
+}
+
+/// The gate itself, separate from the one contract it reads, so a contract that
+/// declares no byte bound can be shown to be refused.
+fn journal_bytes(contract: &StorageContract) -> Result<usize, String> {
+    let bound = contract.byte_bound().ok_or_else(|| {
+        "the submission journal contract declares no byte bound, so it cannot back exactly-once delivery"
+            .to_string()
+    })?;
+    usize::try_from(bound.max()).map_err(|_| {
+        format!(
+            "the journal bound {} does not fit this platform's usize",
+            bound.max()
+        )
+    })
+}
+
 /// Durable ledger snapshot: the committed bank plus this node's outbox.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LedgerSnapshot {
@@ -198,7 +264,6 @@ pub struct LedgerSnapshot {
     job_outbox: BTreeMap<u64, JobCommand>,
 }
 
-/// Atomic (`write` + `rename`) JSON persistence for the replicated ledger.
 #[derive(Debug, Clone)]
 struct LedgerFile {
     path: PathBuf,
@@ -206,10 +271,14 @@ struct LedgerFile {
 
 // D19-HOOK: H10 (storage: atomic ledger snapshot)
 impl LedgerFile {
-    fn new(state_dir: &Path) -> Self {
-        Self {
+    /// Bind the snapshot's path, refusing unless the storage contract still
+    /// promises an atomic, damage-refusing snapshot. This is where a restart
+    /// begins, so it is where the premise is checked.
+    fn new(state_dir: &Path) -> Result<Self, String> {
+        check_live_ledger_snapshot_contract()?;
+        Ok(Self {
             path: state_dir.join("ledger.json"),
-        }
+        })
     }
 
     /// Read the durable snapshot. A missing file means a fresh ledger (the
@@ -415,7 +484,7 @@ impl SharedLedger {
     /// TLS — so `allocate` refuses instead of queueing into a pump that is not
     /// there.
     pub fn open(state_dir: &Path) -> Result<Self, String> {
-        Self::new(None, Some(LedgerFile::new(state_dir)))
+        Self::new(None, Some(LedgerFile::new(state_dir)?))
     }
 
     fn new(
@@ -1328,7 +1397,7 @@ pub fn state_digest(ledger: &SharedLedger) -> String {
 /// node the running process uses, so the answer is the state the log implies,
 /// not a second interpretation of the ledger file.
 pub fn state_dir_job(directory: &Path, job: &str) -> Result<String, String> {
-    let snapshot = LedgerFile::new(directory).load()?;
+    let snapshot = LedgerFile::new(directory)?.load()?;
     let log = snapshot
         .bank
         .into_iter()
@@ -1405,7 +1474,7 @@ impl ConsensusEngine for ReplayEngine {
 /// [`SharedLedger::open`] does would re-propose from the outbox and rewrite the
 /// snapshot, which is exactly the shared write D11 rules out.
 pub fn state_dir_digest(directory: &Path) -> Result<String, String> {
-    let snapshot = LedgerFile::new(directory).load()?;
+    let snapshot = LedgerFile::new(directory)?.load()?;
     Ok(digest_of(
         snapshot
             .bank
@@ -1661,10 +1730,11 @@ async fn start_replica(
     .map_err(|error| format!("replica {} runtime config: {error}", config.replica.get()))?
     .with_auto_schedules()
     .map_err(|error| format!("replica {} schedules: {error}", config.replica.get()))?;
+    // D19-HOOK: H05 (storage: consensus runtime snapshot)
+    check_live_runtime_snapshot_contract()?;
     let consensus = NetworkConsensusHandler::new(
         runtime_config,
         recorder_clients.clone(),
-        // D19-HOOK: H05 (storage: consensus runtime snapshot)
         FileRuntimeStore::new(
             node_dir.join("runtime.snapshot"),
             PostcardRuntimeCodec::default(),
@@ -1686,10 +1756,11 @@ async fn start_replica(
     // The catch-up task reads this replica's decisions from the same runtime the
     // server applies them with, so both share one handler.
     let consensus = Arc::new(consensus);
+    // D19-HOOK: H06 (storage: durable submission journal)
+    let journal_bytes = check_live_submission_journal_contract()?;
     let submissions = DeduplicatingSubmissionHandler::new(
         SharedSubmissionHandler(Arc::clone(&consensus)),
-        // D19-HOOK: H06 (storage: durable submission journal)
-        FileSubmissionJournal::open(node_dir.join("submission-journal.bin"), MAX_JOURNAL_BYTES)
+        FileSubmissionJournal::open(node_dir.join("submission-journal.bin"), journal_bytes)
             .map_err(|error| {
                 format!(
                     "replica {} submission journal: {error}",
@@ -1697,6 +1768,7 @@ async fn start_replica(
                 )
             })?,
     );
+    check_live_recorder_snapshot_contract()?;
     let recorder = DurableRecorderCore::new(
         RecorderConfig::new(config.replica, members.clone(), 1).map_err(|error| {
             format!("replica {} recorder config: {error}", config.replica.get())
@@ -1912,12 +1984,15 @@ impl NetworkCluster {
         deployment.validate().map_err(storage_error)?;
         let metrics = Arc::new(NetworkMetrics::default());
         let (submitted_tx, submitted_rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let ledger = SharedLedger::new(Some(submitted_tx), Some(LedgerFile::new(state_dir)))
-            .map_err(|error| {
-                rust_quepaxa::QuePaxaError::StorageError(format!(
-                    "could not load the durable ledger: {error}"
-                ))
-            })?;
+        let ledger = SharedLedger::new(
+            Some(submitted_tx),
+            Some(LedgerFile::new(state_dir).map_err(storage_error)?),
+        )
+        .map_err(|error| {
+            rust_quepaxa::QuePaxaError::StorageError(format!(
+                "could not load the durable ledger: {error}"
+            ))
+        })?;
 
         let mut nodes = Vec::new();
         for member in deployment.members.iter().take(LIVE_NODES) {
@@ -2042,7 +2117,7 @@ mod tests {
     use crate::signing::Keypair;
     use unfer_protocol::channel_contracts::{
         Authentication, CapWitness, DecisionKind, Delivery, DuplicateScope, FaultModel, Location,
-        Loss, Repo, SchemaId, UsageCap,
+        Loss, MAX_SUBMISSION_JOURNAL_BYTES, Repo, SchemaId, UsageCap,
     };
     use unfer_protocol::{IdentityOp, IdentityOpKind};
 
@@ -2185,6 +2260,81 @@ mod tests {
         );
     }
 
+    /// The storage gate has three premises and each must refuse a contract that
+    /// drops it: the sync comes before the publish, damage is refused rather
+    /// than reset, and the journal carries the byte bound its exactly-once claim
+    /// rests on.
+    #[test]
+    fn the_storage_gate_refuses_a_snapshot_that_is_not_crash_safe() {
+        use unfer_protocol::storage_contracts::{PublishProtocol, RecoveryRule, SyncPoint};
+
+        let build = |publish, recovery| {
+            let writer = Location::new(Repo::Unfer, "writer.rs", "save").unwrap();
+            let reader = Location::new(Repo::Unfer, "writer.rs", "load").unwrap();
+            let writers = UsageCap::new("writers", 1, CapWitness::StaticLayout).unwrap();
+            StorageContract::new(
+                writer,
+                reader,
+                SchemaId::new("test.snapshot", 1).unwrap(),
+                publish,
+                recovery,
+                writers,
+            )
+            .unwrap()
+        };
+
+        for contract in [
+            consensus_runtime_snapshot_contract().unwrap(),
+            consensus_submission_journal_contract().unwrap(),
+            consensus_recorder_snapshot_contract().unwrap(),
+            consensus_ledger_snapshot_contract().unwrap(),
+        ] {
+            check_storage_contract("live snapshot", Ok(contract.clone()))
+                .expect("the live storage boundary is admissible");
+        }
+
+        let late_sync = build(
+            PublishProtocol::AtomicReplace {
+                sync: SyncPoint::AfterPublish,
+            },
+            RecoveryRule::MissingIsEmptyCorruptRefused,
+        );
+        let error = check_storage_contract("late sync", Ok(late_sync)).unwrap_err();
+        assert!(
+            error.contains("not a crash-safe snapshot"),
+            "unexpected refusal: {error}"
+        );
+
+        let reset = build(
+            PublishProtocol::AtomicReplace {
+                sync: SyncPoint::BeforePublish,
+            },
+            RecoveryRule::ResetOnDamage,
+        );
+        let error = check_storage_contract("reset", Ok(reset)).unwrap_err();
+        assert!(
+            error.contains("not a crash-safe snapshot"),
+            "unexpected refusal: {error}"
+        );
+
+        let unbounded = build(
+            PublishProtocol::AtomicReplace {
+                sync: SyncPoint::BeforePublish,
+            },
+            RecoveryRule::MissingIsEmptyCorruptRefused,
+        );
+        let error = journal_bytes(&unbounded).unwrap_err();
+        assert!(
+            error.contains("no byte bound"),
+            "unexpected refusal: {error}"
+        );
+
+        assert_eq!(
+            journal_bytes(&consensus_submission_journal_contract().unwrap()).unwrap(),
+            MAX_SUBMISSION_JOURNAL_BYTES as usize
+        );
+    }
+
     fn tx(label: u64) -> ConsensusTransaction {
         let did = Keypair::generate();
         ConsensusTransaction::IdentityOp(IdentityOp {
@@ -2266,7 +2416,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let (pump, _receiver) = mpsc::unbounded_channel();
-        let ledger = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        let ledger = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir).unwrap())).unwrap();
         let original = std::fs::metadata(&dir).unwrap().permissions();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
         let reserved = ledger.allocate(tx(1));
@@ -2534,7 +2684,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let (pump, mut proposed) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let ledger = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        let ledger = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir).unwrap())).unwrap();
         ledger
             .with_jobs(|jobs| {
                 jobs.set_deployment("deploy-1");
@@ -2553,7 +2703,7 @@ mod tests {
 
         // Reopen: the pending command is re-proposed from the durable outbox.
         let (pump, mut reproposed) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let reopened = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        let reopened = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir).unwrap())).unwrap();
         let (_, proposed_after) = reproposed
             .try_recv()
             .expect("a pending job command survives a restart");
@@ -2570,7 +2720,7 @@ mod tests {
         drop(reopened);
 
         let (pump, mut nothing) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let _quiet = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        let _quiet = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir).unwrap())).unwrap();
         assert!(
             nothing.try_recv().is_err(),
             "a decided command is not re-proposed"
@@ -2714,7 +2864,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("unfer-ledger-file-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let file = Some(LedgerFile::new(&dir));
+        let file = Some(LedgerFile::new(&dir).unwrap());
 
         // Phase 1: one committed, one still queued in the outbox.
         let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
@@ -2742,8 +2892,8 @@ mod tests {
 
         // Phase 3: reload once more; everything is in the bank now.
         let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let ledger =
-            SharedLedger::new(Some(submitted), Some(LedgerFile::new(&dir))).expect("reload");
+        let ledger = SharedLedger::new(Some(submitted), Some(LedgerFile::new(&dir).unwrap()))
+            .expect("reload");
         assert_eq!(ledger.committed(), 2);
         assert!(ledger.state.lock().unwrap().outbox.is_empty());
 
@@ -2761,7 +2911,7 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let ledger_file = LedgerFile::new(&dir);
+        let ledger_file = LedgerFile::new(&dir).unwrap();
         assert!(
             ledger_file.load().is_ok(),
             "a missing ledger file is a fresh ledger, not an error"
@@ -2771,7 +2921,7 @@ mod tests {
         let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
         // A corrupt durable ledger must propagate as an error, never silently
         // reset the committed log to empty (the old `unwrap_or_default` path).
-        let error = SharedLedger::new(Some(submitted), Some(LedgerFile::new(&dir)))
+        let error = SharedLedger::new(Some(submitted), Some(LedgerFile::new(&dir).unwrap()))
             .expect_err("corrupt ledger must not load");
 
         let _ = std::fs::remove_dir_all(&dir);

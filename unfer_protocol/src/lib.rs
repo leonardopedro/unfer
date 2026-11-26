@@ -32,6 +32,7 @@ pub mod ops;
 pub mod posture;
 pub mod preset;
 pub mod skills;
+pub mod storage_contracts;
 pub mod submission;
 pub mod summarize;
 pub mod symbols;

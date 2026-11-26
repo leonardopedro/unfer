@@ -833,16 +833,32 @@ impl CommutativeFold {
 pub enum ContractError {
     EmptyField(&'static str),
     ZeroSchemaVersion,
-    ZeroCapacity { name: &'static str },
+    ZeroCapacity {
+        name: &'static str,
+    },
     PerConnectionDedupCannotBeExactlyOnce,
     PromotionNeedsDedup,
     MissingCompleteness,
     LocalTimeoutIsNotCompleteness,
-    NotCommutative { op: FoldOp },
+    NotCommutative {
+        op: FoldOp,
+    },
     ZeroQuorumThreshold,
-    QuorumExceedsMembers { threshold: usize, members: usize },
+    QuorumExceedsMembers {
+        threshold: usize,
+        members: usize,
+    },
     OrderingDoesNotCoverRetries,
     NotExactlyOnce,
+    /// A storage boundary claims one writer; two writers on one path have no
+    /// publish order.
+    NotSingleWriter {
+        writers: u64,
+    },
+    /// A snapshot's name became visible before its bytes were synced.
+    SnapshotPublishedBeforeSync,
+    /// A damaged snapshot was reset to a default instead of refused.
+    SilentResetOnDamage,
 }
 
 impl fmt::Display for ContractError {
@@ -880,6 +896,16 @@ impl fmt::Display for ContractError {
             }
             ContractError::NotExactlyOnce => {
                 f.write_str("the delivery guarantee is not exactly-once")
+            }
+            ContractError::NotSingleWriter { writers } => write!(
+                f,
+                "a storage boundary has one writer at a time, not {writers}"
+            ),
+            ContractError::SnapshotPublishedBeforeSync => f.write_str(
+                "a snapshot published before its sync can be lost while its name survives",
+            ),
+            ContractError::SilentResetOnDamage => {
+                f.write_str("a damaged snapshot must be refused, not reset to an empty state")
             }
         }
     }
