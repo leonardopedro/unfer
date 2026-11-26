@@ -84,9 +84,32 @@ for different Hamiltonians.
    is zero, unlike changing the physical packet spread at fixed Hamiltonian.
    *Implemented*: the diagonal phase unitary `U = exp(iΣ_m θ_m n_m)` in
    [`ScalarMomCont::hamiltonian_with`](../nested_fock_algebra/src/phi4_momentum.rs)
-   with the seed rotated by the same phases; the record's exact response is zero
-   and the operator's window matrix differs (see
-   [§5.3](VERIFY_PHI4_MOMENTUM.md)).
+   with the seed rotated by the same phases. **Why its exact response is zero.**
+   With `h' = U h U†` and `ψ' = Uψ`, the exponential factorises the same way,
+   `e^{-it h'} = U e^{-it h} U†`, so for any observable transported as
+   `O' = U O U†` the amplitude is equal term by term,
+   `⟨ψ'|e^{-it h'} O' e^{it h'}|ψ'⟩ = ⟨ψ|e^{-it h} O e^{it h}|ψ⟩`: no window size,
+   rank or cutoff can produce a response, so the control's exact arm must agree
+   in bits, not merely to solver precision. A nonzero exact response would mean
+   the transport itself is wrong, which is why the conjugation identity
+   `h' Γ(U)ψ = Γ(U)hψ` is checked symbolically before either solve
+   (`1.1e-15` here). The compressed arm is *not* zero by construction — the two
+   arms solve different matrices in different Krylov bases, so each carries its
+   own compressive defect — and it measures `3.1e-15` inside an `8.09e-5`
+   budget.
+
+   That is the contrast with the `width_k` response: changing the physical
+   packet at fixed `h` moves the exact return probability by `5.6e-2` and does
+   exclude zero, while a pure change of basis cannot. The chosen `U` is what the
+   model's substitution API expresses directly, and the pair `(q, p)` is
+   unnormalized, so the transport is
+   the squeeze `q_r → cos θ_r q_r + 2 sin θ_r p_r`,
+   `p_r → cos θ_r p_r − ½ sin θ_r q_r`. `θ_φ = 0` keeps the one-quantum seed
+   bit-identical (a nonzero `φ` angle is only a global phase for that seed),
+   while `‖P h' P − P h P‖_F = 78.6` on the 35-label window shows the operator
+   really changed. The model crate pins that number with a floor in
+   `change_of_basis_changes_the_window_operator_matrix`; the measured values are
+   in [§5.3](VERIFY_PHI4_MOMENTUM.md).
 
 ## 4. First numerical test of a quartic coupling distinct momenta
 
