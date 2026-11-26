@@ -1021,6 +1021,7 @@ impl Sim {
 /// that sharing: the node sees the process's view, and a restore reuses it.
 struct SharedEngine(Arc<EngineView>);
 
+// D19-HOOK: H14 (simulator: scheduler-supplied engine view)
 impl ConsensusEngine for SharedEngine {
     fn submit(&self, tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
         self.0.submit(tx)

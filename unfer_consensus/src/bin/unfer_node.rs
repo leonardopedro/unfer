@@ -146,6 +146,7 @@ fn submit(
         .map_err(|error| format!("could not start the client runtime: {error}"))?;
     runtime.block_on(async {
         let client = submit_client(&config, address)?;
+        // D19-HOOK: H13 (send: standalone client submission over TLS)
         match client.submit(id, vec![value]).await {
             Ok(SubmissionOutcome::Committed(decision)) => {
                 println!("{{\"outcome\":\"committed\",\"slot\":{}}}", decision.slot.get());

@@ -109,6 +109,7 @@ struct LedgerFile {
     path: PathBuf,
 }
 
+// D19-HOOK: H10 (storage: atomic ledger snapshot)
 impl LedgerFile {
     fn new(state_dir: &Path) -> Self {
         Self {
@@ -1348,6 +1349,7 @@ where
                 + '_,
         >,
     > {
+        // D19-HOOK: H01 (send: submission forwarded to the consensus handler)
         self.0.submit(submission)
     }
 
@@ -1357,6 +1359,7 @@ where
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = rust_quepaxa::Result<()>> + Send + '_>,
     > {
+        // D19-HOOK: H11 (receive: peer decisions applied by the handler)
         self.0.receive_decisions(decisions)
     }
 }
@@ -1369,6 +1372,7 @@ where
 /// send the decisions behind it through the transport's own
 /// `InformDecisions` request, which the peer's recorder and state machine apply
 /// in slot order exactly as they would a live decision.
+// D19-HOOK: H02 (retry: catch-up push to a peer behind the coalition)
 async fn catch_up_loop<V, C, S, E>(
     self_id: ReplicaId,
     peers: Vec<C>,
@@ -1385,6 +1389,7 @@ async fn catch_up_loop<V, C, S, E>(
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return,
+            // D19-HOOK: H03 (timer: periodic catch-up probe)
             _ = tokio::time::sleep(CATCH_UP_INTERVAL) => {}
         }
         let head = ledger.committed();
@@ -1501,6 +1506,7 @@ async fn start_replica(
         .members
         .iter()
         .map(|recorder| {
+            // D19-HOOK: H04 (send: recorder RPC client)
             TlsRecorderClient::new(
                 config.replica,
                 recorder.replica,
@@ -1531,6 +1537,7 @@ async fn start_replica(
     let consensus = NetworkConsensusHandler::new(
         runtime_config,
         recorder_clients.clone(),
+        // D19-HOOK: H05 (storage: consensus runtime snapshot)
         FileRuntimeStore::new(
             node_dir.join("runtime.snapshot"),
             PostcardRuntimeCodec::default(),
@@ -1554,6 +1561,7 @@ async fn start_replica(
     let consensus = Arc::new(consensus);
     let submissions = DeduplicatingSubmissionHandler::new(
         SharedSubmissionHandler(Arc::clone(&consensus)),
+        // D19-HOOK: H06 (storage: durable submission journal)
         FileSubmissionJournal::open(node_dir.join("submission-journal.bin"), MAX_JOURNAL_BYTES)
             .map_err(|error| {
                 format!(
@@ -1566,6 +1574,7 @@ async fn start_replica(
         RecorderConfig::new(config.replica, members.clone(), 1)
             .map_err(|error| format!("replica {} recorder config: {error}", config.replica.get()))?,
         Arc::new(AllowAllAvailability),
+        // D19-HOOK: H07 (storage: recorder snapshot)
         FileRecorderStore::new(
             node_dir.join("recorder.snapshot"),
             PostcardRecorderCodec::default(),
@@ -1577,6 +1586,7 @@ async fn start_replica(
             config.replica.get()
         )
     })?;
+    // D19-HOOK: H08 (receive: mutual-TLS node server)
     let server = NetworkNodeServer::bind(
         deployment.members[index].address,
         deployment.deployment,
@@ -1646,6 +1656,7 @@ pub fn submit_client(
     address: SocketAddr,
 ) -> Result<TlsSubmitClient, String> {
     let tls = config.tls()?;
+    // D19-HOOK: H09 (send: mutual-TLS submission client)
     Ok(TlsSubmitClient::new(
         config.client_id,
         config.deployment.deployment,
@@ -1805,6 +1816,7 @@ impl NetworkCluster {
         let tls = MutualTlsConfigs::new(&client.identity, deployment.roots()).map_err(|error| {
             rust_quepaxa::QuePaxaError::TransportError(format!("client TLS setup failed: {error}"))
         })?;
+        // D19-HOOK: H15 (send: in-process harness submission client)
         let submit_client = TlsSubmitClient::new(
             client.client_id,
             deployment.deployment,
@@ -1827,9 +1839,11 @@ impl NetworkCluster {
                 // commit to be applicable.
                 loop {
                     let request_id = pump_ledger.next_request_id();
+                    // D19-HOOK: H16 (send: harness retry with a fresh request id)
                     match submit_client.submit(request_id, vec![value.clone()]).await {
                         Ok(_) => break,
                         Err(error) => {
+                            // D19-HOOK: H17 (timer: harness retry backoff)
                             tokio::time::sleep(Duration::from_millis(50)).await;
                             eprintln!("quepaxa submit retried for id {id}: {error:?}");
                         }
