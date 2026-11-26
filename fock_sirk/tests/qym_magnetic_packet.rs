@@ -139,3 +139,40 @@ fn mixed_entry_and_occupied_packet_flow() {
         }
     }
 }
+
+#[test]
+fn global_colour_singlet_cubic_entry() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../docs/fixtures/qym_magnetic_packet.json")).unwrap();
+    let k: f64 = fixture["entry_decimal"].as_str().unwrap().parse().unwrap();
+    let expected: f64 = fixture["global_colour_packet"]["singlet_entry_at_g1"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut singlet = NestedVector::new();
+    let mut words = Vec::new();
+    // For each cyclic choice of a, the two orders of b,c carry opposite signs.
+    for a in 0..3 {
+        let b = (a + 1) % 3;
+        let c = (a + 2) % 3;
+        for (j, l, sign) in [(b, c, 1.0), (c, b, -1.0)] {
+            let modes = [a, 3 + j, 6 + l];
+            let occupation = JointInnerBasis::new(modes.map(|mode| (mode, 1)), []).unwrap();
+            let outer = JointOuterBasis::bosonic([(occupation, 1)]).unwrap();
+            singlet.insert(outer, C::from(sign / 6_f64.sqrt()));
+            words.push(
+                InnerExpr::Product(modes.map(InnerExpr::coordinate).to_vec())
+                    .scaled(C::from(k * sign)),
+            );
+        }
+    }
+    let initial = seed(label(0, 0, 0));
+    let cubic = InnerExpr::Sum(words);
+    let image = cubic.d_gamma(&initial, ActionLimits::default()).unwrap();
+    let adjoint = cubic.d_gamma(&singlet, ActionLimits::default()).unwrap();
+    assert_eq!(image.len(), 6);
+    assert!((joint_inner_product(&singlet, &singlet) - 1.0).norm() < 1e-14);
+    assert!((joint_inner_product(&singlet, &image) - expected).norm() < 1e-14);
+    assert!((joint_inner_product(&initial, &adjoint) - expected).norm() < 1e-14);
+}

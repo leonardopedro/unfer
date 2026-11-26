@@ -1,4 +1,21 @@
-# Small Edge0 decision model with required RLCD
+# [RETIRED] Small Edge0 decision model with RLCD (historical R9 spec)
+
+> **Status: RETIRED (2026-11-25).**
+> 1. **RLCD is discontinued** and is no longer part of the active `pcnl` roadmap.
+> 2. **Historical record (2026-11-15..16):** Mechanics E0–E5 were implemented in
+>    `src/edge0_{world,model,rlcd,campaign,potential}.rs` and tested in
+>    `tests/edge0_rlcd.rs` and `tests/d_track.rs`; the declared 5-seed campaign
+>    was executed and recorded in [PCNL_STATUS.md](../docs/PCNL_STATUS.md) (where
+>    RLCD slightly trailed the supervised CE+Brier comparator at `+0.00223 ± 0.00184`
+>    Brier excess).
+> 3. **Active replacement:** See **R14** in [RESEARCH_PLAN.md](RESEARCH_PLAN.md)
+>    and packets **P0–P7** in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the
+>    active work order (modified pCNL for diverse transformer configuration
+>    ensembles over large good-enough loss regions).
+
+---
+
+*Archived specification below (2026-11-15), preserved for cross-reference integrity:*
 
 Status: proposed research and development, 2026-11-15; no implementation, training,
 numerical test or Lean compilation is claimed here. **RLCD is required**, including a

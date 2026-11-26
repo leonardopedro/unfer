@@ -5,7 +5,7 @@ The integration nodes evaluate packet integrals; they do not define a spatial la
 """
 from fractions import Fraction
 import json
-from math import cos, exp, fsum, isqrt, pi, sin
+from math import cos, exp, fsum, isqrt, pi, sin, sqrt
 from pathlib import Path
 
 
@@ -92,6 +92,25 @@ def check_action_coefficients(coefficients):
             assert abs(wall-coefficients['wall_12_13'][j-2]) < 1e-13
 
 
+def check_local_gauge_projection():
+    """Integrate the omitted radial profile directly with the 3D volume element."""
+    def profile(r):
+        return exp(-pi * r*r)
+
+    def radial(f, panels):
+        return integrate(lambda r: 2*pi*r*r * f(profile(r)), 6, panels)
+
+    for panels in (192, 384):
+        norm_sq = radial(lambda w: w*w, panels)
+        projection = radial(lambda w: w**3, panels) / norm_sq
+        exact_two_steps = radial(lambda w: w**4, panels) / norm_sq
+        residual = radial(lambda w: (w*w - projection*w)**2, panels) / norm_sq
+        assert abs(projection - (2/3)**1.5) < 2e-14
+        assert abs(residual - (sqrt(1/8) - 8/27)) < 2e-14
+        assert abs(exact_two_steps - projection**2 - residual) < 2e-14
+    print(f'Local gauge rotation: omitted squared norm per unit input = {residual:.15f}')
+
+
 def exp_negative_bounds(x):
     """For 0 ≤ x/64 < 1 bracket exp(-x/64) by alternating partial sums."""
     y = x / 64
@@ -127,6 +146,7 @@ def main():
     reference = Path(__file__).resolve().parents[1] / 'docs/fixtures/qym_magnetic_packet.json'
     record = json.loads(reference.read_text())
     assert record['schema'] == 'qym-cubic-continuous-packet/v1' and record['coupling'] == 1
+    check_local_gauge_projection()
     check_action_coefficients(record['packet_action'])
     lo, hi = exact_enclosure()
     target = Fraction(record['entry_decimal'])

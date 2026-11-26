@@ -1,6 +1,159 @@
 # pcnl research and development plan
 
-## R13 — active plan for objective-based continual learning with numerical-vector outputs (2026-11-22)
+## R14 — active plan: adapted pCNL for diverse transformer configuration ensembles (2026-11-25)
+
+**Deliverable.** Construct and maintain a **diverse ensemble of transformer
+configurations** $\{\theta_1, \dots, \theta_M\}$ via a satisficing modification of the
+pCNL algorithm. Rather than collapsing onto a narrow zero-loss optimum, the sampler
+targets a **large, high-volume region** in parameter/configuration space that fits the
+training data (or training loss in reinforcement learning) **good enough** — optimizing
+moderately without radical minimization and without sacrificing configuration variability.
+R14 governs all new implementation and acceptance. **R9 (RLCD) is retired** and no
+longer pursued; R0–R13 below remain the preserved research record.
+
+### Present state (2026-11-25) and why the pivot fits the evidence
+
+| Existing work / evidence | What it established (recorded in [PCNL_STATUS.md](../docs/PCNL_STATUS.md)) | Role in R14 |
+|---|---|---|
+| `src/vector_model.rs`, `examples/vector_{regression,basins,stream}.rs`, `logs/pcnl_r13_gates/`, `scripts/check-pcnl-gates` (R13) | Exact MH mixing passes on the 34-dim readout conditional (HMC `R̂ 1.00935`, bulk ESS `3000`; CN `R̂ 1.00616`, ESS `620.9`), while full 57,378-dim sharp Gibbs sampling hits a hard geometry wall (`R̂ 2.0–3.0`, bulk ESS `4.5–5.3` across pilot/Hessian/low-rank HMC, parallel tempering with `0/240` swaps at `ΔU ~ 6e3–1e4`, and 5,000-move hit-and-run). Meanwhile `vector_basins` finds distinct basins of comparable test RMSE (`0.070–0.087`) at relative distance `1.92–2.21`, and full-convergence Adam memorizes train (`0.000286` vs test `0.099`, readout 90% coverage `0.158`). | Supplies the 4-block transformer, active-attention `init_flat_prior`, `EnergyTarget`, and MH kernels. R13's $O(10^4)$ sharp-energy wall motivates replacing sharp Gibbs with a bounded-energy good-enough region. |
+| `src/model.rs`, `src/sampler.rs`, `src/task.rs`, `src/target.rs`, `src/subspace.rs`, `src/manifest.rs` (R0–R6) | nGPT-lite cosine vs standard transformer, unadjusted SG-pCNL, exact MH-pCN, affine subspace charts, run manifests. | Core sequence transformer and scalable unadjusted SG-pCNL engine for multi-configuration diffusion. |
+| `src/mdp.rs`, `src/policy_model.rs`, `src/policy_readout.rs`, `src/dt_subspace.rs` (R7, D5) | Synthetic MDP, policy transformer, trajectory-clustered paired delta, and decoder audit (per-step BMA vs per-episode draw). | Direct foundation for R14's non-RLCD RL training-loss ensemble track. |
+| `src/certificate.rs`, `src/approx_pricing.rs`, `src/dim_benchmark.rs`, `src/linear_gaussian.rs`, `src/continual.rs` (R8, R11) | D0–D6 verification primitives (target/kernel identity, D3 SG bias pricing, coupled benchmarks) and continual-stream prior carry. | Verification primitives for R14 targets, bias budgets, and continual streams. |
+| `src/edge0_*.rs`, `tests/edge0_rlcd.rs` (R9) | Executed 2026-11-15..16; RLCD slightly trailed the supervised CE+Brier comparator (`+0.00223 ± 0.00184` Brier excess). | **Retired (2026-11-25)**; frozen historical code, no further development. |
+
+### 14.1 The satisficing ("good-enough region") potential
+
+Let $L(\theta) \ge 0$ be a declared training loss (either supervised loss on a data
+prefix or a differentiable RL training loss) and $P_0 = N(m, C)$ a proper Gaussian
+prior. Fix a declared good-enough loss ceiling $\tau > 0$ (chosen near an acceptable
+fit/noise level on development data, never $0$), a confinement strength $\kappa > 0$, a
+smoothing scale $\delta > 0$, and an optional gentle optimization tilt $\alpha \ge 0$
+with $\alpha \ll \kappa$. Define the one-sided satisficing potential and target:
+
+$$
+\Phi_{\tau,\kappa,\alpha}(\theta)
+  = \kappa\,\psi_\delta\big(L(\theta) - \tau\big) + \alpha\,L(\theta),
+\qquad
+\pi_{\tau,\kappa,\alpha}(d\theta)
+  = Z^{-1}\exp\!\big[-\Phi_{\tau,\kappa,\alpha}(\theta)\big]\,P_0(d\theta),
+$$
+
+where $\psi_\delta(u)$ is a smooth nondecreasing hinge that vanishes (or flattens) for
+$u < 0$ and grows for $u > 0$ — specifically softplus $\delta\log(1 + e^{u/\delta})$
+or $C^1$ Huberized $\frac{1}{2}\max(0, u)^2$.
+
+This potential implements "optimize moderately without radicalism and without
+sacrificing variability" by construction:
+1. **Flatness inside $\{L(\theta) \le \tau\}$.** Outside the good-enough set,
+   $\kappa\,\psi_\delta'(L-\tau)\nabla L(\theta)$ drives $\theta$ inward. Once
+   $L(\theta) \le \tau$, the hinge gradient shuts off ($\psi_\delta' \approx 0$);
+   radical memorization gradients vanish, and $P_0$ weights configurations by **prior
+   volume**, naturally favoring wide, high-volume feasible regions over isolated sharp
+   minima. Setting $\alpha > 0$ ($\alpha \ll \kappa$) adds a controlled nudge toward
+   lower loss inside the feasible set without restoring sharp $O(10^4)$ spikes.
+2. **Bounded energy scale.** Inside the plateau, $\Phi_{\tau,\kappa,\alpha}$ stays
+   $O(1)$–$O(10)$ rather than R13's $O(10^4)$, allowing prior-preserving pCNL steps to
+   maintain high acceptance while exploring the feasible manifold.
+3. **Proper target contract.** When $L \ge 0$ and $\alpha \ge 0$, $\Phi_{\tau,\kappa,\alpha} \ge 0$,
+   preserving D0/D1 proper-target existence ($0 < Z < \infty$). Every checkpoint and
+   manifest versions $\tau, \kappa, \alpha, \delta$, hinge family, loss reduction, and $P_0$.
+
+### 14.2 Adapting pCNL for transformer configuration ensembles
+
+In standardized prior coordinates $P_0 = N(m, C)$, the local pCNL proposal is
+
+$$
+\theta' = m + \rho(\theta - m) - \eta\,C\nabla\Phi_{\tau,\kappa,\alpha}(\theta)
+          + \sqrt{1 - \rho^2}\,C^{1/2}\xi,
+\qquad \xi \sim N(0, I).
+$$
+
+Inside $\{L(\theta) \le \tau\}$ where $\nabla\Phi \approx \alpha\nabla L$, this reduces
+to near-prior pCN diffusion softly reflected at the $L = \tau$ boundary.
+
+- **Two explicit sampler tiers.** Maintain (1) a **reference tier** using full-data
+  MH-adjusted pCNL (optionally mixed with prior refresh $r > 0$) for exact target
+  recovery on low-dimensional controls and small transformer checks, and (2) a **scalable
+  ensemble tier** using unadjusted or minibatch SG-pCNL (`src/sampler.rs`), priced
+  against the reference tier via D3 (`src/approx_pricing.rs`).
+- **Multi-basin moderate-entry ensemble.** Initialize $M$ members from distinct
+  prior-scale draws (`init_flat_prior`, keeping $W_q/W_k$ attention active), optionally
+  run **moderate warm entry** that stops at first entry into $L(\theta) \le \tau$ (or a
+  predeclared slowdown knee — never full-convergence memorization), and then run adapted
+  pCNL per member in $\Phi_{\tau,\kappa,\alpha}$ to spread across the local feasible
+  volume. Retain one configuration per member (or thinned independent runs) as the
+  $M$-configuration ensemble $\{\theta_1, \dots, \theta_M\}$.
+- **Honest scope on global weights.** Do not claim that local chains in 57k dimensions
+  recover global multi-basin equilibrium weights. Separate *verified equilibrium
+  recovery* (checked on low-dimensional plateau-vs-spike quadrature targets) from
+  *good-enough ensemble quality* (measured on transformer benchmarks by in-region fit,
+  functional diversity, flatness, and held-out/OOD generalization).
+- **Configuration scope.**
+  - *Stage 1 (immediate):* Homogeneous weight configurations of the existing 4-block
+    vector transformer (`src/vector_model.rs`), nGPT-lite cosine transformer
+    (`src/model.rs`), and RL policy transformer (`src/policy_model.rs`).
+  - *Stage 2 (gated):* Heterogeneous architectural/hyperparameter configurations
+    (width, depth, head count, normalization, prior scale), optional functional-space
+    repulsion (explicitly labeled as an interacting ensemble that changes the target from
+    $\pi_{\tau,\kappa,\alpha}^{\otimes M}$, gated behind independent-chain collapse
+    checks), and compact serving/distillation comparisons (R13 §7).
+
+### 14.3 Reinforcement learning training-loss track (non-RLCD)
+
+Apply the identical $\Phi_{\tau,\kappa,\alpha}$ formulation to a differentiable RL
+training loss $L_{\text{RL}}(\theta)$ on `src/mdp.rs` and `src/policy_model.rs` (e.g.,
+behavior-regularized offline RL loss, Bellman/TD residual, or differentiable
+policy-gradient surrogate). **RLCD is explicitly excluded**: do not use the retired
+Edge0 latent-MoE or four-path REINFORCE Brier U-statistic.
+
+The objective is a diverse ensemble of transformer policies that all satisfy the RL
+training-loss ceiling $\tau$ without collapsing to one brittle policy. Evaluation strictly
+separates: (1) RL training-loss satisfaction ($L_{\text{RL}} \le \tau$), (2) policy
+action-distribution diversity across states, and (3) trajectory-clustered rollout return
+(`src/policy_readout.rs` D5 estimator) on both nominal MDPs and perturbed/shifted
+dynamics, explicitly distinguishing per-step policy averaging from once-per-episode
+configuration draws (`src/dt_subspace.rs`).
+
+### 14.4 Metrics, matched-compute comparators, and falsifiers
+
+Every R14 experiment reports four metric families across predeclared equal-compute
+comparators (with $\tau, \alpha, \kappa$ frozen on development data before scoring test):
+
+1. **In-region fit:** fraction of ensemble configurations satisfying $L_{\text{train}} \le \tau$,
+   and training-loss quantiles (checking that members neither escape above $\tau$ nor
+   collapse to $0$).
+2. **Variability & flatness:** pairwise parameter distances/angles, **per-input
+   functional prediction variance/disagreement** on train, ID-test, and OOD inputs,
+   effective rank of the centered $M \times (n_{\text{eval}} q)$ prediction matrix,
+   perturbation loss under finite noise, and the R13 §6 Gaussian-mixture PAC-Bayes upper
+   risk bound.
+3. **Generalization & calibration:** ensemble-mean RMSE / NLL / Brier, 50/80/90/95%
+   interval coverage, normalized residual $z^2$, and continual-stream retention
+   (`examples/vector_stream.rs`).
+4. **RL performance:** trajectory-clustered rollout return and regret under nominal and
+   shifted dynamics.
+
+**Six mandatory matched-compute comparators:** (1) radical single-point optimizer
+(full-convergence Adam/SGD), (2) radical deep ensemble ($M$ full-convergence runs),
+(3) early-stopped / knee-stopped deep ensemble (stopped at $\tau$, no pCNL diffusion),
+(4) sharp Gibbs pCNL ($\tau = 0$), (5) adapted satisficing pCNL ensemble
+($\Phi_{\tau,\kappa,\alpha}$), and (6) prior-only / vacuous-$\tau$ control.
+
+**Falsifiers and stop rules:**
+- *Quadrature gate:* On a low-dimensional plateau-vs-spike test, adapted MH-pCNL must
+  clear `R̂ < 1.01`, `bulk ESS >= 400`, and match analytic plateau/spike masses within MCSE.
+- *Mobility gate:* On the 4-block transformer, adapted pCNL inside $\Phi_{\tau,\kappa,\alpha}$
+  must demonstrate substantially higher acceptance and within-region mobility than R13's
+  sharp-Gibbs runs, or report honestly if curved feasible boundaries still stall local pCNL.
+- *Functional-diversity & utility gate:* Weight-space spread due merely to permutation or
+  scale symmetries does not pass; the ensemble must exhibit non-trivial functional
+  variance/effective rank and report paired ID/OOD/continual/RL-shift comparisons against
+  the matched-cost early-stopped deep ensemble. Negative or inconclusive outcomes are
+  retained and reported without hidden parameter or metric sweeps.
+
+Execution packets **P0–P7** are specified in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).
+
+## R13 — historical record: objective-based continual learning with numerical-vector outputs (2026-11-22; superseded as active plan by R14)
 
 **Deliverable.** Given English text and one retained parameter draw, return
 $f_\theta(x)\in\mathbb R^q$ in named coordinates with application-defined units.
@@ -8,7 +161,9 @@ Negative values, zero, and magnitudes above one are valid. A caller may also req
 a posterior mean vector or coordinate intervals over draws. The probability
 distribution that pCNL approximates lives on the trainable parameters. Pushing its
 draws through the transformer gives uncertainty about its vector prediction.
-R13 governs new implementation and acceptance. R0–R12 below are the research record.
+R14 above now governs new implementation and acceptance; R13's design and verified
+2026-11-22..25 measurements below remain the baseline record. R0–R12 below are the
+earlier research record.
 
 ### What the current checkout provides
 
@@ -381,7 +536,15 @@ the same `38/240`, the train split is memorised (`train_rmse` `0.000286`
 against `test_rmse` `0.099276`), and a `0.013` prediction-band sd against
 `0.099` residuals predicts exactly that coverage.  So both kernels pass: CN
 needs ~4,500 post-burn draws per chain, HMC needs ~750, which is the practical
-reason to prefer HMC here.
+reason to prefer HMC here.  Readout-only runs also print a `calibration` line
+that scores the same 90% bands on the conditioning split (train): it covers
+`480/480` values under both kernels with band half-width `~0.019`, so the
+conditional posterior is calibrated where it is conditioned, and the `0.158`
+is the held-out split's generalisation error.  That line is also the noise-scale
+check: the in-sample residual sd is `0.0043–0.0045` — well below the declared
+`0.05`, because the frozen backbone memorised train — so it is the held-out
+residual (`0.099`) that sets the coverage, not an error in the likelihood or
+the sampler.
 
 **Documented dimension scaling.** `examples/cn_dimension_sweep.rs` samples
 `N(0, I_d)` with the production prior-referenced CN kernel, reporting
@@ -479,7 +642,11 @@ re-executed and needs `--readout-only` — without it `--proposal exact` with
 readout-conditional (dim 34) target. Its ESS was short because the chain was:
 doubling to `--steps 12000 --burn 3000 --draws 9000` (`cn-exact-dense-12k`)
 raises bulk ESS to `1720.5` and tail ESS to `1107.3` with R̂ `1.00423` and the
-same point estimate, so the CN row's mixing caveat is a draw-count effect. The
+same point estimate, so the CN row's mixing caveat is a draw-count effect. A
+`--steps 24000 --draws 21000` probe (`cn-exact-dense-24k`) continues the line
+at bulk ESS `3920.6` / tail `2144.3` / R̂ `1.00274` with the same point
+estimate — 2.28× the 12k ESS for 2× the steps, so ESS keeps scaling with chain
+length rather than plateauing. The
 conclusions those rows support —
 tempering is not viable at this energy scale, jitter does not close the gate —
 hold in the re-runs.
@@ -1683,7 +1850,13 @@ retained draws per chain (20 versus 40), so it is not a clean budget effect.
 It is one seed, and 32k remains a sensitivity/gate check, not a new frozen R12
 score.
 
-## Required application track R9: small Edge0 architecture with RLCD (2026-11-15)
+## R9 (retired 2026-11-25) — historical Edge0 architecture with RLCD (2026-11-15)
+
+> **Retired (2026-11-25):** RLCD is discontinued per project direction and superseded
+> by **R14** above. Mechanics E0–E5 were implemented and the 5-seed campaign was
+> executed on 2026-11-15..16 (see [PCNL_STATUS.md](../docs/PCNL_STATUS.md), where
+> RLCD trailed the supervised CE+Brier comparator). The specification below is preserved
+> as historical record.
 
 **Reinforcement learning for calibrated decisions is required** in this track. The
 Mammoth-1 reference supplies a supervised comparator. Execute the new specification in
@@ -3383,6 +3556,7 @@ suite, and `--all` includes many hours of historical experiments. Do not run it 
 
 ```bash
 ./scripts/pcnl-reproduce --list
+./scripts/check-pcnl-gates --check-manifest
 cargo test --release -p pcnl --locked
 ./scripts/pcnl-reproduce quick
 ./scripts/pcnl-reproduce budget
@@ -3390,6 +3564,16 @@ cargo test --release -p pcnl --locked
 cargo run --release -p pcnl --example subspace_bound
 cargo run --release -p pcnl --example readout_compare
 ```
+
+**R14 definition of done.** Packets **P0–P5** in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)
+are implemented and verified: (1) low-dimensional plateau-vs-spike quadrature recovery
+clears `R̂ < 1.01` and `bulk ESS >= 400`, (2) supervised vector and sequence transformer
+ensemble campaigns measure in-region fit, functional diversity/effective rank, PAC-Bayes
+flatness, and ID/OOD/continual generalization across all six matched-compute comparators,
+and (3) the non-RLCD RL training-loss ensemble track reports training-loss satisfaction,
+action-distribution diversity, and trajectory-clustered nominal + shifted rollout returns.
+Positive, negative, and inconclusive outcomes are recorded in
+[PCNL_STATUS.md](../docs/PCNL_STATUS.md) under R14 before any P6 extensions or promotion.
 
 Run the existing gradient and numerical tests appropriate to each implementation change,
 then the known-target tests added in R0/R1; do not repeat every expensive historical ladder

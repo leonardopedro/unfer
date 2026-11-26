@@ -113,6 +113,26 @@ numer = 2*m4*m0**2 + 4*m2**2*m0
 soft_energy = (2*pi)**2 * width**2 * numer/(2*den)
 check("normalized-soft-curl", soft_energy-5*pi*width**2/2)
 
+# Include all three adjoint colours on each profile. D=triple product is the
+# cubic polynomial acting on a Gaussian seed. Each of its six Hermite words
+# occupies three different modes; distinct words are orthogonal in the iid prior.
+colour_coordinates = sp.symbols("colour0:9")
+colour_rows = sp.Matrix(3, 3, colour_coordinates)
+u_col, v_col, w_col = [colour_rows.row(j).T for j in range(3)]
+determinant = colour_rows.det()
+check("signed-colour-contraction", w_col.dot(u_col.cross(v_col)) - determinant)
+check("opposite-colour-order", v_col.dot(u_col.cross(w_col)) + determinant)
+check("remaining-derivative-leg", u_col.dot(u_col.cross(w_col)) + u_col.dot(u_col.cross(v_col)))
+singlet_words = sp.Poly(determinant, *colour_coordinates).terms()
+assert len(singlet_words) == 6
+assert all(sum(exponents)==3 and max(exponents)==1 for exponents, _ in singlet_words)
+norm_squared = sum(coefficient**2 for _, coefficient in singlet_words)
+check("colour-singlet-norm", norm_squared - 6)
+angle = sp.symbols("angle", real=True)
+rotation = sp.rot_axis3(angle)
+check("constant-colour-rotation", (colour_rows*rotation).det()-determinant)
+check("local-Gauss-escape", sp.diff(z*sp.exp(-pi*z**2),z).subs(z,0)-1)
+
 record = {
     "schema": "qym-cubic-continuous-packet/v1",
     "spatial_units": "Gaussian length 1, Fourier exp(-2 pi i k.x), Lebesgue dx and dk",
@@ -123,6 +143,12 @@ record = {
     "states": "one outer excitation; inner He_0^3 to He_1(X)He_1(Y)He_1(Z), iid N(0,1)",
     "scope": "unreduced Weyl-gauge packet form; no physical spectral or mass witness",
     "soft_control": "i(-k_2,k_1,0) exp(-pi |k|^2/width^2), one colour, curl energy/norm^2 = 5*pi*width^2/2",
+    "global_colour_packet": {
+        "coordinates": "A_1=u X, A_2=v Y+w Z, A_3=0; each amplitude a three-colour row",
+        "inner_bra": "det([X;Y;Z])/sqrt(6) in the product of nine standard normals",
+        "singlet_entry_at_g1": str(sp.N(sp.sqrt(norm_squared)*entry, 30)),
+        "local_gauss_control": "omega=x_3 exp(-pi |x|^2)T^1: at A=0, (d omega)_3(0)=T^1",
+    },
     "coupling": 1,
     "packet_action": {
         "formula": "sum_i (P_i^2 / metric_i + curl_i Q_i^2)/2 + g entry XYZ + g^2 X^2 (wall_12 Y^2 + wall_13 Z^2)/2",

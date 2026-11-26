@@ -1,5 +1,29 @@
 # PLAN M — the mass-gap pipeline (planner side: everything except Lean4 code)
 
+## Replay of the magnetic packet and finite count · 2026-11-25
+
+The continuous packet fixture now includes the cubic colour singlet and a local Gauss
+variation that takes the field outside the nine-amplitude ansatz. The full packet action,
+its Euclidean Fourier convention and the spatial widths are recorded with the coefficient.
+From the repository root, run the symbolic and numerical checks separately.
+
+```sh
+cadabra2-cli -q -n docs/qym_magnetic_packet.cdb
+python3 scripts/check_qym_magnetic_packet.py
+cargo test --release -p fock_sirk --test qym_magnetic_packet
+cargo test --release -p fock_sirk --test mass_gap_exclusion_campaign finite_model_ordered_levels
+```
+
+The last command checks the independently stored counts on both finite reflection blocks.
+To regenerate that fixture, set `QYM_ORDERED_COUNTS_OUTPUT` to its absolute path. The
+original sector Temple row is produced by the separate `finite_model_witness_emission`
+test. Set `QYM_TEMPLE_ROW_OUTPUT` to regenerate the Temple fixture; its default run
+checks the recorded row. At occupation cutoff 10 their results are compatible. Only the combined counts
+establish which sector supplies each of the first two levels of the finite numerical
+matrix. The continuous magnetic packet and this matrix have different operators.
+[Ordered counts](fock_sirk/tests/fixtures/finite_model_witness/qym_g2_n10_ordered.ndjson) ·
+[Physical work order](../timepiece/softmodes.md)
+
 ## Continuous-momentum QYM campaign · 2026-11-24
 
 The next mass-gap campaign targets the full pure Yang–Mills Hamiltonian on continuous

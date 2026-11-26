@@ -1,272 +1,186 @@
-# pcnl development plan — required RLCD and sampler certificates
+# pcnl development plan — adapted pCNL transformer configuration ensembles (R14)
 
-Current work order: 2026-11-15. Read required application track R9 and sampler track R8 in
-[RESEARCH_PLAN.md](RESEARCH_PLAN.md) and mathematical packets Q0–Q7 in
-[timepiece/pcnl.md](../../timepiece/pcnl.md). The results ledger is
-[PCNL_STATUS.md](../docs/PCNL_STATUS.md). This is a plan; no code, tests, experiments or
-Lean compilation are claimed as executed by creating it. All new artifacts below are
-proposed until their implementation and checks are recorded.
+Current work order: **2026-11-25**. Read the active specification **R14** in
+[RESEARCH_PLAN.md](RESEARCH_PLAN.md) and mathematical/sampler packets **Q0–Q7** in
+[timepiece/pcnl.md](../../timepiece/pcnl.md). Recorded measurements live in
+[PCNL_STATUS.md](../docs/PCNL_STATUS.md). This is a plan; no R14 code, tests,
+experiments, or Lean compilation are claimed as executed by creating it. All P0–P7
+artifacts below are proposed until their implementation and checks are recorded.
 
-## E0–E7 — implement the required small Edge0/RLCD research track
+## Present Project State & Track Disposition (2026-11-25)
 
-The concrete specification is [EDGE0_RLCD_PLAN.md](EDGE0_RLCD_PLAN.md). Execute these
-packets in order; their acceptance criteria are future work, not checks already passed.
-The reinforcement stage is required. D0–D7 below govern the separate sampler work.
+| Track / Modules | Status (2026-11-25) | Disposition in active plan |
+|---|---|---|
+| **R14 (`P0–P7`)** | **Active (proposed)** | New work order: modified pCNL for diverse transformer configuration ensembles over large good-enough training-loss regions (supervised and non-RLCD RL). |
+| **R13** (`src/vector_model.rs`, `examples/vector_{regression,basins,stream}.rs`, `logs/pcnl_r13_gates/`, `scripts/check-pcnl-gates`) | Executed diagnostics & baseline | Readout-conditional 34-dim exact gates pass (`R̂ < 1.01`, `ESS >= 400`); full 57,378-dim sharp Gibbs hits geometry/multimodality wall (`ESS ~ 4.5–5.3`). Retained as baseline infrastructure and regression gates. |
+| **R8 (`D0–D6`)** (`certificate.rs`, `dim_benchmark.rs`, `approx_pricing.rs`, `linear_gaussian.rs`, `operator_cert.rs`, `evidence_enclosure.rs`, `tests/{r8_certificates,d_track}.rs`) | Executed mechanics | Retained as reusable verification primitives (claim records, D1/D2 reference checks, D3 bias pricing, D5 trajectory-clustered uncertainty). |
+| **R9 / Edge0-RLCD (`E0–E5`)** (`src/edge0_*.rs`, `tests/edge0_rlcd.rs`, `EDGE0_RLCD_PLAN.md`) | **Retired (2026-11-25)** | Executed 2026-11-15..16 (RLCD trailed CE+Brier comparator). Frozen historical record; no further RLCD development. |
+| **R0–R7, R10–R12** (`model.rs`, `sampler.rs`, `task.rs`, `mdp.rs`, `policy_model.rs`, `policy_readout.rs`, `dt_subspace.rs`, `continual.rs`, `rotation_head.rs`) | Historical record + reusable core | `model.rs`, `sampler.rs`, `task.rs`, `mdp.rs`, `policy_model.rs`, `policy_readout.rs`, `dt_subspace.rs`, and `continual.rs` carry forward directly into R14. |
 
-### E0 — pin the experiment and build the probability oracle
+## P0 — Satisficing potential and ensemble manifest contract
 
-Record Edge0 commit `7b60076`, the chosen latent D/U architecture, our different small-model
-routing/attention rules, software revisions, precision, world manifests, compute caps,
-training-arm identities, expected outputs and acceptance endpoints. Add a tiny finite-world
-generator with exact conditional outcome probabilities for all three question types and
-utility-optimal actions. Expose world IDs before question expansion and prevent overlap
-across train/dev/calibration/test. Predeclare the bounded R9 campaign before final scoring.
+Reuse `src/target.rs::Potential`, `src/vector_model.rs::EnergyTarget`, `src/manifest.rs`,
+and `src/certificate.rs`. Implement a smooth one-sided satisficing potential wrapper
+$\Phi_{\tau,\kappa,\alpha}(\theta) = \kappa\,\psi_\delta(L(\theta)-\tau) + \alpha\,L(\theta)$
+around any differentiable supervised or RL training loss $L(\theta)$:
+- Support smooth hinge options $\psi_\delta$ (softplus $\delta\log(1+e^{u/\delta})$ and
+  $C^1$ Huberized $\frac{1}{2}\max(0,u)^2$), declared loss ceiling $\tau > 0$,
+  confinement weight $\kappa > 0$, and gentle optimization tilt $\alpha \ge 0$ ($\alpha \ll \kappa$).
+- Expose `EnergyTarget` and `Potential` implementations so both `src/vector_model.rs`
+  and `src/target.rs` / `src/sampler.rs` consume the exact same objective and gradient.
+- Require $\Phi_{\tau,\kappa,\alpha} \ge 0$ whenever $L \ge 0$ and $\alpha \ge 0$ so
+  D0/D1 proper-target invariants ($0 < Z < \infty$) hold under the proper Gaussian prior $P_0$.
+- Extend manifest and checkpoint serialization (`src/manifest.rs`, `src/persist.rs`) to
+  record $\tau, \kappa, \alpha, \delta$, hinge kind, loss definition/reduction, $P_0$
+  parameters, initialization policy, and member provenance.
 
-**Acceptance:** an independently enumerated world agrees with the oracle, missing
-observations cannot lower conditional entropy on average, and correlated question
-marginals are not multiplied into a false joint probability.
+**Acceptance:** Finite-difference gradient checks match analytic/autodiff gradients for
+both $\psi_\delta$ variants inside ($L < \tau$), near ($L \approx \tau$), and outside
+($L > \tau$) the plateau; two matched configs produce identical target identities while
+changing $\tau, \kappa, \alpha, \delta$ or $P_0$ changes the target identity; nonfinite
+potentials/gradients fail explicitly.
 
-### E1 — implement the small latent-MoE and typed decision interface
+## P1 — Known-target plateau-vs-spike verification
 
-Create separately named modules for grouped D/U experts, deterministic top-k routing,
-question-independent state encoding, independent question attention, four-path policy and
-typed heads. Start with the R9 configuration and keep total parameters below one million.
-Count all tensors; publish active/total work and parameter counts. Use a dense soft-routing
-reference to check selected-expert implementations. Do not require the large-model engine.
+Add a low-dimensional synthetic target with an exact 1-D/2-D quadrature reference
+(extending `src/target.rs` / `examples/known_target.rs`) comparing:
+1. A broad, high-prior-volume "good-enough" plateau ($L \le \tau$ over a wide region), and
+2. A narrow, deep spike ($L \approx 0$ over tiny prior volume).
 
-**Acceptance:** stable normalized finite probabilities; schema failures surfaced; packed
-and separate questions agree; choice/key permutations obey the specified equivariances;
-ordinal level order is preserved. State cache keys include all varying encoder inputs,
-weights and inference settings. Route prediction, quantization and cache approximation
-are deferred until their prediction error and probability effects can be measured.
+Run exact MH-pCNL (with optional prior-refresh mixture $r > 0$) on $\Phi_{\tau,\kappa,\alpha}$,
+alongside two controls: sharp Gibbs ($\tau = 0$ / high concentration) and radical
+full-convergence Adam.
 
-### E2 — implement genuine RLCD and enumerate its gradient
+**Acceptance:** Four dispersed chains pass `R̂ < 1.01` and `bulk ESS >= 400`; estimated
+plateau mass, spike mass, and coordinate moments match quadrature within MCSE;
+$\Phi_{\tau,\kappa,\alpha}$ places dominant mass on the broad good-enough plateau where
+radical Adam collapses to the narrow spike.
 
-Implement the four-path categorical policy, exact deployed marginal, iid sampled-path
-U-statistic loss, explicit REINFORCE score term, detached valid baselines and direct
-readout/shared-parameter derivatives. Keep independent RNG streams for data, path policy,
-initialization and any later MCMC. Loss and reward signs must be visible in the manifest.
+## P2 — Adapted pCNL ensemble runner on transformer architectures
 
-**Acceptance:** exhaustive finite-support expectation of the gradient equals the exact
-marginal-objective derivative at nonuniform policies/readouts, including shared weights.
-Compare numerical differences with an independent finite-difference reference on the tiny
-fixture. Confirm correctness-only reward fails the proper-distribution optimum test on a
-noisy binary world. A policy-gradient-free readout arm cannot satisfy this packet.
+Build a unified ensemble runner supporting homogeneous weight-configuration ensembles of:
+- `src/vector_model.rs` (`VectorShapes` 4-block transformer with `init_flat_prior` so
+  attention $W_q, W_k$ stay active), and
+- `src/model.rs` (nGPT-lite cosine vs standard sequence transformer).
 
-### E3 — run the supervised control and required reinforcement arms
+Protocol:
+- Initialize $M$ independent prior-scale members (`init_flat_prior`, distinct RNG streams).
+- Support **moderate warm entry**: optional Adam/SGD phase that halts at the first entry
+  into $L(\theta) \le \tau$ (or a predeclared development slowdown knee), never running to
+  zero-loss memorization.
+- Sample/diffuse each member inside $\Phi_{\tau,\kappa,\alpha}$ under two explicit tiers:
+  1. *Reference tier:* full-data MH-adjusted pCNL (+ optional prior-refresh mixture),
+  2. *Scalable ensemble tier:* unadjusted / minibatch SG-pCNL (`src/sampler.rs`), priced
+     against the reference tier using D3 (`src/approx_pricing.rs`) on matched small targets.
+- Serialize/reload full $M$-member configuration ensembles deterministically.
 
-Reuse a common optional supervised warm start. Train the supervised CE+Brier baseline
-and the full RLCD arm with declared equal total budgets. Include exact-marginal Brier
-backpropagation through the policy as a same-objective control; add frozen-policy,
-per-path-score and correctness-reward controls within the campaign cap. The RLCD arm must update the
-sampling policy using proper-score rewards, not merely log its entropy or sample routes.
-Keep MoE load losses/entropy/KL regularizers zero initially or explicitly specify their
-changed objective and budgeted ablation. Use independent outcome labels as rewards.
+**Acceptance:** Checkpointed ensemble round-trips bitwise identically; within-region
+acceptance and parameter movement strictly exceed R13's sharp-Gibbs full-parameter
+ceiling (or any remaining curved-boundary stall is measured and reported explicitly);
+D3 comparison reports the exact bias/discretization budget between reference MH-pCNL
+and scalable SG-pCNL.
 
-**Acceptance:** reproducible manifests and learning traces show policy-gradient updates
-and their estimated uncertainty, plus head updates, held-out scores, route utilization,
-collapse diagnostics and complete cost. The analytic gradient gate must pass before this
-training evidence is interpreted. Supervised success alone does not complete E3.
+## P3 — Variability, fit, and flatness diagnostics
 
-### E4 — evaluate distributions and decisions under the frozen protocol
+Implement a shared diagnostics module evaluating every ensemble $\{\theta_1, \dots, \theta_M\}$
+on four axes:
+1. **In-region training fit:** fraction of members with $L_{\text{train}}(\theta_j) \le \tau$,
+   mean/quantile training loss (verifying neither collapse to $0$ nor escape above $\tau$).
+2. **Parameter & functional variability:** pairwise Euclidean/cosine distances in parameter
+   space, **per-input prediction variance and disagreement** across train/ID/OOD splits, and
+   effective rank (participation ratio) of the centered $M \times (n_{\text{eval}} q)$
+   ensemble prediction matrix.
+3. **Flatness & PAC-Bayes mixture bound:** finite-radius isotropic/prior-scaled perturbation
+   risk around retained configurations and the R13 §6 equal-weight Gaussian-mixture
+   PAC-Bayes upper risk bound (splitting confidence across data and MC draws).
+4. **Generalization & calibration:** ensemble-mean RMSE/NLL/Brier, 50/80/90/95% predictive
+   coverage, and normalized residual $z^2$.
 
-Execute the bounded five-seed/world-split campaign of EDGE0_RLCD_PLAN §5. Fit temperatures
-on development and decision thresholds on calibration only; final test is scored once
-under the frozen comparison protocol. Pair by world and seed, cluster repeated questions
-and labels, and report cost of exactly summing four paths. The optional sampled-path
-serving ablation needs its own error/variance budget and endpoints.
+**Acceptance:** Synthetic permutation-copy ensembles (identical functions, rotated/permuted
+weights) are caught by functional diversity showing zero functional variance/rank 1 despite
+nonzero weight distance; finite-sample PAC-Bayes bounds and MC allowances pass unit tests.
 
-**Acceptance:** a paired uncertainty interval for the prespecified Brier-excess contrast,
-all secondary endpoints and negative seeds retained. Label any improvement in utility,
-proper score or calibration separately. Promote only on the declared endpoint and cost;
-inconclusive/worse results end this campaign without a hidden seed or metric sweep.
+## P4 — Supervised transformer ensemble campaign & matched-compute comparators
 
-### E5 — attach the existing pCNL target without noisy-acceptance shortcuts
+Execute predeclared, bounded comparisons with equal total gradient/evaluation budgets on:
+- **(a) Vector regression & continual stream:** 4-block English-embedding transformer
+  (`src/vector_model.rs`, `examples/vector_stream.rs`, 20 Newsgroups / AG News fixtures),
+  measuring OOD/shift robustness and continual prefix retention.
+- **(b) Sequence task:** nGPT-lite cosine transformer (`src/model.rs`, `src/task.rs`).
 
-Freeze the trained state encoder, router and latent policy, and expose a small head/adapter
-chart through `Potential` and `SubspaceTarget<P>`. Use exact latent-marginal categorical NLL
-for a likelihood posterior, or label a Brier Gibbs target as generalized Bayes. Store
-prior and likelihood separately from total potential. Follow D0/D1 for target identity,
-prior-refresh reference and evidence/rate certification, then D3–D5 for approximations.
+Score all six comparators (thresholds $\tau, \alpha, \kappa$ frozen on development data
+only before touching test):
+1. Radical single-point optimizer (full-convergence Adam/SGD),
+2. Radical deep ensemble ($M$ full-convergence Adam runs),
+3. Early-stopped / knee-stopped deep ensemble (stopped at $\tau$, no pCNL diffusion),
+4. Sharp Gibbs pCNL ($\tau = 0$),
+5. Adapted satisficing pCNL ensemble ($\Phi_{\tau,\kappa,\alpha}$),
+6. Prior-only / vacuous-$\tau$ control.
 
-**Acceptance:** exact finite-chart/quadrature comparison where feasible, movement/mixing
-and predictive error reported at the chosen tolerance. A fresh random latent draw in MH
-acceptance is forbidden without a new valid kernel construction. Posterior averaging
-adds a separate parameter-sampling error; do not reuse iid-path bounds for chain states.
-Any RL objective involving this posterior also needs an explicit gradient/frozen protocol.
+**Acceptance:** Paired uncertainty intervals across seeds and splits for all primary
+endpoints (in-region satisfaction, functional diversity/effective rank, PAC-Bayes flatness,
+held-out ID/OOD error, calibration $z^2$, and stream retention). Negative or inconclusive
+contrasts against the early-stopped deep ensemble are preserved and reported verbatim.
 
-### E6 — hand finite probability/decision lemmas to the Lean4 specialist
+## P5 — Reinforcement learning training-loss ensemble track (non-RLCD)
 
-Supply rational finite fixtures for simplex/mixture closure, Brier and ordinal propriety,
-U-statistic expectation, full policy-gradient and valid-baseline identities, and bounded
-utility-regret control. Separate ideal arithmetic statements from floating-point tests.
-Then connect E5 to Q0/Q1 rather than asserting that an oscillator or abstract sampler gap
-already certifies the new neural model. Proposed identifiers remain planned references.
+Reuse `src/mdp.rs`, `src/policy_model.rs`, `src/policy_readout.rs`, and `src/dt_subspace.rs`
+for a **non-RLCD** RL training-loss track (no Edge0 latent-MoE, no four-path REINFORCE
+Brier U-statistic). Define a differentiable RL training loss $L_{\text{RL}}(\theta)$ on
+offline/behavior-regularized trajectories or a policy-gradient surrogate, and apply the
+same $\Phi_{\tau,\kappa,\alpha}$ adapted pCNL ensemble protocol.
 
-**Acceptance:** the specialist elaborates the implementations, checks their assumptions
-and axiom ledger, and records the result. This planning task performs no compilation.
+Evaluate and report separately:
+1. RL training-loss satisfaction ($L_{\text{RL}}(\theta_j) \le \tau$),
+2. Action-distribution / logit functional diversity across states,
+3. Trajectory-clustered online rollout return (`policy_readout.rs` D5 estimator) on both
+   nominal MDP dynamics and perturbed/shifted evaluation MDPs, auditing per-step BMA vs
+   once-per-episode configuration draws (`dt_subspace.rs`).
 
-### E7 — archive results and gate architecture extensions
+**Acceptance:** Trajectory-clustered SEs pass synthetic correlation checks; both nominal
+and shifted-environment rollout returns are reported with paired intervals against
+matched-cost radical and early-stopped policy ensembles.
 
-Only executed results enter [PCNL_STATUS.md](../docs/PCNL_STATUS.md), under a new R9 label.
-Archive positive, negative and inconclusive comparisons, exact source/config/data hashes,
-model tensor counts, gradient fixtures, training/evaluation costs and uncertainty units.
-Scale expert count/context, add text rationales or predicted routing, or vary the trunk
-in a posterior only after a new hypothesis and explicit budget. A new route predictor
-can change the probability model; it must be compared against actual routing. Preserve
-the earlier stopped R7 DT record and the separate R8 sampler theorem scope throughout.
+## P6 — Gated extensions (heterogeneous configurations, repulsion, serving cost)
 
-## D0 — make the claim and target machine-reviewable
+Strictly gated behind P1–P4 completion and written review:
+- **Heterogeneous transformer configurations:** combine distinct widths, depths, head
+  counts, or normalization choices inside one ensemble while matching total compute.
+- **Interacting functional-space repulsion (optional):** only if independent P4 chains
+  collapse functionally; must carry an explicit label noting that repulsion alters the
+  target from $\pi_{\tau,\kappa,\alpha}^{\otimes M}$ and compare against uncoupled chains.
+- **Serving cost & distillation audit:** compare full $M$-member ensemble inference
+  against single-pass or compact $K$-member subsets / distilled students (following R13 §7)
+  on latency, memory, and predictive/diversity loss.
 
-Reuse `src/manifest.rs`, `src/target.rs`, `src/subspace.rs` and the existing experiment
-seams. Prepare a per-run claim record containing source revision/dirty diff, target kind,
-prior, likelihood sum convention, temperature, chart/anchor/basis identity, dimension and
-rank, data split unit, exact/stopped gradient convention, proposal, scan order, adaptation
-freeze, actual schedule/floor, precision and observable/readout. Record which theoretical
-claims apply and every open assumption; do not encode unproved estimates as default values.
+**Acceptance:** Each extension declares its hypothesis, changed objective (if any), and
+compute cap before execution.
 
-Pin the algebra with a tiny independently computed fixture: `phi` is the total `J`, while
-pCN's proposal ratio cancels only its Gaussian prior, leaving `Ψ(z)-Ψ(z')`. Reuse the
-existing quadrature and gradient tests before adding coverage. The existing mathematical
-MH ratio, its finite-precision implementation and empirical sampling behavior have
-separate evidence fields. States with nonfinite current potential require an explicit
-initialization/error policy, not a claimed stationary sample after endless rejections.
+## P7 — Verification, CI gates, status archival, and optional RLCD hygiene
 
-**Acceptance:** two matched configurations agree on potential and target identity;
-changing a prior/temperature/chart changes its identity; changing only a frozen proposal
-changes kernel identity. DT full-target support is not inferred from the classifier's
-`FullTarget`. Export named parameters for Lean fixtures without claiming Rust verification.
+- Run targeted Rust unit/integration tests for every new/modified module (`cargo test --release -p pcnl --locked`),
+  `./scripts/check-pcnl-gates --check-manifest`, and `./scripts/check-attribution --repo-only`.
+- Record executed P0–P6 results (positive, negative, and inconclusive) in
+  [PCNL_STATUS.md](../docs/PCNL_STATUS.md) under a new **R14** section only after runs
+  exist; never record planned checks as passed.
+- **Legacy RLCD code hygiene (deferred, separate approval):** Existing `src/edge0_*.rs`,
+  `tests/edge0_rlcd.rs`, and `examples/{edge0_campaign,r9_campaign,r9_secondary}.rs`
+  remain frozen for historical reproducibility (`scripts/pcnl-reproduce` still invokes
+  `--test edge0_rlcd`). Removing or archiving them out of the crate is a separate,
+  explicitly approved cleanup task.
 
-## D1 — implement the first reference certificate and optional refresh mixture
+---
 
-Use `mh_pcn_z(beta=1)` for independent prior proposals in a restricted chart. Add a
-mixture wrapper with fixed probability `ω>0` between that primitive and a frozen local
-same-target MH kernel. A full-target version must refresh every Gaussian prior block
-jointly, include the full likelihood and preserve complement constraints. Do not replace
-unadjusted SG-pCNL silently; expose the new exact-reference mode in configuration/logs.
+## Appendix — Historical Packet Disposition (`D0–D7` & `E0–E7`)
 
-For categorical likelihoods with `Ψ≥0`, prepare an evidence lower bound `Z_lo>0` and
-certificate `c=ω Z_lo` (`M=1`). For other likelihoods carry a proved ceiling `M` and
-`c=ω Z_lo/M`. A verified bounded region with prior mass at least `a` and `Ψ≤b` gives
-`Z_lo=a exp(-b)`. Add a tiny nonconstant rank-1/2 potential whose evidence and predictive
-can be enclosed by quadrature **including Gaussian tail bounds**. A numeric integral
-without its tail/rounding enclosure is a reference estimate, not a theorem certificate.
+Existing Rust source comments in `pcnl/src/` and `pcnl/tests/` cite `D0–D6` and `E0–E5`
+from the 2026-11-15 revision of this file. Their disposition as of 2026-11-25 is:
 
-**Acceptance:** Q1's ideal-kernel minorization/stationarity theorem instantiated with
-positive constants and a concrete source/target identity. Observed contraction and moments
-are secondary checks. Publish the rate even if it predicts an impractical budget; separate
-“proper and geometrically convergent” from “efficient at the requested tolerance”.
-
-## D2 — establish the controlled dimension benchmark
-
-Add an explicit target family `π_r⊗N(0,I_n)` with fixed nonconstant informed likelihood
-and frozen proposal parameters. Use independent simultaneous informed MH and complement
-pCN moves. Reuse Q2's product-operator theorem and Q1's evidence certificate. Vary `n`
-without changing rank, task, likelihood scale or observable. Include a coordinate observable
-in the complement and an informed predictive observable.
-
-**Acceptance:** the same analytic rate constant applies across the declared family, with
-mean-square/cost bounds and measured uncertainty beside it. Track memory and forward cost
-as well as ESS/evaluation. A negative control with shrinking `beta` must not inherit the
-same constant. A realistic coupled target is a distinct extension: audit the deterministic
-scan's lack of automatic reversibility, or add a random-scan/lazy reference with its actual
-clock and conditional-gap/factorization assumptions. Do not call acceptance stability a gap.
-
-## D3 — price approximate updates, rounding and schedules
-
-Keep the current unadjusted `src/sampler.rs` as an approximate-kernel branch. Match the
-formal Q3/T1 coefficients to the actual scaling of data-gradient, prior shrink, batch sum,
-noise, temperature and `NormGrad` convention. Reuse tests before adding the missing
-analytic canaries: correct Gaussian target with biased invariant mean/variance; a proper
-target with unstable discretization; independent gradient-noise inflation. State stability
-ranges and compare with closed formulas rather than fitting a claimed posterior to a run.
-
-Separate true gradient, stopped surrogate and clipped drift. Check state dependence and
-bias of the minibatch oracle. Record actual step values, floor crossover and adaptation
-freeze; unfloored annealing, a positive-floor chain and cycles need separate theorem IDs.
-A schedule exponent does not certify ergodicity or posterior accuracy.
-
-For approximate MH potential evaluations, bound acceptance error with the same proposal
-and propagate it through Q1's contraction when its metric hypotheses hold. For `f32`
-rounding choose an observable/Wasserstein coupling or a declared common reconstruction;
-TV between a discrete rounded law and a continuous reference need not be small. Naive
-mini-batch log ratios are not exact MH. A pseudo-marginal alternative is a new extended-state
-design with a nonnegative unbiased likelihood estimator, not an inference from unbiased loss.
-
-**Acceptance:** a quantitative error budget at declared precision and an exact-reference
-comparison on the same target. Report any remaining stationary-bias bound as open. An
-empirical match of moments or stable traces does not establish a uniform perturbation bound.
-
-## D4 — measure and, where possible, certify the cost of reducing dimension
-
-Keep the existing frozen-complement target labeled a restricted statistical model.
-For full-support approximation, prototype the likelihood marginal
-`Lbar(z)=E_w exp(-Ψ(z,w))` with its Gaussian complement. This differs from the frozen
-slice and from exponentiating an averaged potential. If evaluating `Lbar` is stochastic,
-choose a controlled approximate target or a justified extended-state method before MH.
-
-Implement a linear-Gaussian coupled benchmark with analytically known slice, informed
-marginal, complement conditional and predictive. It should expose differences the
-factorized D2 example cannot. Evaluate a neglected-gradient-tail/conditional-inequality
-certificate only with its global assumptions and sample-error bounds. A local Hessian or
-path-PCA spectrum is a diagnostic for rank selection, not an ambient posterior bound.
-Use cross-fitting or an explicit empirical-Bayes label for data-selected anchors/bases.
-
-**Acceptance:** model-reduction error and sampler error are separately reported on the
-benchmark; informed and matched random bases share the target and evaluation budget.
-Do not compute finite TV/KL between a slice-supported distribution and a continuous ambient
-posterior. Use predictive differences or the full-support approximation instead.
-
-## D5 — repair uncertainty and policy-approximation acceptance for existing DT cells
-
-Reuse `policy_model`, `mdp`, `policy_readout`, `dt_arm`, `dt_subspace` and existing examples.
-The R7 branch already has measurements and a stop decision. Preserve its data hashes,
-negative rows and declared score criterion; do not start another unrestricted seed sweep.
-
-Replace the step-independent acceptance SE in `policy_readout::paired_delta` with a
-trajectory-clustered paired analysis, preserving paired arms and independent trajectory
-IDs. Report separate uncertainty from parameter-chain correlation, data/seed variability
-and rollouts. Synthetic correlated traces and trajectory fixtures must check that the
-reported uncertainty increases appropriately and that frozen traces cannot pass mixing.
-Report proper scores, calibration diagnostics and return separately; a Brier/spherical
-improvement does not itself prove calibration or policy benefit.
-
-Audit the finite draw subset used in rollout decoding against a full/successively larger
-posterior average at fixed histories and common environment seeds. Name per-step BMA
-sampling, argmax decoding and a once-per-episode posterior draw separately. Q5's value
-bound needs uniform policy-TV control over relevant histories and bounded reward range;
-a held-out average action score does not supply that premise. Empirical posterior-draw
-measures are not close in TV to continuous posteriors merely because their BMA is accurate.
-
-**Acceptance:** corrected uncertainty and policy-approximation fields added to the same
-historical cells where reproduction is feasible. Any changed verdict is accompanied by
-the changed estimator and paired evidence. Reopen the stopped application only with a
-specified new hypothesis and a data/compute budget, not an after-the-fact success metric.
-
-## D6 — optional operator certificate after the exact references
-
-Use the actual invariant-law `L²` operator and ground projection, with a lazy reversible
-kernel or a justified nonreversible norm/multi-step formulation. A finite retained block
-needs certified tail, coupling, projection and arithmetic bounds. Reuse Q6/T4 and the
-uniform-error discipline in `timepiece/softmodes.md`; finite matrix gaps, raw polynomial
-bands and small seed residuals do not certify the full Markov spectrum. The returned rate
-must improve a meaningful reference bound or justify its computational cost. Spherical
-limits and a nested-Fock interpretation are optional representation work, not D1 blockers.
-
-**Acceptance:** a full-space positive certificate or a precisely scoped missing estimate;
-never a completed theorem whose concrete gap assumption is the claim being investigated.
-
-## D7 — verification, promotion and stopping
-
-Implementation and Lean specialists execute checks only when the corresponding changes
-exist: targeted Rust tests for altered kernels/readouts, analytic reference comparisons,
-then the affected Lean modules and axiom audit. The current planning wave runs none.
-Use the existing reproduction script and manifest surfaces; add a named evidence stage
-only when its command and artifacts exist. Do not count planned commands as passing checks.
-
-Each result records: ideal theorem and assumptions; Rust source mapping and precision;
-observable/tolerance; target/reduction/kernel/burn-in/MC/numerical error components;
-evaluations, wall time and memory; measured acceptance and movement; diagnostic failures;
-and the supported conclusion. Update `../docs/PCNL_STATUS.md` only after execution.
-A nonzero reference rate, a loose rate, a reduction counterexample, a bias bound, and a
-negative application result are all legitimate research deliverables.
+- **`D0–D6` (R8 sampler/certificate packets):** Implemented and tested in
+  `src/{certificate,dim_benchmark,approx_pricing,linear_gaussian,operator_cert,evidence_enclosure,policy_readout,dt_subspace}.rs`
+  and `tests/{r8_certificates,d_track}.rs`. Retained as reusable verification machinery
+  supporting R14 (`P0–P3`, `P5`).
+- **`E0–E5` (R9 Edge0-RLCD packets):** Mechanics implemented in `src/edge0_*.rs` and
+  executed on 2026-11-15..16 (see [PCNL_STATUS.md](../docs/PCNL_STATUS.md)). **Retired
+  on 2026-11-25** per project direction; `E6–E7` are closed without further work and
+  superseded by `P0–P7`.

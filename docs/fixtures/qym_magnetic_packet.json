@@ -12,6 +12,12 @@
   "states": "one outer excitation; inner He_0^3 to He_1(X)He_1(Y)He_1(Z), iid N(0,1)",
   "scope": "unreduced Weyl-gauge packet form; no physical spectral or mass witness",
   "soft_control": "i(-k_2,k_1,0) exp(-pi |k|^2/width^2), one colour, curl energy/norm^2 = 5*pi*width^2/2",
+  "global_colour_packet": {
+    "coordinates": "A_1=u X, A_2=v Y+w Z, A_3=0; each amplitude a three-colour row",
+    "inner_bra": "det([X;Y;Z])/sqrt(6) in the product of nine standard normals",
+    "singlet_entry_at_g1": "0.119638304020279344078260403921",
+    "local_gauss_control": "omega=x_3 exp(-pi |x|^2)T^1: at A=0, (d omega)_3(0)=T^1"
+  },
   "coupling": 1,
   "packet_action": {
     "formula": "sum_i (P_i^2 / metric_i + curl_i Q_i^2)/2 + g entry XYZ + g^2 X^2 (wall_12 Y^2 + wall_13 Z^2)/2",
