@@ -85,6 +85,14 @@ pub fn live_submission_contract() -> Result<ChannelContract, ContractError> {
 fn check_live_submission_contract() -> Result<(), String> {
     let contract = live_submission_contract()
         .map_err(|error| format!("live submission contract is invalid: {error}"))?;
+    check_submission_contract(&contract)
+}
+
+/// The marker gate itself, separate from the one contract it reads. Keeping it
+/// callable with an arbitrary contract lets the tests show that a contract
+/// without the ordering or delivery field is actually refused, rather than
+/// relying on the live constant always being well formed.
+fn check_submission_contract(contract: &ChannelContract) -> Result<(), String> {
     contract
         .ordered_channel()
         .map_err(|error| format!("live submission is not ordered: {error}"))?;
@@ -1804,6 +1812,9 @@ impl NetworkCluster {
         state_dir: &Path,
         addresses: Vec<SocketAddr>,
     ) -> rust_quepaxa::Result<Self> {
+        // The harness is a caller too: check the same marker as the process
+        // path before building a direct client.
+        check_live_submission_contract().map_err(storage_error)?;
         let deployment =
             Self::deployment(identities.clone(), addresses.clone()).map_err(storage_error)?;
         deployment.validate().map_err(storage_error)?;
@@ -1942,7 +1953,10 @@ const HARNESS_CLIENT_ID: [u8; 16] = [42u8; 16];
 mod tests {
     use super::*;
     use crate::signing::Keypair;
-    use unfer_protocol::channel_contracts::DuplicateScope;
+    use unfer_protocol::channel_contracts::{
+        Authentication, CapWitness, DecisionKind, Delivery, DuplicateScope, FaultModel, Location,
+        Loss, Repo, SchemaId, UsageCap,
+    };
     use unfer_protocol::{IdentityOp, IdentityOpKind};
 
     #[test]
@@ -1956,6 +1970,45 @@ mod tests {
         assert_eq!(
             contract.delivery().suppression().map(|s| s.scope()),
             Some(DuplicateScope::RequestIdentity)
+        );
+    }
+
+    /// The gate must fail on a contract that does not carry the field it asks
+    /// for. Without this, the live check only proves that one hard-coded
+    /// contract is well formed, not that the marker gate is load-bearing.
+    #[test]
+    fn the_marker_gate_refuses_a_contract_without_its_markers() {
+        let contract = |ordering, delivery| {
+            let producer = Location::new(Repo::Unfer, "producer.rs", "submit").unwrap();
+            let consumer = Location::new(Repo::Unfer, "consumer.rs", "apply").unwrap();
+            let schema = SchemaId::new("test.tx", 1).unwrap();
+            let capacity =
+                UsageCap::new("journal bytes", 1024, CapWitness::StaticLayout).unwrap();
+            ChannelContract::new(
+                producer,
+                consumer,
+                schema,
+                ordering,
+                RetryScope::AcrossReconnects,
+                Authentication::MutualTls,
+                FaultModel::new(Loss::Possible, true),
+                capacity,
+                delivery,
+                None,
+                DecisionKind::Monotone,
+            )
+            .unwrap()
+        };
+
+        let per_connection = contract(OrderingScope::PerConnection, Delivery::at_least_once());
+        let error = check_submission_contract(&per_connection).unwrap_err();
+        assert!(error.contains("not ordered"), "unexpected refusal: {error}");
+
+        let at_least_once = contract(OrderingScope::TotalOrder, Delivery::at_least_once());
+        let error = check_submission_contract(&at_least_once).unwrap_err();
+        assert!(
+            error.contains("not exactly-once"),
+            "unexpected refusal: {error}"
         );
     }
 
