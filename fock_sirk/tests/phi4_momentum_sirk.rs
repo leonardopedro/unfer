@@ -21,6 +21,10 @@
 //! 4. `parity_gap_and_comparison_contrast` — ℤ₂ parity conservation, the
 //!    unconditional inner lower bound `θ ≥ 7/64`, and the frozen comparison
 //!    contrast (continuous 553/32 vs static-jet 145/32 vs 2-site 337/16).
+//! 5. `change_of_basis_control_transports_the_whole_tuple` — §3.4's
+//!    change-of-basis null: the phase rotation transports seed, operator and
+//!    observable together, the window matrix genuinely changes, and the exact
+//!    response is zero.
 
 use fock_sirk::joint_sirk::{
     JointKrylovMethod, JointSirkOptions, JointSirkResult, hashimoto_unitary_shifts,
@@ -32,7 +36,8 @@ use fock_sirk::sm_defect::{
 use nalgebra::DMatrix;
 use nested_fock_algebra::exact_inner::{ActionLimits, InnerExpr, JointOuterBasis, NestedVector};
 use nested_fock_algebra::phi4_momentum::{
-    S3_MODES, ScalarMomCont, frozen_jet_comparison, occupations_of,
+    S3_MODES, ScalarMomCont, frozen_jet_comparison, occupation_phase, occupations_of,
+    phase_rotate_inner, phase_rotate_nested, phase_rotated_quadratures,
 };
 use nested_fock_algebra::phi4_scalar::ScalarGrid;
 use num_complex::Complex64 as C;
@@ -819,6 +824,150 @@ fn coupling_and_momentum_spread_responses_are_certified() {
         certified_charge(&base, &coupled),
         spread_exact.abs(),
         certified_charge(&base, &spread),
+    );
+}
+
+/// `||a − b||` over the union of two inner supports.
+fn inner_gap(
+    a: &nested_fock_algebra::exact_inner::InnerVector,
+    b: &nested_fock_algebra::exact_inner::InnerVector,
+) -> f64 {
+    let mut labels: BTreeSet<&nested_fock_algebra::exact_inner::JointInnerBasis> =
+        a.keys().collect();
+    labels.extend(b.keys());
+    labels
+        .into_iter()
+        .map(|label| {
+            let left = a.get(label).copied().unwrap_or_default();
+            let right = b.get(label).copied().unwrap_or_default();
+            (left - right).norm_sqr()
+        })
+        .sum::<f64>()
+        .sqrt()
+}
+
+/// §3.4's change-of-basis null control. `U = exp(i Σ_m θ_m n_m)` maps the
+/// quadratures as a squeeze in the model's unnormalized pair
+/// (`q → cos θ q + 2 sin θ p`, `p → cos θ p − ½ sin θ q`), so `h' = U h U†` is
+/// a different matrix. With `θ_φ = 0` the one-φ-quantum seed — which has no
+/// momentum quanta — is exactly fixed, and the return probability must be
+/// unchanged. This is a null on the *tuple*, unlike the packet-width response,
+/// which is a different physical state.
+#[test]
+fn change_of_basis_control_transports_the_whole_tuple() {
+    let t = 0.05;
+    let theta = [0.0, 0.3, -0.45, 1.1];
+    let model = ScalarMomCont::unit();
+    let window = ScalarMomCont::window_labels_of_parity(8, 1);
+    let shifts = physical_shifts(t, 250.0, 50.0, 4);
+    let support = [([1, 0, 0, 0], 1.0)];
+    let initial = seed(&model, &support);
+
+    let h = model.hamiltonian();
+    let (quadratures, momenta) = phase_rotated_quadratures(theta);
+    let transported_h = model.hamiltonian_with(&quadratures, &momenta);
+    let transported_seed = phase_rotate_nested(&initial, theta);
+
+    // The transport is a genuine change of basis: the seed is fixed (no
+    // momentum quanta), the operator is not the base one.
+    assert_eq!(
+        transported_seed, initial,
+        "theta_phi = 0 must leave the one-phi-quantum seed fixed"
+    );
+    assert!(
+        (occupation_phase(&[1, 0, 0, 0], theta) - C::new(1.0, 0.0)).norm() < 1e-15,
+        "the seed's phase must be exactly one"
+    );
+    let base_operator = WindowOperator::build(&h, &window);
+    let transported_operator = WindowOperator::build(&transported_h, &window);
+    let operator_gap = (&base_operator.matrix - &transported_operator.matrix).norm();
+    assert!(
+        operator_gap > 10.0,
+        "the transported window matrix must differ: {operator_gap}"
+    );
+
+    // The substitution conjugates by `U` symbolically:
+    // `h' Γ(U)ψ = Γ(U) h ψ` on the seed, before any solve runs.
+    let inner = model.hermite_state(&support);
+    let direct = transported_h
+        .apply(&phase_rotate_inner(&inner, theta), ActionLimits::default())
+        .expect("finite action");
+    let carried = phase_rotate_inner(
+        &h.apply(&inner, ActionLimits::default())
+            .expect("finite action"),
+        theta,
+    );
+    assert_close(
+        inner_gap(&direct, &carried),
+        0.0,
+        1e-12,
+        "conjugation defect",
+    );
+
+    let base = solve(&h, &initial, &shifts, window.clone(), shift_invert());
+    let transported = solve(
+        &transported_h,
+        &transported_seed,
+        &shifts,
+        window.clone(),
+        shift_invert(),
+    );
+    let p_base = return_probability(&base, &initial, t);
+    let p_transported = return_probability(&transported, &transported_seed, t);
+    let exact_base = base_operator.reference_return(&initial, t);
+    let exact_transported = transported_operator.reference_return(&transported_seed, t);
+
+    // The exact seed-column response is zero, and the compressed response is
+    // sound against the two sharp charges.
+    assert_close(
+        exact_base - exact_transported,
+        0.0,
+        1e-12,
+        "exact change-of-basis response",
+    );
+    let charge = (p_base - exact_base).abs() + (p_transported - exact_transported).abs();
+    assert!(
+        (p_base - p_transported).abs() <= charge,
+        "the compressed change-of-basis response {} must be covered by the sharp charges {charge}",
+        (p_base - p_transported).abs()
+    );
+}
+
+/// The checked-in record must carry the same control with its zero exact
+/// response and its nontrivial operator change.
+#[test]
+fn recorded_change_of_basis_control_is_a_null() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../docs/fixtures/phi4_momentum_sirk_sweep.json"
+    );
+    let text = std::fs::read_to_string(path).expect("record is checked in");
+    let record: serde_json::Value = serde_json::from_str(&text).expect("record JSON");
+    let control = &record["responses"]["change_of_basis_control"];
+
+    assert_eq!(
+        control["seed_is_invariant"].as_bool(),
+        Some(true),
+        "theta_phi = 0 must leave the seed fixed"
+    );
+    assert_eq!(
+        control["conjugation_is_exact"].as_bool(),
+        Some(true),
+        "the substituted tree must conjugate the Hamiltonian"
+    );
+    assert!(
+        control["operator_matrix_difference"].as_f64().unwrap() > 10.0,
+        "the transported operator must be a different matrix"
+    );
+    assert!(
+        control["exact"]["difference"].as_f64().unwrap().abs() <= 1e-12,
+        "the exact change-of-basis response must be zero"
+    );
+    assert_eq!(control["exact"]["is_zero"].as_bool(), Some(true));
+    assert_eq!(
+        control["sirk"]["excludes_zero"].as_bool(),
+        Some(false),
+        "the compressed control must not report a physical response"
     );
 }
 

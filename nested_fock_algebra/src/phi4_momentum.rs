@@ -49,6 +49,7 @@
 
 use crate::exact_inner::{
     ActionError, ActionLimits, InnerExpr, InnerVector, JointInnerBasis, JointOuterBasis,
+    NestedVector,
 };
 use num_complex::Complex64;
 use std::collections::{BTreeMap, BTreeSet};
@@ -79,6 +80,77 @@ fn product(factors: Vec<InnerExpr>) -> InnerExpr {
 
 fn sum(terms: Vec<InnerExpr>) -> InnerExpr {
     InnerExpr::Sum(terms)
+}
+
+/// Quadratures and momenta of the diagonal phase unitary
+/// `U = exp(i Σ_m θ_m n_m)`: `q_m → cos θ_m q_m + 2 sin θ_m p_m` and
+/// `p_m → cos θ_m p_m − ½ sin θ_m q_m` (the extra factors are the model's
+/// unnormalized pair `q = a†+a`, `p = i(a†−a)/2`, so `U` acts as a squeeze
+/// rather than a rotation).  Feed the result to
+/// [`ScalarMomCont::hamiltonian_with`] to build `U h U†`.
+///
+/// Any nonzero `θ` makes `U h U†` a different matrix from `h`; the conjugation
+/// is a change of basis, not a physical change.
+pub fn phase_rotated_quadratures(theta: [f64; 4]) -> ([InnerExpr; 4], [InnerExpr; 4]) {
+    let mut quadratures = Vec::with_capacity(4);
+    let mut momenta = Vec::with_capacity(4);
+    for (mode, &angle) in theta.iter().enumerate() {
+        let (sin, cos) = angle.sin_cos();
+        let q = InnerExpr::coordinate(mode as u32);
+        let p = InnerExpr::momentum(mode as u32);
+        quadratures.push(InnerExpr::Sum(vec![
+            q.clone().scaled(Complex64::new(cos, 0.0)),
+            p.clone().scaled(Complex64::new(2.0 * sin, 0.0)),
+        ]));
+        momenta.push(InnerExpr::Sum(vec![
+            p.scaled(Complex64::new(cos, 0.0)),
+            q.scaled(Complex64::new(-0.5 * sin, 0.0)),
+        ]));
+    }
+    (
+        quadratures.try_into().expect("four quadratures"),
+        momenta.try_into().expect("four momenta"),
+    )
+}
+
+/// `exp(i Σ_m θ_m n_m)` for an occupation vector.
+pub fn occupation_phase(occupations: &[u32; 4], theta: [f64; 4]) -> Complex64 {
+    let angle: f64 = occupations
+        .iter()
+        .zip(theta)
+        .map(|(&n, t)| f64::from(n) * t)
+        .sum();
+    Complex64::new(angle.cos(), angle.sin())
+}
+
+/// Inner state `Uψ` for `U = exp(i Σ_m θ_m n_m)`, diagonal in occupations.
+pub fn phase_rotate_inner(state: &InnerVector, theta: [f64; 4]) -> InnerVector {
+    state
+        .iter()
+        .map(|(basis, amplitude)| {
+            let phase = occupation_phase(&occupations_of(basis), theta);
+            (basis.clone(), amplitude * phase)
+        })
+        .collect()
+}
+
+/// The lift `Γ(U)` of a diagonal single-particle phase: a universe carrying
+/// `k` outer copies of an inner configuration is multiplied by `phase^k`.
+pub fn phase_rotate_nested(state: &NestedVector, theta: [f64; 4]) -> NestedVector {
+    state
+        .iter()
+        .map(|(outer, amplitude)| {
+            let phase = outer
+                .inner_occupations()
+                .into_iter()
+                .map(|(inner, count)| {
+                    let single = occupation_phase(&occupations_of(inner), theta);
+                    single.powi(count as i32)
+                })
+                .fold(Complex64::new(1.0, 0.0), |acc, p| acc * p);
+            (outer.clone(), amplitude * phase)
+        })
+        .collect()
 }
 
 /// `n!` as `f64`; the Mehler Gram weight of `He_n`.
@@ -118,17 +190,36 @@ impl ScalarMomCont {
     /// The tree is built directly — never through `Expression::expand()` — and
     /// every product is formed inside `h` before the single `dΓ` lift.
     pub fn hamiltonian(&self) -> InnerExpr {
+        let quadratures = std::array::from_fn(|mode| InnerExpr::coordinate(mode as u32));
+        let momenta = std::array::from_fn(|mode| InnerExpr::momentum(mode as u32));
+        self.hamiltonian_with(&quadratures, &momenta)
+    }
+
+    /// `h_cont` with the coordinate and momentum operators supplied by the
+    /// caller, indexed by Mehler mode (`0` is `φ`).  [`Self::hamiltonian`] is
+    /// the identity choice.  This is the change-of-basis hook: substituting
+    /// `q_m → cos θ_m q_m + 2 sin θ_m p_m` and `p_m → cos θ_m p_m − ½ sin θ_m q_m`
+    /// builds `U h U†` for the diagonal phase unitary
+    /// `U = exp(i Σ_m θ_m n_m)`, whose action on an occupation label is the
+    /// phase `exp(i Σ_m θ_m n_m)`.  Both substitutions are linear and
+    /// homogeneous, so the substituted tree keeps `h`'s per-mode parity and
+    /// total degree.
+    pub fn hamiltonian_with(
+        &self,
+        quadratures: &[InnerExpr; 4],
+        momenta: &[InnerExpr; 4],
+    ) -> InnerExpr {
         let wphi = self.width_phi;
         let wphi2 = wphi * wphi;
         let wk2 = self.width_k * self.width_k;
-        let q0 = InnerExpr::coordinate(PHI_MODE);
+        let q0 = quadratures[PHI_MODE as usize].clone();
 
-        let p0 = InnerExpr::momentum(PHI_MODE);
+        let p0 = momenta[PHI_MODE as usize].clone();
         let kinetic = scaled(product(vec![p0.clone(), p0]), 0.5 / wphi2);
 
         let mut gradient = InnerExpr::Scalar(Complex64::new(0.0, 0.0));
         for r in MOMENTUM_MODES {
-            let qr = InnerExpr::coordinate(r);
+            let qr = quadratures[r as usize].clone();
             gradient = sum(vec![
                 gradient,
                 scaled(
@@ -642,6 +733,50 @@ mod tests {
             difference > 1e-9,
             "cross-particle defect vanished: {difference}"
         );
+    }
+
+    #[test]
+    fn phase_rotation_conjugates_the_hamiltonian() {
+        // h' = U h U† must satisfy h' (Uψ) = U (h ψ) on a non-vacuum seed, so
+        // the change-of-basis control transports the operator and the state
+        // together rather than changing either one alone.
+        use crate::exact_inner::{JointInnerBasis, NestedVector};
+
+        let theta = [0.7, 0.3, -0.45, 1.1];
+        let model = ScalarMomCont::unit();
+        let (q, p) = phase_rotated_quadratures(theta);
+        let h = model.hamiltonian();
+        let rotated = model.hamiltonian_with(&q, &p);
+
+        let support = [([1, 0, 0, 0], 1.0)];
+        let inner = model.hermite_state(&support);
+        let expected = phase_rotate_inner(
+            &h.apply(&inner, ActionLimits::default()).expect("finite action"),
+            theta,
+        );
+        let actual = rotated
+            .apply(&phase_rotate_inner(&inner, theta), ActionLimits::default())
+            .expect("finite action");
+        let mut labels: std::collections::BTreeSet<&JointInnerBasis> = expected.keys().collect();
+        labels.extend(actual.keys());
+        let defect: f64 = labels
+            .into_iter()
+            .map(|label| {
+                let left = expected.get(label).copied().unwrap_or_default();
+                let right = actual.get(label).copied().unwrap_or_default();
+                (left - right).norm_sqr()
+            })
+            .sum::<f64>()
+            .sqrt();
+        assert!(defect < 1e-12, "conjugation defect {defect}");
+
+        // The outer lift transports the seed the same way.
+        let nested: NestedVector = model.one_particle(&support);
+        let rotated_seed = phase_rotate_nested(&nested, theta);
+        let expect_phase = occupation_phase(&[1, 0, 0, 0], theta);
+        assert!(rotated_seed
+            .values()
+            .all(|amplitude| (amplitude - expect_phase * nested.values().next().unwrap()).norm() < 1e-15));
     }
 
     #[test]
