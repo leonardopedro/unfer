@@ -859,6 +859,18 @@ pub enum ContractError {
     SnapshotPublishedBeforeSync,
     /// A damaged snapshot was reset to a default instead of refused.
     SilentResetOnDamage,
+    /// One replica claims more than one engine view; a restart would then read
+    /// a decided log the node never wrote to.
+    NotSingleView {
+        views: u64,
+    },
+    /// A scheduler horizon change may replace a slot that was already served.
+    SchedulerRewritesPrefix,
+    /// A receipt was returned for a submission the view never accepted.
+    ReceiptWithoutSubmission,
+    /// `current_seq` runs past the log `get_log` returns, so `is_synced` can be
+    /// true while entries are missing.
+    SequenceBeyondLog,
 }
 
 impl fmt::Display for ContractError {
@@ -906,6 +918,18 @@ impl fmt::Display for ContractError {
             ),
             ContractError::SilentResetOnDamage => {
                 f.write_str("a damaged snapshot must be refused, not reset to an empty state")
+            }
+            ContractError::NotSingleView { views } => {
+                write!(f, "a replica has one engine view at a time, not {views}")
+            }
+            ContractError::SchedulerRewritesPrefix => f.write_str(
+                "a scheduler horizon change may hide a suffix, not rewrite a served prefix",
+            ),
+            ContractError::ReceiptWithoutSubmission => {
+                f.write_str("a receipt must name a submission the view accepted")
+            }
+            ContractError::SequenceBeyondLog => {
+                f.write_str("current_seq must end the log get_log returns, or is_synced lies")
             }
         }
     }
