@@ -2,6 +2,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use prob_kernel::Session;
+use unfer_protocol::channel_contracts::{
+    Authentication, ChannelContract, ContractError, DuplicateScope, MAX_ADMISSION_ENTRIES,
+    consensus_inprocess_admission_contract,
+};
 use unfer_protocol::submission::{
     HaltReason, Receipt, ReceiptState, Refusal, Slot, SubmissionId, SyncReport, UnknownReason,
     Watermark,
@@ -49,6 +53,52 @@ impl ApplyFailure {
             ApplyFailure::Refused(Refusal::from(diagnostic))
         }
     }
+}
+
+/// D19: the in-process admission boundary as a checked contract, shared with
+/// the protocol crate so the admission probe and the engine handoff cannot
+/// drift into two descriptions.
+pub fn inprocess_admission_contract() -> Result<ChannelContract, ContractError> {
+    consensus_inprocess_admission_contract()
+}
+
+/// Refuse an admission contract that does not carry the premises this boundary
+/// actually implements: the handoff is a call (so no transport authenticated
+/// it), the order covers a retry that outlives a restart, exactly-once rests on
+/// request identity, and the bound is no larger than the retained book.
+fn check_inprocess_admission_contract(contract: &ChannelContract) -> Result<(), String> {
+    if contract.authentication() != Authentication::InProcess {
+        return Err(format!(
+            "in-process admission claims transport authentication ({:?})",
+            contract.authentication()
+        ));
+    }
+    contract
+        .ordered_channel()
+        .map_err(|error| format!("in-process admission is not ordered: {error}"))?;
+    contract
+        .exactly_once_channel()
+        .map_err(|error| format!("in-process admission is not exactly-once: {error}"))?;
+    if contract.delivery().suppression().map(|s| s.scope()) != Some(DuplicateScope::RequestIdentity)
+    {
+        return Err(
+            "in-process admission is deduplicated by something other than request identity"
+                .to_string(),
+        );
+    }
+    let max = contract.capacity().max();
+    if max > MAX_ADMISSION_ENTRIES {
+        return Err(format!(
+            "in-process admission is bounded at {max}, above the {MAX_ADMISSION_ENTRIES}-entry book"
+        ));
+    }
+    Ok(())
+}
+
+fn check_live_inprocess_admission_contract() -> Result<(), String> {
+    let contract = inprocess_admission_contract()
+        .map_err(|error| format!("in-process admission contract is invalid: {error}"))?;
+    check_inprocess_admission_contract(&contract)
 }
 
 pub struct ConsensusNode {
@@ -433,6 +483,10 @@ impl ConsensusNode {
         id: &RequestId,
         tx: ConsensusTransaction,
     ) -> Result<SubmissionId, Diagnostic> {
+        // D19: the admission point refuses to run under a contract that does
+        // not carry the premises the book and the engine handoff provide.
+        check_live_inprocess_admission_contract()
+            .map_err(|error| Diagnostic::new(Code::CALL_DENIED, error, Severity::Error))?;
         let digest = crate::idempotency::payload_digest(&tx)?;
         match self.admissions.admit(id, digest) {
             crate::idempotency::AdmissionVerdict::Fresh => {
@@ -1067,6 +1121,106 @@ mod tests {
 
     fn make_node() -> ConsensusNode {
         ConsensusNode::new(Box::new(LocalConsensus::new()))
+    }
+
+    /// The live admission contract must satisfy the gate it is checked by, or
+    /// every `submit_request` would refuse at runtime.
+    #[test]
+    fn the_inprocess_admission_boundary_satisfies_its_gate() {
+        let contract = inprocess_admission_contract().expect("in-process contract");
+        check_inprocess_admission_contract(&contract)
+            .expect("the live admission boundary is valid");
+    }
+
+    /// A gate that only accepts one hard-coded contract proves nothing. Each of
+    /// the premises the admission path implements must be refusable on its own.
+    #[test]
+    fn the_inprocess_admission_gate_refuses_each_missing_premise() {
+        use unfer_protocol::channel_contracts::{
+            CapWitness, DecisionKind, Delivery, DuplicateSuppression, FaultModel, Location, Loss,
+            OrderingScope, Repo, RetryScope, SchemaId, UsageCap,
+        };
+
+        let contract = |authentication, ordering, delivery, max| {
+            let producer = Location::new(Repo::Unfer, "producer.rs", "submit_request").unwrap();
+            let consumer = Location::new(Repo::Unfer, "consumer.rs", "submit_tracked").unwrap();
+            let schema = SchemaId::new("test.tx", 1).unwrap();
+            let capacity = UsageCap::new(
+                "retained admission entries",
+                max,
+                CapWitness::ProtocolInvariant,
+            )
+            .unwrap();
+            ChannelContract::new(
+                producer,
+                consumer,
+                schema,
+                ordering,
+                RetryScope::AcrossReconnects,
+                authentication,
+                FaultModel::new(Loss::None, false),
+                capacity,
+                delivery,
+                None,
+                DecisionKind::Monotone,
+            )
+            .unwrap()
+        };
+        let request_identity = || {
+            let cap = UsageCap::new(
+                "retained admission entries",
+                MAX_ADMISSION_ENTRIES,
+                CapWitness::ProtocolInvariant,
+            )
+            .unwrap();
+            Delivery::exactly_once(DuplicateSuppression::new(
+                DuplicateScope::RequestIdentity,
+                cap,
+            ))
+            .unwrap()
+        };
+
+        let transport = contract(
+            Authentication::MutualTls,
+            OrderingScope::TotalOrder,
+            request_identity(),
+            MAX_ADMISSION_ENTRIES,
+        );
+        let error = check_inprocess_admission_contract(&transport).unwrap_err();
+        assert!(
+            error.contains("transport authentication"),
+            "unexpected refusal: {error}"
+        );
+
+        let unordered = contract(
+            Authentication::InProcess,
+            OrderingScope::PerConnection,
+            request_identity(),
+            MAX_ADMISSION_ENTRIES,
+        );
+        let error = check_inprocess_admission_contract(&unordered).unwrap_err();
+        assert!(error.contains("not ordered"), "unexpected refusal: {error}");
+
+        let at_least_once = contract(
+            Authentication::InProcess,
+            OrderingScope::TotalOrder,
+            Delivery::at_least_once(),
+            MAX_ADMISSION_ENTRIES,
+        );
+        let error = check_inprocess_admission_contract(&at_least_once).unwrap_err();
+        assert!(
+            error.contains("not exactly-once"),
+            "unexpected refusal: {error}"
+        );
+
+        let oversize = contract(
+            Authentication::InProcess,
+            OrderingScope::TotalOrder,
+            request_identity(),
+            MAX_ADMISSION_ENTRIES + 1,
+        );
+        let error = check_inprocess_admission_contract(&oversize).unwrap_err();
+        assert!(error.contains("above the"), "unexpected refusal: {error}");
     }
 
     /// Build a mint op signed with a valid Arctic t-of-n aggregate signature.

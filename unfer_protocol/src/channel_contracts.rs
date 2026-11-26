@@ -678,6 +678,46 @@ pub fn consensus_decision_delivery_contract() -> Result<ChannelContract, Contrac
     )
 }
 
+/// The most logical requests one admission book retains before it answers with
+/// backpressure. The in-process admission contract's delivery claim is exactly
+/// this bound, so the bound lives here and the book reads it rather than
+/// keeping a second number that could drift.
+pub const MAX_ADMISSION_ENTRIES: u64 = 4096;
+
+/// The in-process admission point as a checked contract.
+///
+/// `ConsensusNode::submit_request` is the only place a client-named request is
+/// admitted, and the handoff to the ordered engine follows it in the same call.
+/// There is no transport here, so the authentication is `InProcess` and no
+/// message can be lost or reordered between the probe and `engine.submit`; the
+/// retry lifetime nevertheless crosses restarts (the request id is durable on
+/// the client), so the ordering claim is the engine's total order and the
+/// exactly-once claim rests on request identity plus the book's retained bound.
+pub fn consensus_inprocess_admission_contract() -> Result<ChannelContract, ContractError> {
+    let producer = Location::new(Repo::Unfer, "unfer_consensus/src/node.rs", "submit_request")?;
+    let consumer = Location::new(Repo::Unfer, "unfer_consensus/src/node.rs", "submit_tracked")?;
+    let schema = SchemaId::new("unfer.consensus.ledger-tx", CONSENSUS_LEDGER_SCHEMA)?;
+    let capacity = UsageCap::new(
+        "retained admission entries",
+        MAX_ADMISSION_ENTRIES,
+        CapWitness::ProtocolInvariant,
+    )?;
+    let suppression = DuplicateSuppression::new(DuplicateScope::RequestIdentity, capacity.clone());
+    ChannelContract::new(
+        producer,
+        consumer,
+        schema,
+        OrderingScope::TotalOrder,
+        RetryScope::AcrossReconnects,
+        Authentication::InProcess,
+        FaultModel::new(Loss::None, false),
+        capacity,
+        Delivery::exactly_once(suppression)?,
+        None,
+        DecisionKind::Monotone,
+    )
+}
+
 /// The schema a peer recorder request is read under.
 pub const RECORDER_RPC_SCHEMA: u16 = 1;
 
@@ -1084,6 +1124,25 @@ mod tests {
         assert_eq!(contract.capacity().max(), MAX_DECISION_BATCH);
         assert_eq!(contract.capacity().witness(), CapWitness::ProtocolInvariant);
         assert_eq!(contract.delivery().mode(), DeliveryMode::AtLeastOnce);
+    }
+
+    #[test]
+    fn the_inprocess_admission_contract_is_request_identity_exactly_once() {
+        let contract = consensus_inprocess_admission_contract().expect("in-process contract");
+        assert_eq!(contract.authentication(), Authentication::InProcess);
+        assert_eq!(contract.ordering(), OrderingScope::TotalOrder);
+        assert_eq!(contract.retries(), RetryScope::AcrossReconnects);
+        assert_eq!(contract.faults().loss(), Loss::None);
+        assert!(!contract.faults().reorders());
+        assert!(contract.ordered_channel().is_ok());
+        assert!(contract.exactly_once_channel().is_ok());
+        assert_eq!(
+            contract.delivery().suppression().map(|s| s.scope()),
+            Some(DuplicateScope::RequestIdentity)
+        );
+        assert_eq!(contract.capacity().max(), MAX_ADMISSION_ENTRIES);
+        assert_eq!(contract.producer().item(), "submit_request");
+        assert_eq!(contract.consumer().item(), "submit_tracked");
     }
 
     #[test]

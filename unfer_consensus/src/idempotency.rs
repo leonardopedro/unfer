@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as Sha2Digest, Sha256};
 
+use unfer_protocol::channel_contracts::MAX_ADMISSION_ENTRIES;
 use unfer_protocol::submission::{Refusal, Slot, SubmissionId};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
@@ -305,8 +306,10 @@ pub struct AdmissionBook {
 }
 
 /// Default admission capacity. A full book answers [`AdmissionVerdict::AtCapacity`]
-/// rather than evicting a record a client may still retry.
-pub const DEFAULT_ADMISSION_CAPACITY: usize = 4096;
+/// rather than evicting a record a client may still retry. The number is owned
+/// by the protocol crate because the in-process admission contract's
+/// exactly-once claim is bounded by it.
+pub const DEFAULT_ADMISSION_CAPACITY: usize = MAX_ADMISSION_ENTRIES as usize;
 
 /// Default number of retention windows (client incarnations) the book tracks.
 pub const DEFAULT_ADMISSION_SCOPES: usize = 64;
