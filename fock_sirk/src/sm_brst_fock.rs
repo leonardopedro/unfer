@@ -253,6 +253,9 @@ fn entries_json(entries: &[(usize, C)]) -> Vec<Value> {
         .collect()
 }
 
+/// One kernel basis vector's sparse entries, as `(column, coefficient)`.
+pub(crate) type SparseColumn = Vec<(usize, C)>;
+
 /// A deterministic, sparse kernel basis from the reduced row-echelon form of
 /// `matrix`. For each free column `f` the basis vector is
 /// `e_f - sum_i R[i,f] e_{pivot_i}`. The RREF is unique, so the basis depends on
@@ -265,7 +268,7 @@ fn entries_json(entries: &[(usize, C)]) -> Vec<Value> {
 pub(crate) fn rref_kernel(
     matrix: &DMatrix<C>,
     tolerance: f64,
-) -> (Vec<usize>, Vec<(usize, Vec<(usize, C)>)>) {
+) -> (Vec<usize>, Vec<(usize, SparseColumn)>) {
     let mut reduced = matrix.clone();
     let rows = reduced.nrows();
     let columns = reduced.ncols();

@@ -47,8 +47,11 @@ use tokio_util::sync::CancellationToken;
 
 use unfer_protocol::channel_contracts::{
     CONSENSUS_LEDGER_SCHEMA, ChannelContract, ContractError, MAX_SUBMISSION_JOURNAL_BYTES,
-    OrderingScope, RetryScope, consensus_live_submission_contract,
+    consensus_live_submission_contract,
 };
+// Used only by the contract assertions in this file's test module.
+#[cfg(test)]
+use unfer_protocol::channel_contracts::{OrderingScope, RetryScope};
 use unfer_protocol::distributed::{Command, ReplicatedValue};
 use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};

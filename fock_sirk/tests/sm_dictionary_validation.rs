@@ -20,10 +20,7 @@ fn fixture() -> Value {
 }
 
 fn pair(value: &Value) -> (f64, f64) {
-    (
-        value[0].as_f64().unwrap(),
-        value[1].as_f64().unwrap(),
-    )
+    (value[0].as_f64().unwrap(), value[1].as_f64().unwrap())
 }
 
 #[test]

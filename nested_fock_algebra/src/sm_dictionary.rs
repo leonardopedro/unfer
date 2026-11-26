@@ -110,6 +110,7 @@
 use crate::sm_full::SmParameters;
 use crate::sm_momentum::{Conventions, TWO_PI};
 use num_complex::Complex64 as C;
+#[cfg(test)]
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -257,9 +258,7 @@ impl DictionaryPackets {
                 width: 0.9,
             },
             ket: Packet {
-                center: (0..d)
-                    .map(|a| 0.0137 - 0.0004 * ((a % 3) as f64))
-                    .collect(),
+                center: (0..d).map(|a| 0.0137 - 0.0004 * ((a % 3) as f64)).collect(),
                 width: 1.1,
             },
             fields,
@@ -402,12 +401,7 @@ pub struct GapReport {
 
 fn yukawa_factor(f: &Factor, params: &SmParameters) -> C {
     let (conj, kind, i, j) = match *f {
-        Factor::Yukawa {
-            conj,
-            kind,
-            i,
-            j,
-        } => (conj, kind, i, j),
+        Factor::Yukawa { conj, kind, i, j } => (conj, kind, i, j),
         _ => unreachable!("yukawa_factor on a non-Yukawa factor"),
     };
     let matrix = match kind {
@@ -417,11 +411,7 @@ fn yukawa_factor(f: &Factor, params: &SmParameters) -> C {
         YukawaKind::Electron => &params.ye,
     };
     let value = matrix[i][j];
-    if conj {
-        value.conj()
-    } else {
-        value
-    }
+    if conj { value.conj() } else { value }
 }
 
 fn factor_value(f: &Factor, params: &SmParameters) -> C {
@@ -544,8 +534,8 @@ impl Gauss {
             //   √(2π/M) exp((b_a−b_b)²/(2M)) exp(−½m|K−(c_a+c_b)|²),
             // with the two centre offsets already carried by b = M·c.
             let d = ba - bb;
-            log_amp += C::new(0.5 * (TWO_PI / (ma + mb)).ln(), 0.0)
-                + d * d / C::new(2.0 * (ma + mb), 0.0);
+            log_amp +=
+                C::new(0.5 * (TWO_PI / (ma + mb)).ln(), 0.0) + d * d / C::new(2.0 * (ma + mb), 0.0);
             inv_var.push(m);
             b.push(m * (ba / ma + bb / mb));
         }
@@ -568,10 +558,7 @@ fn momentum_packet_gauss(p: &Packet) -> Gauss {
     Gauss {
         log_amp: C::new(log_amp, 0.0),
         inv_var: vec![inv_var; p.center.len()],
-        b: p.center
-            .iter()
-            .map(|&c| C::new(inv_var * c, 0.0))
-            .collect(),
+        b: p.center.iter().map(|&c| C::new(inv_var * c, 0.0)).collect(),
     }
 }
 
@@ -685,10 +672,7 @@ fn momentum_term(term: &Term, packets: &DictionaryPackets, conv: &Conventions) -
     }
     for (m, power) in &term.p {
         for _ in 0..*power {
-            poly.mul_linear(
-                C::new(0.0, 0.0),
-                &[(*m as usize, C::new(conv.two_pi, 0.0))],
-            );
+            poly.mul_linear(C::new(0.0, 0.0), &[(*m as usize, C::new(conv.two_pi, 0.0))]);
         }
     }
     poly.multiply_by(&momentum_packet_gauss(&packets.bra).conj());
@@ -767,12 +751,7 @@ fn field_convolution_3d(term: &Term, packets: &DictionaryPackets, sign: f64) -> 
 
 /// `∫ φ̂_bra(K+l) φ̂_ket(l) l^p dl` as a Gaussian in `K` times a linear factor
 /// (with the `(2π)^p` symbol of `p` already folded in).
-fn ket_side_momentum(
-    bra: &Packet,
-    ket: &Packet,
-    p: &[(u32, u32)],
-    conv: &Conventions,
-) -> Poly {
+fn ket_side_momentum(bra: &Packet, ket: &Packet, p: &[(u32, u32)], conv: &Conventions) -> Poly {
     let mb = 1.0 / (bra.width * bra.width);
     let mk = 1.0 / (ket.width * ket.width);
     let m = mb + mk;
@@ -814,15 +793,10 @@ fn momentum_term_3d(term: &Term, packets: &DictionaryPackets, conv: &Conventions
     let bra = packet3(&packets.bra);
     let ket = packet3(&packets.ket);
     if term.q.is_empty() {
-        let mut poly = Poly::new(
-            momentum_packet_gauss(&bra).product(&momentum_packet_gauss(&ket)),
-        );
+        let mut poly = Poly::new(momentum_packet_gauss(&bra).product(&momentum_packet_gauss(&ket)));
         for (m, power) in &term.p {
             for _ in 0..*power {
-                poly.mul_linear(
-                    C::new(0.0, 0.0),
-                    &[(axis_of(*m), C::new(conv.two_pi, 0.0))],
-                );
+                poly.mul_linear(C::new(0.0, 0.0), &[(axis_of(*m), C::new(conv.two_pi, 0.0))]);
             }
         }
         return poly.integrate();
@@ -853,10 +827,7 @@ fn coordinate_poly_3d(term: &Term, packets: &DictionaryPackets) -> Poly {
             // −i∂_axis f = i M x_axis − i b_axis for the Gauss form.
             let inv_var = xket.inv_var[axis];
             let b = xket.b[axis];
-            poly.mul_linear(
-                -C::i() * b,
-                &[(axis, C::i() * C::new(inv_var, 0.0))],
-            );
+            poly.mul_linear(-C::i() * b, &[(axis, C::i() * C::new(inv_var, 0.0))]);
         }
     }
     poly
@@ -941,20 +912,12 @@ fn quadrature_value(poly: &Poly, nodes: usize) -> C {
 }
 
 /// Quadrature evaluation of a term's collective-coordinate value.
-pub fn coordinate_term_quadrature(
-    term: &Term,
-    packets: &DictionaryPackets,
-    nodes: usize,
-) -> C {
+pub fn coordinate_term_quadrature(term: &Term, packets: &DictionaryPackets, nodes: usize) -> C {
     quadrature_value(&coordinate_poly(term, packets), nodes)
 }
 
 /// Quadrature evaluation of a term's 3D field-mode coordinate value.
-pub fn coordinate_term_3d_quadrature(
-    term: &Term,
-    packets: &DictionaryPackets,
-    nodes: usize,
-) -> C {
+pub fn coordinate_term_3d_quadrature(term: &Term, packets: &DictionaryPackets, nodes: usize) -> C {
     quadrature_value(&coordinate_poly_3d(term, packets), nodes)
 }
 
@@ -1005,12 +968,7 @@ fn q_only_axis_factors(
     factors
 }
 
-fn q_only_quadrature(
-    term: &Term,
-    packets: &DictionaryPackets,
-    three_d: bool,
-    nodes: usize,
-) -> C {
+fn q_only_quadrature(term: &Term, packets: &DictionaryPackets, three_d: bool, nodes: usize) -> C {
     let mut total = C::new(1.0, 0.0);
     for (g, power) in q_only_axis_factors(term, packets, three_d) {
         let parts = axis_quadrature(&axis_view(&g, 0), power, nodes);
@@ -1082,7 +1040,8 @@ pub fn q_bearing_quadrature(packets: &DictionaryPackets, nodes: usize) -> QBeari
             };
             let collective = coordinate_term(term, packets);
             let three_d = coordinate_term_3d(term, packets);
-            let collective_gap = (collective - collective_quad).norm() / (1.0 + collective_quad.norm());
+            let collective_gap =
+                (collective - collective_quad).norm() / (1.0 + collective_quad.norm());
             let three_d_gap = (three_d - three_d_quad).norm() / (1.0 + three_d_quad.norm());
             if collective_gap > report.worst_collective_gap {
                 report.worst_collective_gap = collective_gap;
@@ -1258,7 +1217,10 @@ impl<'a> Cursor<'a> {
         self.skip_ws();
         match self.bump() {
             Some(c) if c == expected => Ok(()),
-            Some(c) => Err(format!("expected '{expected}', found '{c}' at {}", self.pos)),
+            Some(c) => Err(format!(
+                "expected '{expected}', found '{c}' at {}",
+                self.pos
+            )),
             None => Err(format!("expected '{expected}', reached end of input")),
         }
     }
@@ -1320,7 +1282,7 @@ fn parse_expression(expression: &str) -> Result<Vec<Term>, String> {
                 return Err(format!(
                     "expected '+' or '-', found '{other}' at {}",
                     cursor.pos
-                ))
+                ));
             }
         }
     }
@@ -1344,16 +1306,22 @@ impl Cursor<'_> {
             if self.peek() == Some('^') {
                 self.bump();
                 let exponent = self.read_group()?;
-                let exponent: i64 = exponent.replace(' ', "").parse().map_err(|_| {
-                    format!("unparsable exponent '{{{exponent}}}' at {}", self.pos)
-                })?;
+                let exponent: i64 = exponent
+                    .replace(' ', "")
+                    .parse()
+                    .map_err(|_| format!("unparsable exponent '{{{exponent}}}' at {}", self.pos))?;
                 self.apply_exponent(term, base, exponent)?;
             }
         }
         Ok(())
     }
 
-    fn apply_exponent(&mut self, term: &mut Term, base: BaseRef, exponent: i64) -> Result<(), String> {
+    fn apply_exponent(
+        &mut self,
+        term: &mut Term,
+        base: BaseRef,
+        exponent: i64,
+    ) -> Result<(), String> {
         match base {
             BaseRef::Q(i) => {
                 if exponent < 1 {
@@ -1585,7 +1553,7 @@ mod tests {
         for e in dictionary() {
             for term in &e.terms {
                 assert!(
-                    !(term.q.is_empty() == false && term.p.is_empty() == false),
+                    term.q.is_empty() || term.p.is_empty(),
                     "{} mixes q and p in one term",
                     e.label
                 );
@@ -1626,8 +1594,8 @@ mod tests {
         let conv = Conventions::canonical();
         let e = entry("kin3");
         let value = momentum_kernel(&e, &packets, &sm, &conv);
-        let overlap = momentum_packet_gauss(&packets.bra)
-            .product(&momentum_packet_gauss(&packets.ket));
+        let overlap =
+            momentum_packet_gauss(&packets.bra).product(&momentum_packet_gauss(&packets.ket));
         let expected = C::new(TWO_PI, 0.0) * overlap.moment1(3) * overlap.i0();
         assert!(
             (value - expected).norm() < 1e-12 * (1.0 + expected.norm()),
@@ -1640,7 +1608,9 @@ mod tests {
         let packets = DictionaryPackets::declared();
         let sm = params();
         let conv = Conventions::canonical();
-        for label in ["kin3", "kin150", "magG00", "magW22", "magB02", "covH10", "wall"] {
+        for label in [
+            "kin3", "kin150", "magG00", "magW22", "magB02", "covH10", "wall",
+        ] {
             let e = entry(label);
             let m = momentum_kernel(&e, &packets, &sm, &conv);
             let c = coordinate_kernel(&e, &packets, &sm);
@@ -1702,7 +1672,12 @@ mod tests {
                 worst = (gap, entry.label.clone());
             }
         }
-        assert!(worst.0 < 1e-11, "worst 3D row {} gap {:e}", worst.1, worst.0);
+        assert!(
+            worst.0 < 1e-11,
+            "worst 3D row {} gap {:e}",
+            worst.1,
+            worst.0
+        );
     }
 
     #[test]
@@ -1982,9 +1957,9 @@ mod tests {
         let canonical = (momentum_kernel(&e, &packets, &sm, &Conventions::canonical())
             - coordinate_kernel(&e, &packets, &sm))
         .norm();
-        let mutated =
-            (momentum_kernel(&e, &packets, &sm, &wrong) - coordinate_kernel(&e, &packets, &sm))
-                .norm();
+        let mutated = (momentum_kernel(&e, &packets, &sm, &wrong)
+            - coordinate_kernel(&e, &packets, &sm))
+        .norm();
         assert!(canonical < 1e-12);
         assert!(mutated > 1e-3, "mutation must be detectable, gap {mutated}");
     }
