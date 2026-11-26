@@ -596,6 +596,17 @@ pub const CONSENSUS_LEDGER_SCHEMA: u16 = 1;
 /// than inferred from the file layout.
 pub const MAX_SUBMISSION_JOURNAL_BYTES: u64 = 16 * 1024 * 1024;
 
+/// The schema this replica's decisions travel under: the transport's
+/// `InformDecisions` frame, read by the peer's recorder and state machine.
+pub const DECISION_DELIVERY_SCHEMA: u16 = 1;
+
+/// The most decisions one delivery frame may carry. A catch-up push is sized by
+/// this bound so a single frame stays inside the transport's frame limit,
+/// whatever the length of the log behind it. The contract's capacity field
+/// carries the same number, and the sender reads it from the checked contract
+/// rather than from a constant beside the send.
+pub const MAX_DECISION_BATCH: u64 = 256;
+
 /// The live consensus submission path as a checked contract.
 ///
 /// The sender is `unfer_node submit`, the receiver is `start_replica`; the
@@ -627,6 +638,84 @@ pub fn consensus_live_submission_contract() -> Result<ChannelContract, ContractE
         FaultModel::new(Loss::Possible, true),
         capacity,
         Delivery::exactly_once(suppression)?,
+        None,
+        DecisionKind::Monotone,
+    )
+}
+
+/// The peer-decision path as a checked contract.
+///
+/// A decision is addressed by its slot, retried after a reconnect and applied
+/// by the peer's recorder and state machine in slot order. Out-of-order or
+/// oversize frames are what the contract exists to refuse, and a lost
+/// acknowledgement re-sends the same decision, so delivery is at-least-once:
+/// the apply path is idempotent by submission id, not by frame.
+pub fn consensus_decision_delivery_contract() -> Result<ChannelContract, ContractError> {
+    let producer = Location::new(Repo::Unfer, "unfer_consensus/src/net.rs", "catch_up_loop")?;
+    let consumer = Location::new(
+        Repo::Unfer,
+        "unfer_consensus/src/net.rs",
+        "receive_decisions",
+    )?;
+    let schema = SchemaId::new("quepaxa.inform-decisions", DECISION_DELIVERY_SCHEMA)?;
+    let capacity = UsageCap::new(
+        "decisions per delivery frame",
+        MAX_DECISION_BATCH,
+        CapWitness::ProtocolInvariant,
+    )?;
+    ChannelContract::new(
+        producer,
+        consumer,
+        schema,
+        OrderingScope::TotalOrder,
+        RetryScope::AcrossReconnects,
+        Authentication::MutualTls,
+        FaultModel::new(Loss::Possible, true),
+        capacity,
+        Delivery::at_least_once(),
+        None,
+        DecisionKind::Monotone,
+    )
+}
+
+/// The schema a peer recorder request is read under.
+pub const RECORDER_RPC_SCHEMA: u16 = 1;
+
+/// The peer recorder RPC as a checked contract.
+///
+/// A replica proposes decisions and reads a peer's frontier through the
+/// certificate-pinned recorder client. Each request names its slot, so the
+/// client claims no arrival order; the authentication is the premise the
+/// construction actually implements (mutual TLS with the member's pinned
+/// certificate), and the bound is the decision batch that the catch-up sender
+/// hands to this same client.
+pub fn consensus_recorder_rpc_contract() -> Result<ChannelContract, ContractError> {
+    let producer = Location::new(
+        Repo::Unfer,
+        "unfer_consensus/src/net.rs",
+        "TlsRecorderClient",
+    )?;
+    let consumer = Location::new(
+        Repo::Unfer,
+        "unfer_consensus/src/net.rs",
+        "NetworkNodeServer",
+    )?;
+    let schema = SchemaId::new("quepaxa.recorder-rpc", RECORDER_RPC_SCHEMA)?;
+    let capacity = UsageCap::new(
+        "decisions per recorder request",
+        MAX_DECISION_BATCH,
+        CapWitness::ProtocolInvariant,
+    )?;
+    ChannelContract::new(
+        producer,
+        consumer,
+        schema,
+        OrderingScope::Unordered,
+        RetryScope::WithinConnection,
+        Authentication::MutualTls,
+        FaultModel::new(Loss::Possible, true),
+        capacity,
+        Delivery::at_least_once(),
         None,
         DecisionKind::Monotone,
     )
@@ -984,6 +1073,26 @@ mod tests {
             contract.delivery().suppression().map(|s| s.scope()),
             Some(DuplicateScope::RequestIdentity)
         );
+    }
+
+    #[test]
+    fn the_consensus_decision_contract_is_ordered_and_frame_bounded() {
+        let contract = consensus_decision_delivery_contract().expect("decision delivery contract");
+        assert_eq!(contract.ordering(), OrderingScope::TotalOrder);
+        assert_eq!(contract.retries(), RetryScope::AcrossReconnects);
+        assert!(contract.ordered_channel().is_ok());
+        assert_eq!(contract.capacity().max(), MAX_DECISION_BATCH);
+        assert_eq!(contract.capacity().witness(), CapWitness::ProtocolInvariant);
+        assert_eq!(contract.delivery().mode(), DeliveryMode::AtLeastOnce);
+    }
+
+    #[test]
+    fn the_recorder_rpc_contract_is_pinned_and_can_carry_a_batch() {
+        let contract = consensus_recorder_rpc_contract().expect("recorder RPC contract");
+        assert_eq!(contract.authentication(), Authentication::MutualTls);
+        assert_eq!(contract.ordering(), OrderingScope::Unordered);
+        assert!(contract.ordered_channel().is_err());
+        assert!(contract.capacity().max() >= MAX_DECISION_BATCH);
     }
 
     #[test]
