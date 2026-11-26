@@ -44,6 +44,10 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+use unfer_protocol::channel_contracts::{
+    consensus_live_submission_contract, ChannelContract, ContractError, OrderingScope, RetryScope,
+    CONSENSUS_LEDGER_SCHEMA, MAX_SUBMISSION_JOURNAL_BYTES,
+};
 use unfer_protocol::distributed::{Command, ReplicatedValue};
 use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
@@ -54,10 +58,10 @@ use crate::jobs::{Fence, JobCommand, JobQueue, JOB_COMMAND_SCHEMA};
 /// D10: the schema a replicated ledger submission is read under. A command
 /// under any other schema is refused by name rather than applied as a
 /// neighbour.
-pub const LEDGER_TX_SCHEMA: u16 = 1;
+pub const LEDGER_TX_SCHEMA: u16 = CONSENSUS_LEDGER_SCHEMA;
 
 const LIVE_NODES: usize = 2;
-const MAX_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
+const MAX_JOURNAL_BYTES: usize = MAX_SUBMISSION_JOURNAL_BYTES as usize;
 
 /// How often a replica offers its log to a peer that is behind. An idle cluster
 /// has no new decision to carry the offer, which is why this is a timer: a
@@ -68,6 +72,27 @@ const CATCH_UP_INTERVAL: Duration = Duration::from_millis(200);
 /// Decisions per push. Bounded so one catch-up frame stays well inside the
 /// transport's frame limit, whatever the size of the log behind it.
 const CATCH_UP_BATCH: u64 = 256;
+
+/// D19: the live submission path as a checked contract, not prose beside the
+/// client and server. The protocol crate owns the contract so the bridge's
+/// Austral probe and this path cannot drift into two descriptions.
+pub fn live_submission_contract() -> Result<ChannelContract, ContractError> {
+    consensus_live_submission_contract()
+}
+
+/// Refuse to start or submit unless the live path still supports the marker the
+/// contract claims. This is where the vocabulary becomes a production check.
+fn check_live_submission_contract() -> Result<(), String> {
+    let contract = live_submission_contract()
+        .map_err(|error| format!("live submission contract is invalid: {error}"))?;
+    contract
+        .ordered_channel()
+        .map_err(|error| format!("live submission is not ordered: {error}"))?;
+    contract
+        .exactly_once_channel()
+        .map_err(|error| format!("live submission is not exactly-once: {error}"))?;
+    Ok(())
+}
 
 /// Durable ledger snapshot: the committed bank plus this node's outbox.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1485,6 +1510,7 @@ async fn start_replica(
     state_dir: Option<StateDirLock>,
     metrics: Arc<NetworkMetrics>,
 ) -> Result<RunningNode, String> {
+    check_live_submission_contract()?;
     let deployment = &config.deployment;
     let index = deployment.index_of(config.replica)?;
     let tls = deployment.node_tls(&config.identity)?;
@@ -1655,6 +1681,7 @@ pub fn submit_client(
     config: &SubmitConfig,
     address: SocketAddr,
 ) -> Result<TlsSubmitClient, String> {
+    check_live_submission_contract()?;
     let tls = config.tls()?;
     // D19-HOOK: H09 (send: mutual-TLS submission client)
     Ok(TlsSubmitClient::new(
@@ -1915,7 +1942,22 @@ const HARNESS_CLIENT_ID: [u8; 16] = [42u8; 16];
 mod tests {
     use super::*;
     use crate::signing::Keypair;
+    use unfer_protocol::channel_contracts::DuplicateScope;
     use unfer_protocol::{IdentityOp, IdentityOpKind};
+
+    #[test]
+    fn the_live_submission_contract_is_ordered_and_exactly_once() {
+        let contract =
+            live_submission_contract().expect("the live path satisfies its contract");
+        assert_eq!(contract.ordering(), OrderingScope::TotalOrder);
+        assert_eq!(contract.retries(), RetryScope::AcrossReconnects);
+        assert!(contract.ordered_channel().is_ok());
+        assert!(contract.exactly_once_channel().is_ok());
+        assert_eq!(
+            contract.delivery().suppression().map(|s| s.scope()),
+            Some(DuplicateScope::RequestIdentity)
+        );
+    }
 
     fn tx(label: u64) -> ConsensusTransaction {
         let did = Keypair::generate();

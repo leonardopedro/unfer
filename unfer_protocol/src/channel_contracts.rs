@@ -587,6 +587,51 @@ impl ChannelContract {
     }
 }
 
+/// The schema a replicated ledger command is read under. The consensus crate
+/// re-exports this value instead of keeping a second copy.
+pub const CONSENSUS_LEDGER_SCHEMA: u16 = 1;
+
+/// The byte bound on the durable submission journal. Exactly-once delivery on
+/// the live path rests on this bound, so it is recorded in the contract rather
+/// than inferred from the file layout.
+pub const MAX_SUBMISSION_JOURNAL_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The live consensus submission path as a checked contract.
+///
+/// The sender is `unfer_node submit`, the receiver is `start_replica`; the
+/// commit order is the decided log, retries may cross reconnects, mutual TLS
+/// authenticates both ends, and the server's durable journal binds
+/// `(client_id, request_id)` to one outcome. Exactly-once therefore rests on
+/// request identity and the journal byte bound, not on a connection.
+pub fn consensus_live_submission_contract() -> Result<ChannelContract, ContractError> {
+    let producer = Location::new(
+        Repo::Unfer,
+        "unfer_consensus/src/bin/unfer_node.rs",
+        "submit",
+    )?;
+    let consumer = Location::new(Repo::Unfer, "unfer_consensus/src/net.rs", "start_replica")?;
+    let schema = SchemaId::new("unfer.consensus.ledger-tx", CONSENSUS_LEDGER_SCHEMA)?;
+    let capacity = UsageCap::new(
+        "durable submission journal bytes",
+        MAX_SUBMISSION_JOURNAL_BYTES,
+        CapWitness::StaticLayout,
+    )?;
+    let suppression = DuplicateSuppression::new(DuplicateScope::RequestIdentity, capacity.clone());
+    ChannelContract::new(
+        producer,
+        consumer,
+        schema,
+        OrderingScope::TotalOrder,
+        RetryScope::AcrossReconnects,
+        Authentication::MutualTls,
+        FaultModel::new(Loss::Possible, true),
+        capacity,
+        Delivery::exactly_once(suppression)?,
+        None,
+        DecisionKind::Monotone,
+    )
+}
+
 /// Opaque evidence that a contract's ordering covers its retry lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OrderedChannel(());
@@ -926,6 +971,19 @@ mod tests {
         )
         .unwrap();
         assert!(exactly_once.exactly_once_channel().is_ok());
+    }
+
+    #[test]
+    fn the_live_consensus_contract_is_ordered_and_exactly_once() {
+        let contract = consensus_live_submission_contract().expect("live path contract");
+        assert_eq!(contract.ordering(), OrderingScope::TotalOrder);
+        assert_eq!(contract.retries(), RetryScope::AcrossReconnects);
+        assert!(contract.ordered_channel().is_ok());
+        assert!(contract.exactly_once_channel().is_ok());
+        assert_eq!(
+            contract.delivery().suppression().map(|s| s.scope()),
+            Some(DuplicateScope::RequestIdentity)
+        );
     }
 
     #[test]
