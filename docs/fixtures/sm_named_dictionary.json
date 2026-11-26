@@ -7,7 +7,7 @@
         "max_components": 200000,
         "max_work": 200000000
       },
-      "norm": 52.24618663371532,
+      "norm": 52.2461866337,
       "outer_particle_number": 1,
       "sector": "matter=0;color=none;generation=none;chirality=none;outer=even",
       "state": {
@@ -34,7 +34,7 @@
         "max_components": 200000,
         "max_work": 200000000
       },
-      "norm": 52.26362796629981,
+      "norm": 52.2636279663,
       "outer_particle_number": 1,
       "sector": "matter=2;color=0;generation=0;chirality=left;outer=even",
       "state": {
@@ -64,7 +64,7 @@
         "max_components": 200000,
         "max_work": 200000000
       },
-      "norm": 35.055224700984866,
+      "norm": 35.055224701,
       "outer_particle_number": 1,
       "sector": "matter=1;color=2;generation=2;chirality=right;outer=odd",
       "state": {
@@ -93,7 +93,7 @@
         "max_components": 200000,
         "max_work": 200000000
       },
-      "norm": 28.13996960041621,
+      "norm": 28.1399696004,
       "outer_particle_number": 1,
       "sector": "matter=1;color=0;generation=1;chirality=left;outer=odd",
       "state": {
@@ -122,7 +122,7 @@
         "max_components": 200000,
         "max_work": 200000000
       },
-      "norm": 36.9487823401368,
+      "norm": 36.9487823401,
       "outer_particle_number": 1,
       "sector": "matter=1;color=0;generation=2;chirality=right;outer=odd",
       "state": {
@@ -151,7 +151,7 @@
         "max_components": 200000,
         "max_work": 200000000
       },
-      "norm": 41.79319506309607,
+      "norm": 41.7931950631,
       "outer_particle_number": 2,
       "sector": "matter=2;color=0;generation=0/1;chirality=left;outer=two_universes_graded",
       "state": {
@@ -190,7 +190,7 @@
         "max_components": 200000,
         "max_work": 200000000
       },
-      "norm": 33.00634810606853,
+      "norm": 33.0063481061,
       "outer_particle_number": 2,
       "sector": "matter=0;color=none;generation=none;chirality=none;outer=two_universes_graded",
       "state": {

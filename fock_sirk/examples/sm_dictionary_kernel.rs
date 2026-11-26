@@ -13,6 +13,7 @@
 //! `nested_fock_algebra::sm_dictionary` for the conventions and
 //! `docs/SM_FULL_IMPLEMENTATION.md` for the ledger entry.
 
+use fock_sirk::sm_bridge::reported_residual;
 use nested_fock_algebra::sm_dictionary::{
     DictionaryPackets, Q_COORDINATES, coordinate_kernel, dictionary, fixture_parameters,
     momentum_kernel, q_bearing_quadrature, three_d_coordinate_kernel, three_d_kernel, worst_gap,
@@ -22,6 +23,8 @@ use num_complex::Complex64 as C;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+/// Kernel values are the raw measurement: the acceptance test pins them to
+/// `1e-12` relative, which is stricter than twelve significant digits.
 fn pair(x: C) -> Value {
     json!([x.re, x.im])
 }
@@ -56,7 +59,7 @@ fn main() {
             "terms": entry.terms.len(),
             "momentum": pair(m),
             "coordinate": pair(c),
-            "relative_gap": gap,
+            "relative_gap": reported_residual(gap),
         }));
     }
 
@@ -84,14 +87,14 @@ fn main() {
         },
         "worst": {
             "label": worst.label,
-            "relative_gap": worst.relative_gap,
+            "relative_gap": reported_residual(worst.relative_gap),
             "momentum": pair(worst.momentum),
             "coordinate": pair(worst.coordinate),
         },
         "three_d": {
             "rows": entries.len(),
             "worst_label": worst_3d.1,
-            "worst_relative_gap": worst_3d.0,
+            "worst_relative_gap": reported_residual(worst_3d.0),
             "note": "per-mode 3D kernel (field insertions, spatial derivative on the ket); validated against its own coordinate route, and its derivative terms against the collective kernel",
         },
         "q_bearing_quadrature": {
@@ -99,9 +102,9 @@ fn main() {
             "nodes": 400,
             "terms": q_bearing.terms,
             "routing_sensitive_terms": q_bearing.routing_sensitive_terms,
-            "worst_collective_gap": q_bearing.worst_collective_gap,
+            "worst_collective_gap": reported_residual(q_bearing.worst_collective_gap),
             "worst_collective_row": q_bearing.worst_collective_row,
-            "worst_three_d_gap": q_bearing.worst_three_d_gap,
+            "worst_three_d_gap": reported_residual(q_bearing.worst_three_d_gap),
             "worst_three_d_row": q_bearing.worst_three_d_row,
             "note": "q is a coordinate multiplication in the collective kernel and a 3D profile insertions in the per-mode kernel, so the two routes are not equal there; each closed form is checked term by term against an independent trapezoid evaluation of its own integrand, built from the term and the packet layout",
         },

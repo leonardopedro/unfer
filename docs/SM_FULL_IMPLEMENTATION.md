@@ -26,13 +26,13 @@ non-claims below.
 background at `(0.1,0.1,-0.2)` with widths `0.8/0.9/0.6`; colours `1,5` against
 background `3`, so both nonzero `f^{abc}` act):
 
-* nonabelian magnetic cross `3.544786217144068i` (zero at `gs=0`, zero for a
+* nonabelian magnetic cross `3.54478621714i` (zero at `gs=0`, zero for a
   colour commuting with the background);
-* gauge–Higgs (weak) cross `−3.305613851640738i` between realified components
+* gauge–Higgs (weak) cross `−3.30561385164i` between realified components
   `0` and `2` (zero when the cross term is removed);
-* Yukawa transfer `5.076730859768365 + 1.4504945313623903i`;
-* transferred-momentum integral `7.252472656811951`, changing to
-  `7.016000284088793` under the reversed transfer;
+* Yukawa transfer `5.07673085977 + 1.45049453136i`;
+* transferred-momentum integral `7.25247265681`, changing to
+  `7.01600028409` under the reversed transfer;
 * retained Higgs constant `λv⁴/4 = 1.19021e8`;
 * independent spatial checks: free Dirac entry `2.448458` with the left-handed
   chirality its exact negative, the transverse projector exactly zero on a
@@ -40,8 +40,16 @@ background `3`, so both nonzero `f^{abc}` act):
   `dΓ(cI)` gives `0` on the outer vacuum, `c` on one quantum and `2c` on two,
   and `dΓ(B²) ≠ dΓ(B)²` on a two-quantum state (the ordered-product check).
 
+Measured evaluator outputs (the elements above, the mutation controls and the
+evolution cell) are stored at twelve significant digits via
+`sm_bridge::reported_residual`; declared inputs — parameters, packet centres and
+widths, `2π`, the lifted `inner_constant` — keep full precision. The one raw
+measured field is the Yukawa-adjoint control, which `sm_momentum_validation`
+pins at `1e-12` absolute, stricter than twelve digits, so rounding it would
+weaken a check rather than normalize a record.
+
 **Mutation controls** (each flips one convention): omitting `2π` changes the
-magnetic element to `0.5641702486624991i`; flipping the nonabelian sign negates
+magnetic element to `0.564170248662i`; flipping the nonabelian sign negates
 it; removing the Higgs cross gives exactly zero; reversing the transfer changes
 the integral; conjugating the Yukawa element gives `5.07673 − 1.45049i`.
 
@@ -141,7 +149,9 @@ independent Cadabra import. It binds:
   0/1/2, left/right chirality, one and two outer universes, and mixed graded parity.
   Each cell records the state spec, support, norm, `state_sha256` and
   `action_sha256`; the native digest must match exactly and the imported action
-  must match in support-independent norm.
+  must match in support-independent norm. `norm` is the only measured float in
+  this fixture and is stored at twelve significant digits; the two digests are
+  taken over the unrounded state/image amplitudes, so they stay bit-exact.
 
 The negative controls are hard test failures: mutated/deleted form weight, deleted
 term, moved or renamed Higgs slot, omitted matter entry, action-budget refusal, a
@@ -928,7 +938,7 @@ never ambiguous. The measured fixture is
 `docs/fixtures/sm_dictionary_kernel.json` (regenerate with
 `cargo run -p fock_sirk --example sm_dictionary_kernel`) and the acceptance
 test is `fock_sirk/tests/sm_dictionary_validation.rs`: 1,241/1,241 rows,
-worst relative gap 1.3e-13 on `wall`, and a mutated `2 pi` changes exactly the
+worst relative gap 2.3e-13 on `wall`, and a mutated `2 pi` changes exactly the
 232 rows that carry a jet momentum.
 
 ### Per-mode 3D kernel and its relation to the collective one
@@ -965,7 +975,19 @@ A mutation test (`a_mutated_field_axis_map_is_caught_by_the_q_bearing_check`)
 permutes which packet coordinate feeds which spatial axis and requires the check
 to reject every one of the 376 mutated evaluations (4 permutations x the 94-term
 per-family subset) with a gap above `1e-6`, so the sensitivity claimed above is
-measured rather than asserted.
+measured rather than asserted. A second counter-assertion
+(`a_mutated_collective_mode_index_is_caught_by_the_q_bearing_check`) shifts every
+single-mode `q_n` to coordinate `(n+1) mod 163` and requires the collective
+quadrature to disagree with the unmutated closed form above `1e-6` in every
+case, so the check is sensitive to which collective mode is inserted and not
+only to the 3D axis map.
+
+Every measured gap in the fixture (`relative_gap`, the `worst` and `three_d`
+worst gaps, and the `q_bearing_quadrature` gaps) is written at twelve significant
+digits through `sm_bridge::reported_residual`, so last-digit toolchain noise
+cannot change the checked-in record. The kernel values themselves stay at full
+precision: the acceptance test pins them to `1e-12` relative, which is stricter
+than the reporting rule.
 
 The symbolic companion `docs/sm_momentum_nested.cdb` (8 CHECK rows, in
 `scripts/check-sm-symbolic`) pins the conventions and the rigged constants

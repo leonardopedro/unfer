@@ -40,14 +40,25 @@ The operator keeps the full nonnegative square including `λv⁴/4`, forms the
 
 * Cadabra2 `2.5.15 private` (`nix shell nixpkgs#cadabra2`)
 * `rustc 1.99.0 (b940084d7 2026-09-28)`
-* repository `HEAD = 7da9838` when the record was regenerated, with the
-  seed-column reference of §5.8 (and its `window_reference` module) uncommitted
+* repository `HEAD = 6f0d9c6` and a clean fixture regeneration run there
+  (the working tree also carried the uncommitted twelve-digit
+  `AmplitudeBound::to_json` reporting edit described below)
 
 | file | SHA-256 |
 |---|---|
 | `docs/phi4_momentum_nested.cdb` | `669510d3c55d334b065b0d94c6f7a4d402cdf29408865856178c3b475fb8d709` |
 | `docs/fixtures/phi4_momentum_mehler.json` | `9b1e9c15ccbb53c876a4818f8d2898d8faec5f26c54d0664406cbcc9912d15bb` |
-| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `cc21379f5c060ac279bf1f08989ec4de4f984734103ee4f3403d714e0fb69bdb` |
+| `docs/fixtures/phi4_momentum_sirk_sweep.json` | `11e162f402e9764aae40023791488992c2e6e413b9f3e17d4fa82e4fae0adbde` |
+
+The whole record comes from that one run: `source_revision.git_head` and the
+digest above are the run's own. The `responses.cells.*.amplitude_defect` block
+is written by `AmplitudeBound::to_json` at twelve significant digits
+(`sm_bridge::reported_residual`), so those seven measured fields per cell are
+rounded while the rest of the record is stored as measured. Two field classes
+are machine- rather than model-dependent and move between runs: `runtime_ms` /
+`peak_rss_kb`, and the solver diagnostics already at the `1e-16` floor
+(`hermiticity_defect`, `orthogonality_defect`), whose *relative* spread is large
+while the absolute defect stays at rounding noise.
 
 ## 3. Replay
 
@@ -364,9 +375,11 @@ Measured with `fock_sirk/examples/phi4_momentum_parallel_probe.rs`:
 
 The third run is after the worker-count helpers were factored into
 `requested_threads`/`available_threads`; the probability it reports is the
-same `0.9800015102784486` the record stores for `C = 20`, which is the
+same `0.9800015102784486` that record stored for `C = 20`, which is the
 end-to-end check that the split really is order-preserving and not merely
-accurate.
+accurate. (The regenerated record at `6f0d9c6` stores `0.9800015102784561` for
+that cell — the same value to 13 digits, the remainder being Krylov accumulation
+order rather than the map operations, which are bit-identical by construction.)
 
 So the action parallelisation alone is a **1.5× matvec and a 1.00× sweep** (the
 solve column predates §5.6's fixes). The matvec is not the binding cost at this

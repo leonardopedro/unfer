@@ -1852,6 +1852,62 @@ mod tests {
     }
 
     #[test]
+    fn a_mutated_collective_mode_index_is_caught_by_the_q_bearing_check() {
+        // The axis-map mutation above exercises the 3D route, where a `q_n` is
+        // a profile on every spatial axis. The collective route reads the same
+        // `q_n` as a multiplication by coordinate `n`; if the check were
+        // insensitive to *which* collective mode the dictionary inserts, the
+        // quadrature could be fed a shifted mode and still agree with the
+        // closed form. Shift each single-mode insertion by one coordinate and
+        // require the disagreement to be large.
+        let packets = DictionaryPackets::declared();
+        let mut per_family: BTreeMap<Family, usize> = BTreeMap::new();
+        let mut checked = 0usize;
+        let mut caught = 0usize;
+        let mut weakest = (f64::INFINITY, String::new());
+        for entry in dictionary() {
+            let seen = per_family.entry(entry.family).or_insert(0);
+            if *seen >= 4 {
+                continue;
+            }
+            let mut used = false;
+            for term in &entry.terms {
+                // One insertion keeps the mutation a pure mode shift: the
+                // closed form has `x_n`, the mutated quadrature has `x_{n+1}`.
+                if term.q_degree() != 1 || term.p_degree() != 0 {
+                    continue;
+                }
+                used = true;
+                let truth = coordinate_term(term, &packets);
+                for (mode, power) in &term.q {
+                    let mut mutated = term.clone();
+                    mutated.q = vec![((mode + 1) % Q_COORDINATES as u32, *power)];
+                    let mutated_value = coordinate_term_q_only_quadrature(&mutated, &packets, 400);
+                    let gap = (mutated_value - truth).norm() / (1.0 + truth.norm());
+                    checked += 1;
+                    if gap > 1e-6 {
+                        caught += 1;
+                    } else if gap < weakest.0 {
+                        weakest = (gap, entry.label.clone());
+                    }
+                }
+            }
+            if used {
+                *seen += 1;
+            }
+        }
+        assert!(
+            checked >= 40,
+            "only {checked} mutated collective mode indices checked"
+        );
+        assert_eq!(
+            caught, checked,
+            "the q-bearing check missed a shifted collective mode (weakest {} gap {:e})",
+            weakest.1, weakest.0
+        );
+    }
+
+    #[test]
     fn the_3d_axis_map_matches_the_named_layout() {
         use crate::sm_full::coord;
         for a in 0..8u32 {

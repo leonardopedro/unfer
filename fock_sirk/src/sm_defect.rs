@@ -510,15 +510,18 @@ pub struct AmplitudeBound {
 }
 
 impl AmplitudeBound {
+    /// The measured fields at their reported precision, matching
+    /// [`DefectTerms`]. `panels` is a count and `time` is an input, so both stay
+    /// exact.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
-            "initial_leakage": self.initial_leakage,
-            "defect_action_integral": self.defect_action_integral,
-            "overlap_integral": self.overlap_integral,
-            "replacement_integral": self.replacement_integral,
-            "replacement_majorant": self.replacement_majorant,
-            "amplitude_bound": self.amplitude_bound,
-            "probability_bound": self.probability_bound,
+            "initial_leakage": reported_residual(self.initial_leakage),
+            "defect_action_integral": reported_residual(self.defect_action_integral),
+            "overlap_integral": reported_residual(self.overlap_integral),
+            "replacement_integral": reported_residual(self.replacement_integral),
+            "replacement_majorant": reported_residual(self.replacement_majorant),
+            "amplitude_bound": reported_residual(self.amplitude_bound),
+            "probability_bound": reported_residual(self.probability_bound),
             "panels": self.panels,
             "time": self.time,
         })

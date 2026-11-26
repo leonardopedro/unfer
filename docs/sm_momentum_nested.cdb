@@ -26,7 +26,7 @@
 #     4    the second-derivative product rule. This row exists because the
 #          kernel's first implementation dropped the k x^{k-1} term, which
 #          only shows up on the quadratic rows; `wall` is the row that caught
-#          it (relative gap 1.4e-6 before the fix, 1.3e-13 after),
+#          it (relative gap 1.4e-6 before the fix, 2.3e-13 after),
 #     5    the retained Higgs constant: the dictionary's `wall` is
 #          lambda/4 (sum_a phi_a^2 - vev^2)^2 INCLUDING its fixed constant,
 #          so its value at the minimum is exactly zero,

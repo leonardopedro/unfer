@@ -11,6 +11,7 @@
 //! ```
 
 use fock_sirk::joint_sirk::joint_norm;
+use fock_sirk::sm_bridge::reported_residual;
 use nested_fock_algebra::exact_inner::{
     ActionLimits, JointInnerBasis as B, JointOuterBasis as O, NestedVector,
 };
@@ -258,7 +259,9 @@ fn action_cell(
         "outer_particle_number": state.keys().map(|b| b.particle_number()).sum::<u64>(),
         "universe_multiplicity": multiplicity,
         "support": image.len(),
-        "norm": joint_norm(&image),
+        // The one measured quantity of a cell; the digests above and below stay
+        // bit-exact. Twelve significant digits is far inside the 1e-9 check.
+        "norm": reported_residual(joint_norm(&image)),
         "action_sha256": state_digest(&image),
         "limits": {"max_components": limits.max_components, "max_work": limits.max_work},
     })

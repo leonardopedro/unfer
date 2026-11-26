@@ -39,7 +39,7 @@ weight `½ΣF² = Σ_{a<b}F²`. (ii) The full 1,241-expression routing:
 cross-checks it between the coordinate and momentum representations of the E1
 collective-coordinate operator, with `docs/fixtures/sm_dictionary_kernel.json`
 and `fock_sirk/tests/sm_dictionary_validation.rs`. All 1,241 rows agree to
-roundoff (worst relative gap 1.3e-13, `wall`); a mutated `2π` is detected on
+roundoff (worst relative gap 2.3e-13, `wall`); a mutated `2π` is detected on
 exactly the 232 rows that carry a jet momentum.
 
 **Scope of that pass.** The dictionary kernel is the collective-coordinate
