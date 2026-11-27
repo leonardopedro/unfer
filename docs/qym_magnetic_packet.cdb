@@ -102,6 +102,16 @@ for centre in centres:
 
 walls = [gaussian_moment(power,4)*gaussian_moment(0,4)*z_product([1,1,j,j])
          for power,j in [(0,2),(2,3)]]
+# Ratios used in the form comparison; the transverse derivative contributes
+# pi for a Gaussian and 3*pi for x_1 times that Gaussian.
+for i, j in enumerate(centres):
+    transverse = 3 if j == 3 else 1
+    ratio = (transverse+1)*pi + 4*pi**2*j**2/(1+sp.exp(-2*pi*j**2))
+    check("oscillator-ratio-" + str(j), curls[i] - norms[i]*ratio)
+    metric = (1+sp.exp(-2*pi*j**2))/(4*sp.sqrt(2))
+    if j == 3:
+        metric /= 4*pi
+    check("packet-metric-" + str(j), norms[i] - metric)
 def decimals(values):
     return [float(sp.N(value, 17)) for value in values]
 
@@ -132,6 +142,93 @@ angle = sp.symbols("angle", real=True)
 rotation = sp.rot_axis3(angle)
 check("constant-colour-rotation", (colour_rows*rotation).det()-determinant)
 check("local-Gauss-escape", sp.diff(z*sp.exp(-pi*z**2),z).subs(z,0)-1)
+
+# Dilation x -> x/L applies to every spatial profile including its polynomial factor.
+length, width = sp.symbols("length width", positive=True)
+density = sp.exp(-field**2/(2*width**2))/(sp.sqrt(2*pi)*width)
+check("squeezed-norm", sp.integrate(density,(field,-sp.oo,sp.oo)) - 1)
+check("squeezed-field-variance", sp.integrate(field**2*density,(field,-sp.oo,sp.oo)) - width**2)
+check("squeezed-momentum-variance", sp.integrate(sp.diff(sp.sqrt(density),field)**2,
+      (field,-sp.oo,sp.oo)) - 1/(4*width**2))
+for name, spatial, amplitude in [
+    ("electric", length**(-3), length**2),
+    ("curl", length, length**(-2)),
+    ("cubic", length**2, length**(-3)),
+    ("wall", length**3, length**(-4)),
+]:
+    check("combined-dilation-" + name, spatial*amplitude - 1/length)
+
+# Local gauge test on the first colour. The y and z factors of f_1² cancel.
+raw_metric = gaussian_moment(0, 2)
+current = sp.integrate(env*sp.diff(x*env,x), (x,-sp.oo,sp.oo))
+check("matched-shift-per-standard-deviation", current/raw_metric - sp.Rational(1,2))
+
+# Two transverse spatial profiles, each carrying all three colours. Compute
+# polynomial Gaussian integrals directly in three continuous coordinates.
+y = sp.symbols("y", real=True)
+pos = [x,y,z]
+radius2 = sum(q**2 for q in pos)
+bell = sp.exp(-pi*radius2)
+u = sp.Matrix([-y,x,0])
+v = sp.Matrix([0,-z,y])
+def div_bell(poly):
+    return sum(sp.diff(poly[j],pos[j])-2*pi*pos[j]*poly[j] for j in range(3))
+def curl_bell(poly):
+    partial = lambda j,k: sp.diff(poly[k],pos[j])-2*pi*pos[j]*poly[k]
+    return sp.Matrix([partial(1,2)-partial(2,1),partial(2,0)-partial(0,2),partial(0,1)-partial(1,0)])
+
+from functools import lru_cache
+moment1d = lru_cache(None)(gaussian_moment)
+def integrate_poly(poly, rate):
+    return sum(coeff*sp.prod(moment1d(k,rate) for k in powers)
+               for powers,coeff in sp.Poly(poly,x,y,z).terms())
+
+check("transverse-u", div_bell(u))
+check("transverse-v", div_bell(v))
+metric = integrate_poly(u.dot(u),2)
+curl = integrate_poly(curl_bell(u).dot(curl_bell(u)),2)
+wall = integrate_poly(u.cross(v).dot(u.cross(v)),4)
+check("transverse-metric", metric-1/(2*pi*2**sp.Rational(3,2)))
+check("transverse-v-metric", integrate_poly(v.dot(v),2)-metric)
+check("transverse-cross-metric", integrate_poly(u.dot(v),2))
+check("transverse-curl", curl-5*pi*metric)
+check("transverse-v-curl", integrate_poly(curl_bell(v).dot(curl_bell(v)),2)-curl)
+check("transverse-wall", wall-5/(512*pi**2))
+# For omega=w T¹, multiplication by w leaks out of the two-profile span.
+# The other spatial profile has zero overlap by oddness in x and z.
+projection = integrate_poly(u.dot(u),3)/metric
+check("weighted-cross-metric", integrate_poly(u.dot(v),3))
+defect = integrate_poly(u.dot(u),4)/metric-projection**2
+check("transverse-rotation-defect", defect-(2**(-sp.Rational(5,2))-sp.Rational(2,3)**5))
+for i in range(3):
+    check("aligned-colour-"+str(i), u_col.cross(sp.eye(3).col(i))[i])
+check("transverse-cubic-u", u_col.dot(u_col.cross(v_col)))
+check("transverse-cubic-v", v_col.dot(u_col.cross(v_col)))
+# E[(X×Y)_a²]=2s⁴ for independent centered equal-variance Gaussian triples.
+trial = lambda M,C,W,s: 6/(8*M*s**2) + 3*C*s**2 + 3*coupling**2*W*s**4
+check("projected-transverse-trial-dilation", trial(length**3*metric,length*curl,
+      length**3*wall,1/length) - trial(metric,curl,wall,sp.Integer(1))/length)
+
+# A projected rotation changes colour by a constant angle. A local rotation's
+# angle varies in space. Keep the exact sine and cosine when differentiating.
+theta, tau, ui, uj, wi, wj, du = sp.symbols("theta tau ui uj wi wj du", real=True)
+axis = sp.Matrix([1,0,0])
+n = sp.Matrix([0,sp.cos(theta),-sp.sin(theta)])
+check("orbit-angle-derivative", (sp.diff(n,theta)-n.cross(axis)).norm()**2)
+commutator = coupling*tau*(ui*wj-uj*wi)*n.cross(axis)
+colour_derivative = coupling*tau*(uj*wi-ui*wj)*sp.diff(n,theta)
+check("local-orbit-curvature", (commutator+colour_derivative).dot(commutator+colour_derivative))
+projected = du*n + commutator
+check("projected-orbit-energy", projected.dot(projected)-du**2-
+      (coupling*tau*(ui*wj-uj*wi))**2)
+grad_poly = -2*pi*sp.Matrix(pos)
+check("longitudinal-orthogonal-u", grad_poly.dot(u))
+check("longitudinal-orthogonal-v", grad_poly.dot(v))
+check("orbit-commutator-cost", integrate_poly(u.cross(grad_poly).dot(u.cross(grad_poly)),4)-
+      sp.Rational(5,64))
+check("longitudinal-metric", integrate_poly(grad_poly.dot(grad_poly),2)-
+      3*pi/2**sp.Rational(3,2))
+check("curl-cross-metric", integrate_poly(curl_bell(u).dot(curl_bell(v)),2))
 
 record = {
     "schema": "qym-cubic-continuous-packet/v1",

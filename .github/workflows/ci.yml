@@ -556,6 +556,25 @@ jobs:
           bash scripts/check-status --recount unfer=/tmp/unfer_tests.log
       - name: cargo test (release, fock_sirk)
         run: cargo test --locked -p fock_sirk --release --verbose
+      # The phi4 momentum suite's `coords_inner_product` keeps a scalar loop as
+      # the fallback for every non-aarch64 target, and this runner is x86_64, so
+      # the step above already exercises that loop. What it does NOT exercise is
+      # a second build of it: this step rebuilds the suite through the
+      # `CC_x86_64_unknown_linux_gnu` driver and runs it under qemu's user-mode
+      # emulation, so a result that only holds for one codegen/link path is
+      # caught here. It also keeps scripts/check-phi4-scalar-fallback itself
+      # green, which is what the aarch64 host uses to reach this fallback.
+      # The aarch64/NEON half of `coords_inner_product` is still not covered by
+      # CI: doing that needs an aarch64 cross toolchain and qemu-aarch64, and
+      # nothing in this repo runs the kernel on an aarch64 host.
+      - name: phi4 scalar-fallback cross-check (qemu)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user
+          PHI4_X86_CC=gcc \
+          PHI4_X86_QEMU=qemu-x86_64 \
+          PHI4_X86_SYSROOT=/ \
+            ./scripts/check-phi4-scalar-fallback
       # The heavy nested_fock_algebra physics unit tests (e.g. the quartic QYM
       # builder) are #[ignore]d so the debug default suite stays fast; they run
       # here in release via --ignored (0.01s each) — same mode as

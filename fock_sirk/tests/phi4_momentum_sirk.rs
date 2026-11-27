@@ -520,7 +520,7 @@ fn window_and_rank_sweeps_separate_the_two_error_sources() {
     // these bounded windows the shifted polynomial flow is the more accurate
     // of the two (5.4e-5 vs 3.1e-3 at C=8), which is why it stays labeled a
     // diagnostic rather than a competitor.
-    eprintln!("NOTE rank-m errors={errors:?} forward={forward_errors:?} exact={exact:.12}");
+    eprintln!("NOTE rank-m errors={errors:?} forward={forward_errors:?} exact={exact:?}");
     // The tail is reported separately from the inside-window error.
     let result = solve(
         &h,
@@ -814,9 +814,13 @@ fn coupling_and_momentum_spread_responses_are_certified() {
         );
     }
 
+    // Printed at full `f64` precision: these leaves are compared against the
+    // checked-in record byte-for-byte across builds (see the scalar-fallback
+    // cross-check in docs/VERIFY_PHI4_MOMENTUM.md section 5.12), which a
+    // three-digit format cannot support.
     eprintln!(
-        "NOTE amplitude charge: base={:.3e} coupled={:.3e} spread={:.3e} | lambda response \
-         {:.3e} vs charge {:.3e} | width_k response {:.3e} vs charge {:.3e}",
+        "NOTE amplitude charge: base={:?} coupled={:?} spread={:?} | lambda response \
+         {:?} vs charge {:?} | width_k response {:?} vs charge {:?}",
         base.amplitude.probability_bound,
         coupled.amplitude.probability_bound,
         spread.amplitude.probability_bound,

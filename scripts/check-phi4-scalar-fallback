@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Check the phi4 momentum suite on the non-aarch64 path.
+#
+# `coords_inner_product` dispatches to the NEON kernel only on aarch64 and keeps
+# the scalar loop as the fallback everywhere else, so on this host the fallback is
+# never executed by `cargo test`. This script cross-compiles the suite for
+# x86_64-unknown-linux-gnu and runs it under qemu's user-mode emulation, where the
+# fallback is the code that runs. The suite includes
+# `recorded_cutoff_sweep_matches_the_live_model`, which recomputes the live C = 12
+# cell and compares it against the checked-in record at 1e-12.
+#
+# What it does not prove: the digits of a cross build are a function of this
+# toolchain, not just of the architecture. The fallback reproduces the record's
+# tails bit-for-bit and its Krylov counts exactly (6/19/43 at C = 4/8/12), while
+# the m = 4 inside-window errors agree to ~1e-15 relative rather than to the bit.
+# See docs/VERIFY_PHI4_MOMENTUM.md, section 5.12.
+#
+# Requires: a rustup (or nix) toolchain with the x86_64 target, plus nix for the
+# cross linker, sysroot and qemu. Override any of them with the env vars below.
+set -euo pipefail
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root"
+
+target=x86_64-unknown-linux-gnu
+
+resolve_nix() {
+    local attr="$1"
+    # `nix build` realises the outputs (a multi-output derivation prints several
+    # paths); `nix eval` then names the one the attribute resolves to.
+    nix build --no-link "nixpkgs#$attr" >/dev/null 2>&1 || true
+    nix eval --raw "nixpkgs#$attr"
+}
+
+if [ -z "${PHI4_X86_CC:-}" ] || [ -z "${PHI4_X86_QEMU:-}" ] || [ -z "${PHI4_X86_SYSROOT:-}" ]; then
+    if ! command -v nix >/dev/null 2>&1; then
+        echo "nix required to provide the x86_64 cross linker, sysroot and qemu;" >&2
+        echo "set PHI4_X86_CC, PHI4_X86_QEMU and PHI4_X86_SYSROOT to supply them." >&2
+        exit 69
+    fi
+    PHI4_X86_CC="${PHI4_X86_CC:-$(resolve_nix pkgsCross.gnu64.stdenv.cc)/bin/${target}-cc}"
+    PHI4_X86_QEMU="${PHI4_X86_QEMU:-$(resolve_nix qemu)/bin/qemu-x86_64}"
+    PHI4_X86_SYSROOT="${PHI4_X86_SYSROOT:-$(resolve_nix pkgsCross.gnu64.glibc)}"
+fi
+
+if [ ! -x "$PHI4_X86_CC" ] || [ ! -x "$PHI4_X86_QEMU" ] || [ ! -d "$PHI4_X86_SYSROOT" ]; then
+    echo "cross toolchain, qemu or sysroot not found:" >&2
+    echo "  cc=$PHI4_X86_CC" >&2
+    echo "  qemu=$PHI4_X86_QEMU" >&2
+    echo "  sysroot=$PHI4_X86_SYSROOT" >&2
+    exit 69
+fi
+
+if command -v rustup >/dev/null 2>&1 &&
+    ! rustup target list --installed | grep -qx "$target"; then
+    echo "missing rust target $target:" >&2
+    echo "  rustup target add $target" >&2
+    exit 69
+fi
+
+export CC_x86_64_unknown_linux_gnu="$PHI4_X86_CC"
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$PHI4_X86_CC"
+
+echo "== building tests/phi4_momentum_sirk for $target" >&2
+# Ask for the artifact stream: cargo prints `Executable ...` only when it actually
+# links, so a cached build would leave the path unknown.
+if ! build_json="$(cargo test -p fock_sirk --release --target "$target" \
+    --test phi4_momentum_sirk --no-run --message-format=json 2>&1)"; then
+    printf '%s\n' "$build_json" >&2
+    echo "the cross build failed" >&2
+    exit 1
+fi
+binary="$(printf '%s\n' "$build_json" |
+    grep '"kind":\["test"\]' |
+    grep -o '"executable":"[^"]*"' | tail -1 |
+    sed 's/.*:"//; s/"$//')"
+if [ -z "$binary" ] || [ ! -x "$binary" ]; then
+    echo "cargo did not report a test binary" >&2
+    printf '%s\n' "$build_json" | tail -5 >&2
+    exit 1
+fi
+
+# qemu needs the target's loader and libc under -L; libgcc_s is a private dependency
+# of the cross gcc, so take it from the compiler itself rather than guessing.
+libgcc_dir="$(dirname "$("$PHI4_X86_CC" -print-file-name=libgcc_s.so.1)")"
+
+echo "== running $(basename "$binary") under $PHI4_X86_QEMU" >&2
+LD_LIBRARY_PATH="$libgcc_dir" "$PHI4_X86_QEMU" -L "$PHI4_X86_SYSROOT" \
+    "$binary" --nocapture --test-threads=1
