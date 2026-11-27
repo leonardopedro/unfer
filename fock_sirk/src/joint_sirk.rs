@@ -3,7 +3,7 @@
 //! Explicit occupation projection records the full discarded action, and Ritz
 //! residuals are recomputed with the full operator images, including its tail.
 
-use crate::linalg::{whiten_gram, SirkError};
+use crate::linalg::{SirkError, whiten_gram};
 use nalgebra::{DMatrix, DVector};
 use nested_fock_algebra::exact_inner::{
     ActionError, ActionLimits, InnerExpr, JointOuterBasis, NestedVector,
