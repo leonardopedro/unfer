@@ -13,7 +13,15 @@ Design notes:
     quote links as examples, and LaTeX like `ℱ[u_j](Q)` otherwise parses as a
     link);
   * external targets (http(s), mailto, protocol-relative) are skipped, since
-    reachability of the wider web is not this repo's contract.
+    reachability of the wider web is not this repo's contract;
+  * a relative target that escapes the checkout (`../../timepiece/...`) is a
+    *workspace* reference, not a repo one. When the target is present it is
+    checked like any other; when the layout does not have it, the link is
+    reported as skipped-outside, not broken. That is what makes the CI job
+    meaningful: `papers/` is a plain directory, not a cloneable repo, and
+    `../test/` is not publicly readable, so a `broken` verdict for them
+    describes the runner's layout, not this repo. In-repo links are never
+    skipped -- a typo inside the tree still fails;
 
 Usage:
     python3 scripts/check-links [FILE ...]
@@ -156,6 +164,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     broken: list[str] = []
+    outside: list[str] = []
     total = 0
     external = 0
     for doc in docs:
@@ -173,13 +182,19 @@ def main(argv: list[str]) -> int:
             if resolved is None:
                 continue
             total += 1
+            try:
+                in_repo = True
+                resolved.relative_to(root)
+            except ValueError:
+                in_repo = False
             if not resolved.exists():
-                try:
-                    shown = resolved.relative_to(root)
-                except ValueError:
-                    shown = resolved
+                if not in_repo:
+                    # Workspace-relative target the layout does not carry.
+                    outside.append(f"{doc.relative_to(root)}:{lineno}: {target}")
+                    continue
                 broken.append(
-                    f"{doc.relative_to(root)}:{lineno}: {target} -> {shown} (missing)"
+                    f"{doc.relative_to(root)}:{lineno}: {target} -> "
+                    f"{resolved.relative_to(root)} (missing)"
                 )
 
     if broken:
@@ -188,9 +203,19 @@ def main(argv: list[str]) -> int:
             print(f"  {b}", file=sys.stderr)
         return 1
 
+    if outside:
+        print(
+            f"check-links: {len(outside)} workspace link(s) skipped — the "
+            "target is outside this checkout and absent from the layout:",
+            file=sys.stderr,
+        )
+        for o in outside:
+            print(f"  {o}", file=sys.stderr)
+
     print(
         f"check-links: OK — {len(docs)} document(s), {total} relative link(s) "
-        f"resolve ({external} external skipped)"
+        f"checked ({external} external skipped, {len(outside)} workspace "
+        f"target(s) not in this layout)"
     )
     return 0
 
