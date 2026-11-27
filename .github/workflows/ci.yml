@@ -173,7 +173,7 @@ jobs:
           # master, not main: australVM's only remote branch is `master`
           git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
       - name: build the examples the quick rows run
         run: |
           cargo build --locked --release -p pcnl \
@@ -254,7 +254,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
 
       # ---------------------------------------------------------------------
       # Sibling pins (X7).
@@ -571,7 +571,7 @@ jobs:
           # master, not main: australVM's only remote branch is `master`.
           git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
       - name: cargo build
         run: cargo build --locked --workspace --release --verbose
       # `coords_inner_product` has two implementations — the NEON kernel on
@@ -719,7 +719,7 @@ jobs:
         with:
           toolchain: 1.99.0
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
       # NOT `--all`: that flag means "all packages, and also their local
       # path-based dependencies", which reaches into ../australVM's tree and
       # reports diffs in its own files (safestos/gpu/src/bin/avm-gpu.rs) -- a
@@ -769,7 +769,7 @@ jobs:
           # master, not main: australVM's only remote branch is `master`
           git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
       # This step has been red since at least 2026-11-24 and passes on the dev
       # box, but it was the one failing step with no reachable text: job logs
       # need admin rights, and the step itself asserted nothing about *why*.
@@ -838,7 +838,7 @@ jobs:
           # master, not main: australVM's only remote branch is `master`
           git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p unfer_ffi
       - name: assert generated census matches SYMBOL_REGISTRY (H2)
         run: |
@@ -909,7 +909,7 @@ jobs:
           # workspace root, wiping the unfer/australVM sibling checkouts.
           path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
@@ -954,7 +954,7 @@ jobs:
           # workspace root, wiping the unfer/australVM sibling checkouts.
           path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
@@ -995,7 +995,7 @@ jobs:
           # workspace root, wiping the unfer/australVM sibling checkouts.
           path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
@@ -1036,7 +1036,7 @@ jobs:
           # workspace root, wiping the unfer/australVM sibling checkouts.
           path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
@@ -1077,7 +1077,7 @@ jobs:
           # workspace root, wiping the unfer/australVM sibling checkouts.
           path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
@@ -1123,7 +1123,7 @@ jobs:
           # workspace root, wiping the unfer/australVM sibling checkouts.
           path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
@@ -1191,7 +1191,7 @@ jobs:
           # workspace root, wiping the unfer/australVM sibling checkouts.
           path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
@@ -1284,7 +1284,7 @@ jobs:
           # workspace root, wiping the unfer/australVM sibling checkouts.
           path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
@@ -1338,7 +1338,7 @@ jobs:
           # workspace root, wiping the unfer/australVM sibling checkouts.
           path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
