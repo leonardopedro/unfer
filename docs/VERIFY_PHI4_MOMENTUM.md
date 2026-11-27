@@ -1875,8 +1875,13 @@ the suite's ten tests pass unchanged.
   aarch64 step carries `if: success() || failure()` so the NEON leg reports even
   when the x86_64 leg trips. The resolution fix was exercised here with bare
   names on the aarch64 leg (`gcc`, `qemu-aarch64`, ten tests passed); the `if:`
-  guard is configuration and was not exercised. The Ubuntu toolchain itself is
-  still unverified — run `451` never reached the aarch64 step. CI `ubuntu-latest` is
+  guard is configuration and was not exercised. Run `453` (`6ea2b02`) then
+  executed both legs on `ubuntu-latest`: the `x86_64` second-toolchain leg and
+  the `aarch64` NEON leg both finished green — each step exits with the test
+  suite's status, so all ten tests passed under `qemu-aarch64` with Ubuntu's
+  `gcc-aarch64-linux-gnu` and the `/usr/aarch64-linux-gnu` sysroot. That job's
+  later workspace-suite step is the same unrelated failure; the kernel
+  cross-checks no longer wait on it. CI `ubuntu-latest` is
   `x86_64`, where a plain `cargo test` can only ever run the scalar loop, so it
   now runs both legs of the same script: the host target through a second
   toolchain, and `aarch64-unknown-linux-gnu` under `qemu-aarch64`, which is the
