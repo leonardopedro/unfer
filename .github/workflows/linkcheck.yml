@@ -18,10 +18,21 @@ jobs:
       # Materialize that layout: the mirror at the root path, the siblings at
       # their repo-relative paths (default branches; clones keep the links'
       # targets real files rather than stubs).
+      #
+      # The ledger names five more checkouts than the deploy/ and docs/ links
+      # did, so they are cloned too: without them this job was red on every
+      # push with the same rows, which is a gate that had stopped carrying
+      # information. Each entry is the public upstream of the sibling the row
+      # points at; the link only needs the directory to exist.
       - name: workspace layout (root ATTRIBUTION + sibling repos)
         run: |
           curl -fsSL https://raw.githubusercontent.com/leonardopedro/emthin/main/workspace-backup/ATTRIBUTION.md -o ../ATTRIBUTION.md
           git clone --depth 1 https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
           git clone --depth 1 https://github.com/leonardopedro/australVM.git ../australVM
+          git clone --depth 1 https://github.com/leanprover-community/physlib.git ../physlib
+          git clone --depth 1 https://github.com/Kernel-Science/physlibsearch.git ../physlibsearch
+          git clone --depth 1 https://github.com/yichuan-w/LEANN.git ../LEANN
+          git clone --depth 1 https://github.com/xerj-org/xerj.git ../xerj
+          git clone --depth 1 https://github.com/Edge0-AI/Edge0.git ../Edge0
       - name: check-links
         run: python3 scripts/check-links
