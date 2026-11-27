@@ -142,10 +142,94 @@ def exact_enclosure():
     return lower / (12*sqrt_hi), upper / (12*sqrt_lo)
 
 
+def check_packet_form_comparison():
+    """Rational bounds on the continuous Gaussian coefficients, before Hermite truncation."""
+    pi_lo, pi_hi = Fraction(314, 100), Fraction(22, 7)
+    root_lo, root_hi = Fraction(140, 99), Fraction(99, 70)
+    assert root_lo**2 < 2 < root_hi**2
+    decay = Fraction(1, 500)
+    assert exp_negative_bounds(2*pi_lo)[1] < decay
+    cubic_lo, cubic_hi = exact_enclosure()
+    assert 0 < cubic_lo <= cubic_hi < Fraction(49, 1000)
+    # In w_XY four zero-frequency terms of the sixteen cosine channels survive,
+    # each with mass 1/8. The remaining Fourier weights are positive.
+    wall_lo = Fraction(1, 32)
+    seed_hi = Fraction()
+    for j, frequency in enumerate((6, 12, 19), 1):
+        mass_lo = 1 / (4 * root_hi)
+        mass_hi = (1 + decay) / (4 * root_lo)
+        if j == 3:
+            mass_lo /= 4*pi_hi
+            mass_hi /= 4*pi_lo
+        transverse = 3 if j == 3 else 1
+        ratio_lo = (1+transverse)*pi_lo + 4*pi_lo**2*j*j / (1+decay)
+        ratio_hi = (1+transverse)*pi_hi + 4*pi_hi**2*j*j
+        if j == 3:
+            ratio_lo -= cubic_hi**2 / (wall_lo*mass_lo)
+        assert frequency**2 < ratio_lo
+        seed_hi += 1/(8*mass_lo) + mass_hi*ratio_hi/2
+    # For the upper bound discard cos² <= 1 in both wall integrals.
+    # At g=2 the Gaussian seed has E[XYZ]=0 and E[X²Y²]=E[X²Z²]=1.
+    seed_hi += 2*(Fraction(1, 8) + 1/(64*pi_lo))
+    assert seed_hi < 32
+    print('Three-profile form floor >= 37/2 for all g; Gaussian seed energy < 32 at g=2')
+
+
+def check_local_gauss_trials():
+    """Integrate raw-amplitude shifts and the two-profile transverse energy."""
+    def bell(x, width):
+        return exp(-pi*(x/width)**2)
+
+    def longitudinal(x, width):
+        return bell(x, width)*cos(2*pi*x/width)
+
+    fixed_product = None
+    for width in (1, 2, 4, 8):
+        def overlap(parameter_width):
+            # omega = (x_1 / parameter_width) f_parameter_width(x).
+            radius = 6*min(width, parameter_width)
+            def xpart(x):
+                y = x/parameter_width
+                return bell(x, width)*bell(x, parameter_width)*(1-2*pi*y*y)/parameter_width
+            xx = integrate(xpart, radius, 768)
+            yy = integrate(lambda y: bell(y, width)*bell(y, parameter_width), radius, 768)
+            zz = integrate(lambda z: longitudinal(z, width)*longitudinal(z, parameter_width),
+                           radius, 768)
+            return xx*yy*zz
+
+        mass = (integrate(lambda x: bell(x, width)**2, 6*width, 768)**2 *
+                integrate(lambda z: longitudinal(z, width)**2, 6*width, 768))
+        matched = width * overlap(width) / mass
+        fixed = width * overlap(1) / mass
+        assert abs(matched - 0.5) < 2e-13
+        assert abs(fixed) <= 1 / ((mass/width**3) * width**4)
+        print(f'L={width} standardized shift: matched={matched:.8f} fixed={fixed:.8f}')
+
+        def radial(f):
+            return integrate(lambda r: 2*pi*r*r * f(r/width), 6*width, 768)
+        # The angular averages below include both Cartesian polarizations of the curl.
+        metric = radial(lambda r: (2/3)*r*r*bell(r,1)**2)
+        curl = radial(lambda r: (4 - 16*pi*r*r/3 + 8*pi*pi*r**4/3)*bell(r,1)**2)/width**2
+        wall = radial(lambda r: r**4*bell(r,1)**4/3)
+        proj = radial(lambda r: (2/3)*r*r*bell(r,1)**3) / metric
+        leak = radial(lambda r: (2/3)*r*r*bell(r,1)**2*(bell(r,1)-proj)**2) / metric
+        assert abs(leak - (2**(-2.5) - (2/3)**5)) < 2e-14
+        assert abs(curl*width**2/metric - 5*pi) < 1e-12
+        assert abs(wall/width**3 - 5/(512*pi*pi)) < 1e-14
+        # Six independent amplitudes of standard deviation 1/L, g=2.
+        energy = 6*width**2/(8*metric) + 3*curl/width**2 + 12*wall/width**4
+        if fixed_product is None:
+            fixed_product = energy
+        assert abs(width*energy - fixed_product) < 1e-11
+        print(f'L={width} transverse energy={energy:.10f} rotation loss={leak:.10f}')
+
+
 def main():
     reference = Path(__file__).resolve().parents[1] / 'docs/fixtures/qym_magnetic_packet.json'
     record = json.loads(reference.read_text())
     assert record['schema'] == 'qym-cubic-continuous-packet/v1' and record['coupling'] == 1
+    check_local_gauss_trials()
+    check_packet_form_comparison()
     check_local_gauge_projection()
     check_action_coefficients(record['packet_action'])
     lo, hi = exact_enclosure()

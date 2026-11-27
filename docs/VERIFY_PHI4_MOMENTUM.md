@@ -1238,7 +1238,16 @@ put the `C = 38 … 42` `m = 4` cells `8–11 %` above the `aarch64` table. That
 table keeps the slowest of the three runs on purpose: with no quiet window
 available, a conservative figure with a measured band is worth more than a
 fast one that cannot be reproduced, so the `s` columns stand as upper bounds
-**by at most `12 %`**, that ceiling being measured here. The
+**by at most `12 %`**, that ceiling being measured here. A fourth attempt was
+made specifically to lift them and did not produce a usable run: the host (a
+12-core `aarch64` box shared with other agents) was gated on `load1 < 1.2` for
+five minutes, the gate fired at `0.54`, and the sweep was stolen partway
+through — `median load1 2.2`, peak `26`, then `14–16` for the last half hour —
+so it was aborted rather than recorded, and the retry loop that would have
+restarted it found no idle stretch in the following hour (`load1` never left
+`10–12`). The `s` columns therefore remain upper bounds; replacing them needs
+a genuinely idle host for the full `~80 min`, gated at `load1 < 1.2` to start
+and abandoning the run if `load1 ≥ 3.0` for three consecutive samples. The
 ratios between neighbouring rows and every physics leaf are unaffected — all
 three runs reproduce the step counts and every tail, error and probability
 exactly, and the reruns differ only in `runtime_ms` and in the
@@ -1248,10 +1257,51 @@ digits (`6f0d9c6`) while that `aarch64` run still stored them at full precision
 below).
 >>>>>>> 13f548811c37d26acf2374b5f1cc13ac5e592f8d
 
+<<<<<<< HEAD
 **Trying to cut the other `36 %`, and failing.** Three variants were measured on
 the `aarch64` host against the §5.11 `C = 26` baseline (`axpy 2.21 s`,
 `dot 1.63 s`, solve `9.77 s`) on one machine state, each A/B'd against the
 committed kernel:
+=======
+**The other target's build, leaf by leaf.** The suite prints its diagnostics with
+`{:?}`, so a cross build can be compared leaf for leaf instead of through the
+`1e-12` tolerance of the record assertion. `scripts/check-phi4-scalar-fallback`
+builds the suite for `x86_64-unknown-linux-gnu` and runs it under `qemu-x86_64`;
+`scripts/compare-phi4-leaves` diffs its `29` printed leaves against this host's
+`aarch64` run and against the record's `19` stored ones:
+
+| leaves | count | max abs `|aarch64 − x86|` | bit-identical |
+|---|---:|---:|---:|
+| response probabilities `base`, `coupled`, `spread` | 3 | `8.1e-16` | 0 |
+| response differences `lambda`, `width_k` | 2 | `0` | 2 |
+| certified charges (`*_charge`) | 2 | `9.0e-16` | 0 |
+| tails at `C = 4`, `8`, `12` | 3 | `2.4e-15` | 0 |
+| `m = 4` inside-window errors | 3 | `3.1e-15` | 0 |
+| `m = 4` forward-product errors | 3 | `4.4e-16` | 0 |
+| rank `m = 2, 3, 4` errors | 3 | `2.9e-15` | 0 |
+| rank `m = 2, 3, 4` forward errors | 3 | `2.1e-15` | 0 |
+| `exact` reference probability | 1 | `0` | 1 |
+| shift-solve counts | 6 | `0` (5 of `6`) | 5 |
+
+The one non-float difference is the `C = 8` rank-2 Krylov count: `19` on
+`x86_64`, `18` on `aarch64`. That is a stop test sitting on a rounding boundary,
+not a wrong answer — the tails it produces differ by `2.0e-15`. Against the
+record's stored `12`-digit leaves the `x86_64` build matches `16/19` and the
+`aarch64` build `13/19`; the three neither reaches are `m4_err_C12`
+(`0.00242965408903` recorded, `…902` from both builds), `m4_fwd_C8` and
+`m4_fwd_C12`. So the record's last digit is not a cross-build reproducible
+quantity even on its own target, and no leaf moves by more than `3.1e-15`
+absolute or `7e-12` relative (on leaves above `1e-4`; the two `~1e-8` forward
+errors differ by `2.2e-16` absolute, which reads as `1e-8` relative because the
+value itself is tiny). Two caveats: this compares two builds of the same
+compiler family, so it says nothing about a different `rustc`; and every leaf on
+this table is physics that both builds get right — the differences are in the
+last two of fifteen or sixteen significant digits.
+
+**Trying to cut the other `36 %`, and failing.** Three variants were measured
+against the §5.11 `C = 26` baseline (`axpy 2.21 s`, `dot 1.63 s`, solve
+`9.77 s`) on one machine state, each A/B'd against the committed kernel:
+>>>>>>> 855f99bf0443931fa4d5723f097264319468b307
 
 | variant | `axpy` | `dot` | solve | verdict |
 |---|---|---|---|---|
@@ -1651,17 +1701,23 @@ labelled as such in place.
   `tests/phi4_momentum_sirk.rs` for `x86_64-unknown-linux-gnu` (GCC `16.2.0`,
   glibc `2.44`) and executes it under `qemu-x86_64` `11.1.2` (`~93 s`). Against
   the checked-in native `x86_64` record all nine tests pass, the two record
-  assertions included, and the digits are close to bit-identical: the `C = 4`,
-  `8`, `12` tails reproduce **exactly** (`0.0e+00`), the rank-2 Krylov counts
-  match to the integer (`6`, `19`, `43`), and only the `m = 4` inside-window
-  errors move — by `2.6e-15` at `C = 8` and `9.0e-15` at `C = 12` (`8e-13` and
-  `4e-12` relative). The earlier build, measured against the `aarch64` record
-  that preceded this one, differed more: `3.1e-15` absolute and `2.7e-15`
-  relative on the `O(1)` values, with the `C = 8` rank-2 count at `18` rather
-  than `19`. So the cross build reproduces the checked-in *x86* arithmetic and
-  it is the `aarch64` NEON kernel that sat on the other side of that `1e-13`
-  boundary — a difference inside one target's two builds, not a verdict on the
-  target (§5.12).
+  assertions included (§5.12, which compares **all 29** printed leaves rather
+  than the `C`-sweep rows).
+* Measured across every printed leaf: `scripts/compare-phi4-leaves` diffs the
+  `{:?}` leaves of the native `aarch64` run and the emulated `x86_64` run. Of
+  `29` leaves `8` are bit-identical across builds (`lambda` and `width_k`
+  responses, `exact`, the `m = 4` counts at all three cutoffs, `m = 2` counts at
+  `C = 4` and `12`); the rest differ by at most `3.1e-15` absolute and `7e-12`
+  relative on leaves above `1e-4`; **one integer** moves — the `C = 8` rank-2
+  Krylov count is `19` on `x86_64` and `18` on `aarch64`, the two sides of a
+  `1e-13` stop test. Against the record's stored 12-digit leaves the `x86_64`
+  build reproduces `16/19` and the `aarch64` build `13/19`; the three neither
+  reaches are `m4_err_C12`, `m4_fwd_C8` and `m4_fwd_C12`, so the record's own
+  last digit is not a cross-build reproducible quantity even on its own target.
+  The cross build therefore reproduces the checked-in *x86* arithmetic and it is
+  the `aarch64` NEON kernel that sits on the other side of that boundary — a
+  difference between two builds of one target, not a verdict on the target
+  (§5.12).
 * Corrected: the rank-4 `C = 28` step row of §5.2 had been quoting that cell's
   shift-solve counts under a bounded-resolvent heading. It now shows the
   resolvent counts; no measurement changed, the label was wrong (§5.11).

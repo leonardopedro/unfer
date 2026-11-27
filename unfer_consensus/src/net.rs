@@ -281,6 +281,19 @@ pub struct LedgerSnapshot {
     job_outbox: BTreeMap<u64, JobCommand>,
 }
 
+/// Test-only crash point used by
+/// `a_crash_mid_publish_keeps_the_committed_state_and_its_watermark`. The child
+/// process aborts here, after the temporary file's fsync and before the rename,
+/// so the test observes the exact window the crash protocol is about.
+#[cfg(test)]
+fn crash_before_rename() {
+    if std::env::var_os("UNFER_LEDGER_CRASH_POINT").as_deref()
+        == Some(std::ffi::OsStr::new("before_rename"))
+    {
+        std::process::abort();
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LedgerFile {
     path: PathBuf,
@@ -368,6 +381,12 @@ impl LedgerFile {
         file.sync_all()
             .map_err(|error| format!("could not fsync {}: {error}", temporary.display()))?;
         drop(file);
+        // Test-only crash point: the temporary file is durable and the rename
+        // has not happened, which is the window the atomic-publish premise is
+        // about. Inert unless the crash-injection test's child sets the
+        // variable, and compiled out of every non-test build.
+        #[cfg(test)]
+        crash_before_rename();
         fs::rename(&temporary, &self.path).map_err(|error| {
             format!(
                 "ledger snapshot publish failed for {}: {error}",
@@ -3029,6 +3048,111 @@ mod tests {
             reopened.save(&older).is_err(),
             "a handle that loaded N committed entries must refuse fewer"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── A crash in the one window the publish protocol is about ─────────────
+
+    /// The child half of the crash-injection test. It only does anything when
+    /// the parent points it at a directory: it publishes a three-entry snapshot
+    /// and must die at `crash_before_rename`, before the rename publishes it.
+    #[test]
+    fn ledger_publish_crash_child() {
+        let Some(dir) = std::env::var_os("UNFER_LEDGER_CRASH_DIR") else {
+            return;
+        };
+        let file = LedgerFile::new(Path::new(&dir)).expect("the child opens the ledger");
+        let snapshot = LedgerSnapshot {
+            bank: vec![tx(1), tx(2), tx(3)],
+            ..LedgerSnapshot::default()
+        };
+        file.save(&snapshot)
+            .expect("the child's publish reaches the crash point");
+        panic!("the child was supposed to abort before the rename");
+    }
+
+    /// A process that dies between the temporary file's fsync and the rename
+    /// must leave the last committed snapshot on disk, and a reloaded handle must
+    /// seed its watermark from that snapshot rather than from nothing. The
+    /// unrenamed temp file is the only trace of the interrupted publish, and the
+    /// restarted handle must still refuse a state older than the durable one.
+    #[cfg(unix)]
+    #[test]
+    fn a_crash_mid_publish_keeps_the_committed_state_and_its_watermark() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-ledger-crash-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = LedgerFile::new(&dir).unwrap();
+        let committed = LedgerSnapshot {
+            bank: vec![tx(1)],
+            ..LedgerSnapshot::default()
+        };
+        file.save(&committed)
+            .expect("seed the durable one-entry snapshot");
+
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "net::tests::ledger_publish_crash_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("UNFER_LEDGER_CRASH_DIR", &dir)
+            .env("UNFER_LEDGER_CRASH_POINT", "before_rename")
+            .status()
+            .expect("spawn the crashing child");
+        assert!(
+            !status.success(),
+            "the child must die at the crash point, not exit normally"
+        );
+        assert_eq!(
+            status.signal(),
+            Some(6),
+            "the crash point aborts (SIGABRT), so the parent sees a killed child"
+        );
+
+        // The rename never happened: the durable snapshot is still the one-entry
+        // state, and the interrupted publish is visible only as its temp file.
+        let on_disk: LedgerSnapshot =
+            serde_json::from_slice(&std::fs::read(&file.path).unwrap()).unwrap();
+        assert_eq!(
+            on_disk.bank.len(),
+            1,
+            "the crash must not publish the new snapshot"
+        );
+        assert!(
+            dir.join("ledger.ledger.tmp").exists(),
+            "the child should have written the temp file before dying"
+        );
+
+        // A restarted handle seeds its watermark from what load() returned: an
+        // equal committed length is admitted, an older one is refused.
+        let reopened = LedgerFile::new(&dir).unwrap();
+        assert_eq!(reopened.load().unwrap().bank.len(), 1);
+        let older = LedgerSnapshot {
+            bank: Vec::new(),
+            ..LedgerSnapshot::default()
+        };
+        let error = reopened
+            .save(&older)
+            .expect_err("a crash must not reset the watermark");
+        assert!(
+            error.contains("older than the published sequence"),
+            "unexpected refusal: {error}"
+        );
+        reopened
+            .save(&committed)
+            .expect("an equal committed length is still admitted");
+        assert_eq!(reopened.load().unwrap().bank.len(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
