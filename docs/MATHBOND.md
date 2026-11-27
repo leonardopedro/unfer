@@ -111,6 +111,17 @@ pub struct MathBondTrigger {
 }
 ```
 
+> **Transport bound.** `max_export_bytes` is the trigger's own ceiling, but a
+> `SubmitProof` must also fit the *signed* consensus frame
+> (`unfer_protocol::distributed::MAX_FRAME_BYTES`, 1 MiB). The canonical frame
+> is JSON, so a `Vec<u8>` payload renders as a decimal array (~3.4x its size),
+> which makes the frame — not `max_export_bytes` — the binding limit in
+> practice (~300 KB of proof). A proof that clears the trigger's ceiling but not
+> the frame is refused with `UK-7406 MATHBOND_PROOF_OVERSIZE` *before* the
+> ledger mutates, instead of panicking in `sign_transaction` after the trigger
+> has already fired. Carrying the 788 KB confluence export over the wire needs
+> a compact (non-JSON) ledger payload or a larger dedicated bound.
+
 ### MathBondState
 
 ```

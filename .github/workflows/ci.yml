@@ -692,8 +692,21 @@ jobs:
           git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      # This step has been red since at least 2026-11-24 and passes on the dev
+      # box, but it was the one failing step with no reachable text: job logs
+      # need admin rights, and the step itself asserted nothing about *why*.
+      # Capture and mirror the tail, same shape as the two network steps below.
       - name: unfer_edge audit console tests
-        run: cargo test --locked -p unfer_edge --features audit
+        run: |
+          rc=0
+          cargo test --locked -p unfer_edge --features audit \
+            > /tmp/edge-audit.log 2>&1 || rc=$?
+          tail -40 /tmp/edge-audit.log
+          if [ $rc -ne 0 ]; then
+            body=$(tail -25 /tmp/edge-audit.log | sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')
+            echo "::error::edge-audit rc=$rc | $body"
+            exit $rc
+          fi
       - name: unfer_ffi zenodo store tests
         run: cargo test --locked -p unfer_ffi --features zenodo
       - name: nested_fock_algebra latex CAS tests
