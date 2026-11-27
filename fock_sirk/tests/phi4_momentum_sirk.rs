@@ -1334,3 +1334,55 @@ fn mehler_fixture_matches_the_live_model() {
         "plan outside-window squared norm",
     );
 }
+
+/// A classical vertex evaluated before introducing an inner quantum operator.
+#[test]
+fn localized_scalar_wall_resolves_two_distinct_momenta() {
+    use nested_fock_algebra::phi4_momentum::localized_packet_wall;
+    use std::f64::consts::PI;
+
+    let record: serde_json::Value =
+        serde_json::from_str(include_str!("../../docs/fixtures/phi4_localized_wall.json")).unwrap();
+    let centres: [[f64; 3]; 2] = serde_json::from_value(record["centres"].clone()).unwrap();
+    let lam = record["lambda_value"].as_f64().unwrap();
+    let v = record["v"].as_f64().unwrap();
+    let wall = |a, b| localized_packet_wall(&[(centres[0], a), (centres[1], b)], lam, v);
+    // Polarization removes all pure and odd powers, including the background.
+    let mixed =
+        (wall(1.0, 1.0) + wall(1.0, -1.0)) / 2.0 - wall(1.0, 0.0) - wall(0.0, 1.0) + wall(0.0, 0.0);
+    for (i, centre) in centres.into_iter().enumerate() {
+        let one_packet = localized_packet_wall(&[(centre, 1.0)], lam, v);
+        assert_close(
+            one_packet,
+            record["single_packet_energies"][i].as_f64().unwrap(),
+            2e-14,
+            "single-packet wall with background",
+        );
+    }
+    let expected = record["mixed_coefficient"].as_f64().unwrap();
+    assert_close(mixed, expected, 2e-13, "mixed localized wall");
+    assert_close(
+        wall(0.0, 0.0),
+        lam * v.powi(4) / (4.0 * 2.0_f64.powf(1.5)),
+        1e-14,
+        "localized constant energy",
+    );
+    assert_close(
+        record["without_mixed_pair"].as_f64().unwrap(),
+        mixed / 3.0,
+        2e-13,
+        "loss after deleting the mixed pair",
+    );
+
+    // Evaluate the polarized convolution before symmetrizing the packets.
+    // The integrals separate. Complete the square in each continuous coordinate.
+    for (sign, key) in [(-1.0, "pair_peak"), (1.0, "reversed_transfer")] {
+        let mut integral = 1.0;
+        for j in 0..3 {
+            let q = centres[0][j] + centres[1][j];
+            let displacement = q + sign * centres[0][j] - centres[1][j];
+            integral *= (-PI * displacement.powi(2) / 2.0).exp() / 2.0_f64.sqrt();
+        }
+        assert_close(integral, record[key].as_f64().unwrap(), 1e-14, key);
+    }
+}

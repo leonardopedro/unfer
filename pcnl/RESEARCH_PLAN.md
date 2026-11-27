@@ -1,34 +1,54 @@
 # pcnl research and development plan
 
-## R14 — active plan: adapted pCNL for diverse transformer configuration ensembles (2026-11-25)
+## R14 — active plan: satisficing pCNL, intra-basin SWA, and inter-basin distillation (2026-11-25, revised 2026-11-27)
 
-**Deliverable.** Construct and maintain a **diverse ensemble of transformer
-configurations** $\{\theta_1, \dots, \theta_M\}$ via a satisficing modification of the
-pCNL algorithm. Rather than collapsing onto a narrow zero-loss optimum, the sampler
-targets a **large, high-volume region** in parameter/configuration space that fits the
-training data (or training loss in reinforcement learning) **good enough** — optimizing
-moderately without radical minimization and without sacrificing configuration variability.
-R14 governs all new implementation and acceptance. **R9 (RLCD) is retired** and no
-longer pursued; R0–R13 below remain the preserved research record.
+**Deliverable.** Construct, evaluate, and compress a **diverse ensemble of transformer
+configurations** $\{\theta_1, \dots, \theta_M\}$ through a five-stage pipeline:
+1. *Architecture:* deep & narrow normalized transformer (`src/vector_model.rs`, `src/model.rs`,
+   `src/policy_model.rs`) initialized at prior scale (`init_flat_prior`) so $W_q/W_k$
+   attention stays active.
+2. *Satisficing basin floor / early stopping at knee ($T > 0$):* halt before $T \to 0$
+   memorization collapse and sample/diffuse inside a **large, high-volume good-enough region**
+   $\{L(\theta) \le \tau\}$ under $\Phi_{\tau,\kappa,\alpha}$, where $L(\theta)$ is a
+   supervised data loss or differentiable non-RLCD RL training penalty.
+3. *Intra-basin compression (SWA):* average checkpoints
+   $\theta_{\text{SWA}} = K^{-1}\sum_{k=1}^K \theta_k$ along a single connected flat floor at
+   constant step size ($T > 0$) to cancel thermal fluctuations and center weights at $1\times$
+   inference cost.
+4. *Inter-basin resampling ($M$ independent runs):* restart $M$ times from `init_flat_prior`
+   up to the knee / satisficing floor (with adapted within-basin pCNL and optional SWA per
+   basin) to sample distinct functional abstraction modes $\{\theta_1, \dots, \theta_M\}$.
+5. *Inter-basin compression (posterior predictive distillation):* compress the $M$-basin
+   ensemble predictive $p_{\text{ens}}(y\mid x) = M^{-1}\sum_{m=1}^M p(y\mid x,\theta_m)$
+   (or mean + epistemic spread for numerical vectors) into one deployable single-pass student
+   $\theta_{\text{student}}$ via KL minimization (or squared discrepancy + spread head),
+   preserving multi-basin "dark knowledge" at $1\times$ serving cost.
 
-### Present state (2026-11-25) and why the pivot fits the evidence
+R14 governs all new implementation and acceptance, aligned with active Lean 4 packets
+**S0–S6** in [timepiece/pcnl.md](../../timepiece/pcnl.md) and theoretical derivations in
+[ngpt.md](../../test/unfer/ngpt.md). **R9 (RLCD) is retired** and no longer pursued; R0–R13
+below remain the preserved research record. This revision updates the plan only and claims no
+newly executed R14 code, tests, experiments, or Lean proofs.
 
-| Existing work / evidence | What it established (recorded in [PCNL_STATUS.md](../docs/PCNL_STATUS.md)) | Role in R14 |
+### Present state (2026-11-27) and why the pivot fits the evidence
+
+| Existing work / evidence | What it established (recorded in [PCNL_STATUS.md](../docs/PCNL_STATUS.md) & [pcnl.md](../../timepiece/pcnl.md)) | Role in R14 |
 |---|---|---|
-| `src/vector_model.rs`, `examples/vector_{regression,basins,stream}.rs`, `logs/pcnl_r13_gates/`, `scripts/check-pcnl-gates` (R13) | Exact MH mixing passes on the 34-dim readout conditional (HMC `R̂ 1.00935`, bulk ESS `3000`; CN `R̂ 1.00616`, ESS `620.9`), while full 57,378-dim sharp Gibbs sampling hits a hard geometry wall (`R̂ 2.0–3.0`, bulk ESS `4.5–5.3` across pilot/Hessian/low-rank HMC, parallel tempering with `0/240` swaps at `ΔU ~ 6e3–1e4`, and 5,000-move hit-and-run). Meanwhile `vector_basins` finds distinct basins of comparable test RMSE (`0.070–0.087`) at relative distance `1.92–2.21`, and full-convergence Adam memorizes train (`0.000286` vs test `0.099`, readout 90% coverage `0.158`). | Supplies the 4-block transformer, active-attention `init_flat_prior`, `EnergyTarget`, and MH kernels. R13's $O(10^4)$ sharp-energy wall motivates replacing sharp Gibbs with a bounded-energy good-enough region. |
-| `src/model.rs`, `src/sampler.rs`, `src/task.rs`, `src/target.rs`, `src/subspace.rs`, `src/manifest.rs` (R0–R6) | nGPT-lite cosine vs standard transformer, unadjusted SG-pCNL, exact MH-pCN, affine subspace charts, run manifests. | Core sequence transformer and scalable unadjusted SG-pCNL engine for multi-configuration diffusion. |
-| `src/mdp.rs`, `src/policy_model.rs`, `src/policy_readout.rs`, `src/dt_subspace.rs` (R7, D5) | Synthetic MDP, policy transformer, trajectory-clustered paired delta, and decoder audit (per-step BMA vs per-episode draw). | Direct foundation for R14's non-RLCD RL training-loss ensemble track. |
+| `src/vector_model.rs`, `examples/vector_{regression,basins,stream}.rs`, `logs/pcnl_r13_gates/`, `scripts/check-pcnl-gates` (R13) | Exact MH mixing passes on the 34-dim readout conditional (HMC `R̂ 1.00935`, bulk ESS `3000.0`, tail `906.4`; CN `R̂ 1.00616 -> 1.00274`, bulk ESS `620.9 -> 3920.6`), while full 57,378-dim sharp Gibbs hits a hard geometry wall (`R̂ 2.01–3.03`, bulk ESS `4.5–5.3` across pilot/Hessian/low-rank HMC, PT `0–1/240` swaps at `ΔU ~ 6e3–1e4`, and 400/5,000-move hit-and-run). Both exact HMC and CN cover `480/480` on train (`band half-width ~0.019`), proving the `0.158` (`38/240`) held-out 90% coverage comes from Adam memorizing train (`0.000286` vs test `0.099276`, declared $\sigma = 0.05$). The full-parameter contrast (`pilot-calibrated.log`, `--calibration`) confirms the same pattern: train covers `478/480` param / `480/480` predictive (`band half-width 0.0669`, `df = 480 − 57,378 < 0`) while held-out drops to `170/240` param / `200/240` predictive. All R13 gates are CI-enforced via `scripts/check-pcnl-gates` (`--quick --structure` ~94 s per-push canaries, scheduled `--all --band 0.2`, host-local byte-exact default). Meanwhile `vector_basins` finds distinct basins of comparable test RMSE (`0.070–0.087`) at relative distance `1.92–2.21`. | Supplies the 4-block transformer, active-attention `init_flat_prior`, `EnergyTarget`, and MH kernels. R13's `0.158` / full-parameter memorization diagnosis and $O(10^4)$ sharp-Gibbs wall motivate abandoning $T \to 0$ memorization for a bounded-energy plateau + SWA + distillation pipeline. |
+| `src/model.rs`, `src/sampler.rs`, `src/task.rs`, `src/target.rs`, `src/subspace.rs`, `src/manifest.rs` (R0–R6) | nGPT-lite cosine vs standard transformer, unadjusted SG-pCNL, exact MH-pCN, affine subspace charts, run manifests. | Core sequence transformer and scalable unadjusted SG-pCNL engine for multi-configuration diffusion and KL distillation. |
+| `src/mdp.rs`, `src/policy_model.rs`, `src/policy_readout.rs`, `src/dt_subspace.rs` (R7, D5) | Synthetic MDP, policy transformer, trajectory-clustered paired delta, and decoder audit (per-step BMA vs per-episode draw). | Direct foundation for R14's non-RLCD RL training-loss ensemble and distilled-policy return track. |
 | `src/certificate.rs`, `src/approx_pricing.rs`, `src/dim_benchmark.rs`, `src/linear_gaussian.rs`, `src/continual.rs` (R8, R11) | D0–D6 verification primitives (target/kernel identity, D3 SG bias pricing, coupled benchmarks) and continual-stream prior carry. | Verification primitives for R14 targets, bias budgets, and continual streams. |
-| `src/edge0_*.rs`, `tests/edge0_rlcd.rs` (R9) | Executed 2026-11-15..16; RLCD slightly trailed the supervised CE+Brier comparator (`+0.00223 ± 0.00184` Brier excess). | **Retired (2026-11-25)**; frozen historical code, no further development. |
+| Lean 4 formalization ([timepiece/pcnl.md](../../timepiece/pcnl.md)) | 27 `sorry`-free `BookProof/MCMC/` modules (scalar Gaussian Mehler/Hermite gap, unadjusted AR `b(1+ρ)/2` bias canary, box/floor minorization and `pcnBallConst_no_uniform_floor` obstruction, core/ladder/conjugation/architecture bounds). Active proposed Lean packets: **S0–S6**. | Formal target for `SatisficingTarget`, prior-refresh Doeblin, SWA centering & obstructions, PAC-Bayes KL, distillation ambiguity, and Pinsker policy return stability. |
+| `src/edge0_*.rs`, `tests/edge0_rlcd.rs` (R9) | Executed 2026-11-15..16; RLCD trailed the supervised CE+Brier comparator (`+0.00223 ± 0.00184` Brier excess; `+0.00096 ± 0.00020` in the six-arm state-gate follow-up). | **Retired (2026-11-25)**; frozen historical code, no further development. |
 
 ### 14.1 The satisficing ("good-enough region") potential
 
-Let $L(\theta) \ge 0$ be a declared training loss (either supervised loss on a data
-prefix or a differentiable RL training loss) and $P_0 = N(m, C)$ a proper Gaussian
-prior. Fix a declared good-enough loss ceiling $\tau > 0$ (chosen near an acceptable
-fit/noise level on development data, never $0$), a confinement strength $\kappa > 0$, a
-smoothing scale $\delta > 0$, and an optional gentle optimization tilt $\alpha \ge 0$
-with $\alpha \ll \kappa$. Define the one-sided satisficing potential and target:
+Let $L(\theta) \ge 0$ be a declared training loss (either supervised data loss on a prefix or a
+differentiable non-RLCD RL training penalty) and $P_0 = N(m, C)$ a proper Gaussian prior. Fix
+a declared good-enough loss ceiling $\tau > 0$ (chosen near an acceptable fit/noise level on
+development data, never $0$), a confinement strength $\kappa > 0$, a smoothing scale
+$\delta > 0$, and an optional gentle optimization tilt $\alpha \ge 0$ with $\alpha \ll \kappa$.
+Define the one-sided satisficing potential and target:
 
 $$
 \Phi_{\tau,\kappa,\alpha}(\theta)
@@ -43,22 +63,24 @@ $u < 0$ and grows for $u > 0$ — specifically softplus $\delta\log(1 + e^{u/\de
 or $C^1$ Huberized $\frac{1}{2}\max(0, u)^2$.
 
 This potential implements "optimize moderately without radicalism and without
-sacrificing variability" by construction:
+sacrificing variability" by construction (targeted formally in Lean packet **S0**):
 1. **Flatness inside $\{L(\theta) \le \tau\}$.** Outside the good-enough set,
    $\kappa\,\psi_\delta'(L-\tau)\nabla L(\theta)$ drives $\theta$ inward. Once
-   $L(\theta) \le \tau$, the hinge gradient shuts off ($\psi_\delta' \approx 0$);
-   radical memorization gradients vanish, and $P_0$ weights configurations by **prior
-   volume**, naturally favoring wide, high-volume feasible regions over isolated sharp
-   minima. Setting $\alpha > 0$ ($\alpha \ll \kappa$) adds a controlled nudge toward
-   lower loss inside the feasible set without restoring sharp $O(10^4)$ spikes.
+   $L(\theta) \le \tau$, the hinge gradient shuts off ($\psi_\delta' \approx 0$ — identically
+   zero for Huberized with $\alpha = 0$); radical memorization gradients vanish, and $P_0$
+   weights configurations by **prior volume**, naturally favoring wide, high-volume feasible
+   regions over isolated sharp minima. Setting $\alpha > 0$ ($\alpha \ll \kappa$) adds a
+   controlled nudge toward lower loss inside the feasible set without restoring sharp
+   $O(10^4)$ spikes.
 2. **Bounded energy scale.** Inside the plateau, $\Phi_{\tau,\kappa,\alpha}$ stays
    $O(1)$–$O(10)$ rather than R13's $O(10^4)$, allowing prior-preserving pCNL steps to
-   maintain high acceptance while exploring the feasible manifold.
+   maintain high acceptance while exploring the feasible manifold and keeping low-dimensional
+   prior-refresh Doeblin coefficients $c_\omega = \omega Z/M$ (Lean **S1**) non-degenerate.
 3. **Proper target contract.** When $L \ge 0$ and $\alpha \ge 0$, $\Phi_{\tau,\kappa,\alpha} \ge 0$,
-   preserving D0/D1 proper-target existence ($0 < Z < \infty$). Every checkpoint and
-   manifest versions $\tau, \kappa, \alpha, \delta$, hinge family, loss reduction, and $P_0$.
+   preserving D0/D1 proper-target existence ($0 < Z \le 1$). Every checkpoint and manifest
+   versions $\tau, \kappa, \alpha, \delta$, hinge family, loss reduction, and $P_0$.
 
-### 14.2 Adapting pCNL for transformer configuration ensembles
+### 14.2 Adapting pCNL, intra-basin SWA, and inter-basin distillation
 
 In standardized prior coordinates $P_0 = N(m, C)$, the local pCNL proposal is
 
@@ -75,49 +97,95 @@ to near-prior pCN diffusion softly reflected at the $L = \tau$ boundary.
   MH-adjusted pCNL (optionally mixed with prior refresh $r > 0$) for exact target
   recovery on low-dimensional controls and small transformer checks, and (2) a **scalable
   ensemble tier** using unadjusted or minibatch SG-pCNL (`src/sampler.rs`), priced
-  against the reference tier via D3 (`src/approx_pricing.rs`).
-- **Multi-basin moderate-entry ensemble.** Initialize $M$ members from distinct
+  against the reference tier via D3 (`src/approx_pricing.rs`) and Lean **S6**.
+- **Multi-basin moderate-entry resampling (Stage 4).** Initialize $M$ members from distinct
   prior-scale draws (`init_flat_prior`, keeping $W_q/W_k$ attention active), optionally
-  run **moderate warm entry** that stops at first entry into $L(\theta) \le \tau$ (or a
-  predeclared slowdown knee — never full-convergence memorization), and then run adapted
-  pCNL per member in $\Phi_{\tau,\kappa,\alpha}$ to spread across the local feasible
-  volume. Retain one configuration per member (or thinned independent runs) as the
-  $M$-configuration ensemble $\{\theta_1, \dots, \theta_M\}$.
+  run **moderate warm entry** that stops either at first entry into $L(\theta) \le \tau$ or
+  by R13 §5's predeclared slowdown knee rule (evaluate full-split loss every $K_{\text{chk}}$
+  updates and halt at three consecutive windows with fractional decrease below $1\%$ and
+  decreasing trend, recording capped runs at their final checkpoint — never full-convergence
+  memorization), and then run adapted pCNL per member in $\Phi_{\tau,\kappa,\alpha}$ to
+  spread across the local feasible volume. Retain one configuration per member (or its SWA
+  center below) as the $M$-configuration ensemble $\{\theta_1, \dots, \theta_M\}$.
+- **Intra-basin compression via SWA (Stage 3).** Within a single connected basin floor at
+  constant step size ($T > 0$, tested on both post-knee constant-LR SGD and within-basin
+  pCNL), average checkpoints $\theta_{\text{SWA}} = K^{-1}\sum_{k=1}^K \theta_k$ to cancel
+  thermal displacement and center the weights in the wide floor at $1\times$ inference cost.
+  Observe two boundaries from [ngpt.md](../../test/unfer/ngpt.md) and Lean **S2**:
+  1. Constant-LR SGD does not automatically equal scalar-temperature Langevin (anisotropic
+     gradient noise `1:9` yields `1:9` stationary covariance), so plain SGD knees sample an
+     optimizer-endpoint law rather than $\pi_{\tau,\kappa,\alpha}$;
+  2. Nonlinear curvature can separate weight average $f_{\theta_{\text{SWA}}}(x)$ from output
+     average $K^{-1}\sum_k f_{\theta_k}(x)$. Every SWA arm must evaluate straight-line
+     interpolation loss barriers and compare $\theta_{\text{SWA}}$ against the last iterate
+     and the snapshot output average. Never average unaligned independent restarts in weight
+     space.
+- **Inter-basin compression via posterior predictive distillation (Stage 5).** To capture
+  multi-basin diversity across $M$ independent restarts (optionally SWA-centered per basin)
+  at $1\times$ serving cost, average in output space on training or unlabeled transfer data and
+  train one student $\theta_{\text{student}}$:
+  - *Classification (`src/model.rs`) & stochastic RL policies (`src/policy_model.rs`):* form
+    $p_{\text{ens}}(y\mid x) = M^{-1}\sum_{m=1}^M p(y\mid x,\theta_m)$ and minimize expected KL
+    $\mathbb{E}_x\mathrm{KL}(p_{\text{ens}}(\cdot\mid x)\,\|\,p(\cdot\mid x,\theta))$. The
+    dark-knowledge / Jensen–Shannon identity
+    $H(p_{\text{ens}}) - M^{-1}\sum_m H(p_m) = M^{-1}\sum_m \mathrm{KL}(p_m\,\|\,p_{\text{ens}}) \ge 0$
+    (Lean **S4**) preserves multi-basin epistemic uncertainty and prevents sharp $0/1$ collapse.
+  - *Numerical vector outputs (`src/vector_model.rs`):* distill both the ensemble mean
+    $\bar f(x) = M^{-1}\sum_m f_{\theta_m}(x)$ (obeying the squared-error ambiguity identity)
+    **and** a per-coordinate epistemic spread head
+    $\hat s^2(x) = M^{-1}\sum_m (f_{\theta_m}(x) - \bar f(x))^2$ (or Gaussian NLL head).
+    Mean-only vector distillation collapses opposing disagreements (`+v` and `-v` average to
+    `0`) unless spread is explicitly modeled.
+  - *Support & continual-learning boundaries:* Distillation transfers functions only on the
+    transfer input support (OOD fidelity must be checked separately). For continual streams,
+    retain the committed evidence prefix and $M$-member ensemble/chain state for future
+    updates and never write synthetic teacher targets into the evidence log.
 - **Honest scope on global weights.** Do not claim that local chains in 57k dimensions
   recover global multi-basin equilibrium weights. Separate *verified equilibrium
   recovery* (checked on low-dimensional plateau-vs-spike quadrature targets) from
   *good-enough ensemble quality* (measured on transformer benchmarks by in-region fit,
-  functional diversity, flatness, and held-out/OOD generalization).
+  functional diversity, flatness, compression fidelity, and held-out/OOD generalization).
 - **Configuration scope.**
   - *Stage 1 (immediate):* Homogeneous weight configurations of the existing 4-block
     vector transformer (`src/vector_model.rs`), nGPT-lite cosine transformer
-    (`src/model.rs`), and RL policy transformer (`src/policy_model.rs`).
-  - *Stage 2 (gated):* Heterogeneous architectural/hyperparameter configurations
-    (width, depth, head count, normalization, prior scale), optional functional-space
-    repulsion (explicitly labeled as an interacting ensemble that changes the target from
-    $\pi_{\tau,\kappa,\alpha}^{\otimes M}$, gated behind independent-chain collapse
-    checks), and compact serving/distillation comparisons (R13 §7).
+    (`src/model.rs`), and RL policy transformer (`src/policy_model.rs`), paired with
+    intra-basin SWA and single-student posterior distillation.
+  - *Stage 2 (gated):* Heterogeneous architectural/hyperparameter configurations (width, depth,
+    head count, normalization, prior scale), **Git Re-Basin** permutation-aligned cross-basin
+    weight merging (requiring function-preserving permutation checks and aligned-vs-unaligned
+    barrier comparisons against distillation), and optional functional-space repulsion
+    (explicitly labeled as an interacting ensemble that alters the target from
+    $\pi_{\tau,\kappa,\alpha}^{\otimes M}$, gated behind independent-chain collapse checks).
 
 ### 14.3 Reinforcement learning training-loss track (non-RLCD)
 
 Apply the identical $\Phi_{\tau,\kappa,\alpha}$ formulation to a differentiable RL
-training loss $L_{\text{RL}}(\theta)$ on `src/mdp.rs` and `src/policy_model.rs` (e.g.,
+training loss $L_{\text{RL}}(\theta) \ge 0$ on `src/mdp.rs` and `src/policy_model.rs` (e.g.,
 behavior-regularized offline RL loss, Bellman/TD residual, or differentiable
 policy-gradient surrogate). **RLCD is explicitly excluded**: do not use the retired
 Edge0 latent-MoE or four-path REINFORCE Brier U-statistic.
 
 The objective is a diverse ensemble of transformer policies that all satisfy the RL
-training-loss ceiling $\tau$ without collapsing to one brittle policy. Evaluation strictly
-separates: (1) RL training-loss satisfaction ($L_{\text{RL}} \le \tau$), (2) policy
-action-distribution diversity across states, and (3) trajectory-clustered rollout return
-(`src/policy_readout.rs` D5 estimator) on both nominal MDPs and perturbed/shifted
-dynamics, explicitly distinguishing per-step policy averaging from once-per-episode
-configuration draws (`src/dt_subspace.rs`).
+training-loss ceiling $\tau$ without collapsing to one brittle policy, plus a single fast
+**KL-distilled student policy** $\pi_{\text{stu}}(a\mid s)$ trained to match the per-step
+ensemble policy $\pi_{\text{ens}}(a\mid s) = M^{-1}\sum_{m=1}^M \pi(a\mid s,\theta_m)$ on
+training/rollout states. Evaluation strictly separates:
+1. RL training-loss satisfaction ($L_{\text{RL}} \le \tau$),
+2. Policy action-distribution diversity across states,
+3. Empirical teacher–student KL/TV across nominal and shifted state distributions (connecting
+   via Pinsker's inequality to Lean **S5**'s finite-horizon coupling bound
+   $|V^{\pi_{\text{stu}}} - V^{\pi_{\text{ens}}}| \le \frac{1}{2}R_{\text{span}}H(H+1)\delta$),
+   and
+4. Trajectory-clustered rollout return (`src/policy_readout.rs` D5 estimator) on both
+   nominal MDPs and perturbed/shifted dynamics, explicitly distinguishing per-step BMA,
+   distilled single student, SWA policy, once-per-episode draw (`src/dt_subspace.rs`), and
+   argmax policies.
 
 ### 14.4 Metrics, matched-compute comparators, and falsifiers
 
-Every R14 experiment reports four metric families across predeclared equal-compute
-comparators (with $\tau, \alpha, \kappa$ frozen on development data before scoring test):
+Every R14 experiment reports five metric families across predeclared equal-compute
+comparators (with $\tau, \alpha, \kappa$, SWA window, and distillation budget frozen on
+development data before scoring test):
 
 1. **In-region fit:** fraction of ensemble configurations satisfying $L_{\text{train}} \le \tau$,
    and training-loss quantiles (checking that members neither escape above $\tau$ nor
@@ -125,19 +193,30 @@ comparators (with $\tau, \alpha, \kappa$ frozen on development data before scori
 2. **Variability & flatness:** pairwise parameter distances/angles, **per-input
    functional prediction variance/disagreement** on train, ID-test, and OOD inputs,
    effective rank of the centered $M \times (n_{\text{eval}} q)$ prediction matrix,
-   perturbation loss under finite noise, and the R13 §6 Gaussian-mixture PAC-Bayes upper
-   risk bound.
+   perturbation loss under finite noise, and the R13 §6 / Lean **S3** Gaussian-mixture
+   PAC-Bayes upper risk bound.
 3. **Generalization & calibration:** ensemble-mean RMSE / NLL / Brier, 50/80/90/95%
    interval coverage, normalized residual $z^2$, and continual-stream retention
    (`examples/vector_stream.rs`).
-4. **RL performance:** trajectory-clustered rollout return and regret under nominal and
+4. **Compression & serving fidelity:** SWA weight-mean vs output-mean gap and straight-line
+   interpolation barrier; teacher–student KL/TV (classification/RL) or vector RMSE + spread
+   coverage on ID and OOD splits; end-to-end $1\times$ vs $M\times$ latency and memory.
+5. **RL performance:** trajectory-clustered rollout return and regret under nominal and
    shifted dynamics.
 
-**Six mandatory matched-compute comparators:** (1) radical single-point optimizer
-(full-convergence Adam/SGD), (2) radical deep ensemble ($M$ full-convergence runs),
-(3) early-stopped / knee-stopped deep ensemble (stopped at $\tau$, no pCNL diffusion),
-(4) sharp Gibbs pCNL ($\tau = 0$), (5) adapted satisficing pCNL ensemble
-($\Phi_{\tau,\kappa,\alpha}$), and (6) prior-only / vacuous-$\tau$ control.
+**Eight mandatory matched-compute comparators** (charging knee checks, SWA snapshots, teacher
+forwards, and student fitting into the equal compute budget):
+1. Radical single-point optimizer (full-convergence Adam/SGD, $1\times$),
+2. Radical deep ensemble ($M$ full-convergence runs, $M\times$),
+3. Early-stopped / knee-stopped deep ensemble (stopped at $\tau$, no pCNL diffusion, $M\times$),
+4. Intra-basin SWA single model (post-knee constant-LR SGD-SWA and/or within-basin pCNL-SWA,
+   $1\times$),
+5. Sharp Gibbs pCNL ($\tau = 0$, $M\times$),
+6. Adapted satisficing pCNL ensemble ($\Phi_{\tau,\kappa,\alpha}$, optionally SWA-centered per
+   basin, $M\times$),
+7. Posterior-distilled single student (trained on #6's ensemble predictive, paired with a
+   matched-budget label-trained student control of identical architecture, $1\times$), and
+8. Prior-only / vacuous-$\tau$ control.
 
 **Falsifiers and stop rules:**
 - *Quadrature gate:* On a low-dimensional plateau-vs-spike test, adapted MH-pCNL must
@@ -148,8 +227,15 @@ comparators (with $\tau, \alpha, \kappa$ frozen on development data before scori
 - *Functional-diversity & utility gate:* Weight-space spread due merely to permutation or
   scale symmetries does not pass; the ensemble must exhibit non-trivial functional
   variance/effective rank and report paired ID/OOD/continual/RL-shift comparisons against
-  the matched-cost early-stopped deep ensemble. Negative or inconclusive outcomes are
-  retained and reported without hidden parameter or metric sweeps.
+  the matched-cost early-stopped deep ensemble.
+- *Intra-basin SWA gate:* SWA must be compared against both the last iterate and the snapshot
+  output average on identical inputs, with straight-line barrier checks reported; curvature
+  divergence or barrier rise is reported verbatim.
+- *Distillation fidelity & serving gate:* The distilled student must outperform or match the
+  equal-budget label-trained student control on held-out proper score / RMSE / RL return,
+  meet predeclared teacher–student fidelity tolerances on ID and shifted splits, and satisfy
+  $1\times$ serving cost. Negative or inconclusive outcomes are retained and reported without
+  hidden parameter or metric sweeps.
 
 Execution packets **P0–P7** are specified in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).
 

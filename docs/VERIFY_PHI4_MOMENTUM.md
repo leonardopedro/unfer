@@ -27,6 +27,7 @@ The rational rank-two identities in the symbolic fixture are evaluated separatel
 |---|---|
 | `nested_fock_algebra/src/phi4_momentum.rs` | `P11` operator: `ScalarMomCont`, `h_cont` on four continuous coordinates, Mehler widths, even/parity windows, `S₃` mode table, frozen comparisons, 9 unit tests |
 | `docs/phi4_momentum_nested.cdb` | Cadabra2 derivation of `h_cont`, the 11×3 `S₃` table, the seed moments and the rank-2 return interval |
+| `docs/fixtures/phi4_localized_wall.json` | Classical two-packet localized wall, checked against a spatial Gaussian integral and replayed by Rust. |
 | `docs/fixtures/phi4_momentum_mehler.json` | exact rational output of that `.cdb` (schema `phi4-momentum-cont-exact/v1`) |
 | `fock_sirk/tests/phi4_momentum_sirk.rs` | `P12` suite: rank-2 certificate, cutoff/rank sweeps, paired response estimates, parity + comparisons, fixture cross-check |
 | `fock_sirk/examples/phi4_momentum_sirk.rs` | `P13` runner writing the evidence record |
@@ -142,13 +143,15 @@ import json, pathlib
 rows = pathlib.Path("/tmp/phi4-mom.log").read_text().splitlines()
 ok = [r for r in rows if "(0 = ok)" in r]
 assert len(ok) >= 20 and all(r.rsplit(":", 1)[1].strip() == "0" for r in ok)
-[fix] = [r.split("|", 1)[1] for r in rows if r.startswith("PHI4_MOM_FIXTURE|")]
-pathlib.Path("docs/fixtures/phi4_momentum_mehler.json").write_text(
-    json.dumps(json.loads(fix), indent=2, sort_keys=True) + "\n")
+for tag, name in [("PHI4_MOM_FIXTURE", "phi4_momentum_mehler"),
+                  ("PHI4_LOCALIZED_FIXTURE", "phi4_localized_wall")]:
+    [payload] = [r.split("|", 1)[1] for r in rows if r.startswith(tag + "|")]
+    pathlib.Path("docs/fixtures", name + ".json").write_text(
+        json.dumps(json.loads(payload), indent=2, sort_keys=True) + "\n")
 PY
 ```
 
-The `--strict` sweep reports:
+The historical fibre run at the revision above reported:
 
 ```
 [PASS] phi4_mehler — ran; 23 zero-intent check(s) all reached 0
@@ -1237,18 +1240,18 @@ construction; dropping the projection *is* the map walk, i.e. the `7.03×` above
 
 **Six more cutoffs.** With the per-step cost known, the sweep now runs `C = 34`,
 `36`, `38`, `40`, `42` and `44` (`SWEEP_CUTOFFS`, `SWEEP_COMPONENT_BUDGET =
-3.0e8`). These are the `aarch64` cells of that campaign; the record's current
-rows are in §5.2:
+3.0e8`). These are the `aarch64` cells of that campaign, from the quiet run of
+§5.12; the record's current rows are in §5.2:
 
 | `C` | labels | tail | shift-solve steps (`m = 2`) | `m = 2` cell | `m = 4` cell |
 |---|---|---|---|---|---|
-| 32 | 4845 | `0.0802` | `[266, 351]` | `54.5 s` | `83.2 s` |
-| 34 | 5985 | `0.0625` | `[289, 385]` | `81.9 s` | `131 s` |
-| 36 | 7315 | `0.0495` | `[315, 420]` | `122 s` | `202 s` |
-| 38 | 8855 | `0.0397` | `[340, 459]` | `178 s` | `308 s` |
-| 40 | 10626 | `0.0321` | `[367, 498]` | `266 s` | `470 s` |
-| 42 | 12650 | `0.0259` | `[393, 535]` | `391 s` | `717 s` |
-| 44 | 14950 | `0.0208` | `[420, 575]` | `574 s` | `1183 s` |
+| 32 | 4845 | `0.0802` | `[266, 351]` | `49.1 s` | `83.7 s` |
+| 34 | 5985 | `0.0625` | `[289, 385]` | `76.2 s` | `131.2 s` |
+| 36 | 7315 | `0.0495` | `[315, 420]` | `116.7 s` | `202.0 s` |
+| 38 | 8855 | `0.0397` | `[340, 459]` | `182.2 s` | `308.2 s` |
+| 40 | 10626 | `0.0321` | `[367, 498]` | `266.2 s` | `464.3 s` |
+| 42 | 12650 | `0.0259` | `[393, 535]` | `391.7 s` | `685.9 s` |
+| 44 | 14950 | `0.0208` | `[420, 575]` | `573.3 s` | `1004.4 s` |
 
 The tail keeps shrinking (`0.0802 → 0.0625 → 0.0495 → 0.0397 → 0.0321 →
 0.0259 → 0.0208`, ratios `0.78×`, `0.79×`, `0.80×`, `0.81×`, `0.81×`, `0.80×`),
@@ -1265,8 +1268,8 @@ is `14950` labels, i.e. `2.235e8` before the span images;
 `C = 44` cell also set that run's memory: `4.20 GB` peak RSS, up from
 `2.29 GB` at `C = 40` and `1.19 GB` at `C = 36`.
 
-**These cell times are wall clock on a loaded host, and the spread is now
-measured rather than guessed.** That `aarch64` extension run shared the
+**These cell times were wall clock on a loaded host; a sixth attempt finally
+replaced them.** That `aarch64` extension run shared the
 12-core host with other repositories' jobs and sampled a load average of `9.6`
 at the end (`30.7` at peak), so the `s` columns moved by up to `±12 %` against
 the previous quiet run in both directions (`C = 32`'s `48.9 s → 54.5 s`,
@@ -1287,11 +1290,11 @@ the load-sampled rerun, run under the heavier median (`6.0`), is the one that
 put the `C = 38 … 42` `m = 4` cells `8–11 %` above the `aarch64` table. That
 table keeps the slowest of the three runs on purpose: with no quiet window
 available, a conservative figure with a measured band is worth more than a
-fast one that cannot be reproduced, so the `s` columns stand as upper bounds
-**by at most `12 %`**, that ceiling being measured here. Five later attempts
-were made specifically to lift them and none produced a usable run. This is a
-12-core `aarch64` box shared with other agents, so each was gated on a
-five-minute quiet window and abandoned if the host was taken mid-run:
+fast one that cannot be reproduced, so the `s` columns stood as upper bounds
+**by at most `12 %`**, that ceiling being measured here. Six later attempts
+were made specifically to lift them and only the last produced a usable run.
+This is a 12-core `aarch64` box shared with other agents, so each was gated on
+a five-minute quiet window and abandoned if the host was taken mid-run:
 
 | attempt | gate | ran for | killed at |
 |---|---|---:|---:|
@@ -1300,12 +1303,39 @@ five-minute quiet window and abandoned if the host was taken mid-run:
 | 3 | `load1 < 2.0`, abort `≥ 3.0` | `5 min` | `3.41` |
 | 4 | `load1 < 2.5`, abort `≥ 6.0` | `72 min` | `9.91` |
 | 5 | `load1 < 2.5`, abort `≥ 6.0` | `27 min` | `6.74` |
+| 6 | `load1 < 2.5`, abort `≥ 6.0` | `79.0 min` | **clean** |
 
 Attempt 4 is the near miss: it started at `load1 0.53` and held `2.3–3.7` for
 `72` of the `~85 min` before a burst took the box to `9.91`. Its cell times were
-discarded rather than recorded. The `s` columns therefore remain upper bounds:
-replacing them needs an idle host for the whole run, which this machine could
-not provide in six hours of trying. The
+discarded rather than recorded. Attempt 6 started at `load1 0.32` and held a
+mean of `1.45` over `316` fifteen-second samples, with a single sample at
+`6.39` — one transient, short of the three-sample abort rule — and finished the
+whole sweep in `79.0 min` at `4.24 GB` peak RSS. The table above now carries
+**that** run's cell times. Against the upper bounds it replaces, `9` of the
+`14` cells move by less than `3 %` (`C = 36` and `38` at `m = 4` agree to
+`0.0 %` and `0.1 %`), and the five that move more are all faster except one:
+`C = 32`, `34`, `36` at `m = 2` are `9.9 %`, `7.0 %`, `4.3 %` lower (the three
+cells the loaded rerun had put `5–10 %` above), `C = 42` and `44` at `m = 4`
+are `4.3 %` and `15.1 %` lower (`717 → 686 s`, `1183 → 1004 s`), and `C = 38`
+at `m = 2` is `2.4 %` *higher* (`178 → 182.2 s`). So the `12 %` ceiling was a
+real measurement rather than a conservative one: it under-predicted the
+`C = 44` `m = 4` cell by another three points and over-predicted the small
+`m = 2` windows. The step counts (`[266, 351] … [420, 575]`) and every tail in
+that table are unchanged by the replacement — this is a timing run, not a
+re-measurement of the physics.
+
+**A burst now costs one cell, not the run.** Attempts `4` and `5` lost `72` and
+`27` minutes of already-measured cells. The example therefore takes a per-cell
+plan — `PHI4_LIST_CELLS=1` prints its `44` cell ids, `PHI4_CELLS` selects the
+ones to run, `PHI4_MERGE` supplies the rest from an earlier record and
+`PHI4_OUT` keeps a partial record out of the checked-in fixture — and
+`scripts/sweep-phi4-cells` drives it one cell per invocation. A killed cell is
+dropped, every finished cell is already merged, and the next run resumes at the
+first cell the record's own `measured_cells` list does not hold. The timing
+contract is unchanged: five idle minutes before each cell, abandoned if `load1`
+stays at or above `6.0` for three samples. Cells the invocation did not run are
+written as `not run in this invocation` rather than omitted, so a partial record
+says what it is. The
 ratios between neighbouring rows and every physics leaf are unaffected — all
 three runs reproduce the step counts and every tail, error and probability
 exactly, and the reruns differ only in `runtime_ms` and in the
@@ -1338,8 +1368,21 @@ covers both implementations from either host (CI runs both legs);
 | shift-solve counts | 6 | `0` (5 of `6`) | 5 |
 
 The one non-float difference is the `C = 8` rank-2 Krylov count: `19` on
-`x86_64`, `18` on `aarch64`. That is a stop test sitting on a rounding boundary,
-not a wrong answer — the tails it produces differ by `2.0e-15`. Against the
+`x86_64`, `18` on `aarch64`. That is a stop test sitting on a rounding
+boundary, not a wrong answer — the tails it produces differ by `2.0e-15` — and
+it is traced rather than inferred. `SIRK_TRACE_SHIFT` printed every gate of that
+cell on both builds: the second shift solve accepts at step `18` on `aarch64`
+(`8.79e-14` against the `1e-13` tolerance) and at step `19` on `x86_64`
+(`1.45e-13` at step `18`, `1.11e-14` at `19`). Both sequences are still falling
+by two orders of magnitude per step when they cross, and the iterates have
+already diverged (`8.3e-11` against `9.2e-11` at step `17`), so the crossing
+moves by one step while the answer does not. The tolerance is not the knob the
+flip needs: these solves bottom out at `~1.1e-14` on both builds, so tightening
+`1e-13` toward `1e-14` moves the gate *into* the stagnation band and starts
+hitting the `64`-step cap — the stall §5.2 already records for `C ≥ 16`. The stop
+test is left alone, and the suite states the right contract already:
+`window_solve_matches_the_map_walk_at_solver_precision` compares step counts
+with `abs_diff <= 1` ("the least-squares rounding decides the last step"). Against the
 record's stored `12`-digit leaves the `x86_64` build matches `16/19` and the
 `aarch64` build `13/19`; the three neither reaches are `m4_err_C12`
 (`0.00242965408903` recorded, `…902` from both builds), `m4_fwd_C8` and
@@ -1501,9 +1544,11 @@ re-measured clocks moved by up to `±12 %` in both directions against the previo
 quiet run. The physics is load-invariant — every one of the thirty pre-existing
 cells is identical leaf for leaf — which is the same conclusion the earlier
 loaded/quiet pair reached (`3593560` loaded against `2158332` quiet for the
-`15 × 2` record, with no physics difference). So treat the new cell times as
-upper bounds — by at most `12 %`, once two reruns measured the spread (§5.12) —
-and compare ratios inside the record, not against another machine.
+`15 × 2` record, with no physics difference). So those cell times were upper
+bounds — by at most `12 %`, once two reruns measured the spread (§5.12). The
+sixth attempt there has since replaced all `14` of them with a quiet run
+(`49.1 s` against `54.5 s` at `C = 32`, `1004 s` against `1183 s` at `C = 44`);
+compare ratios inside the record, not against another machine.
 
 **Record provenance: the checked-in record is the native `x86_64` AVX2 run.** The
 fixture was regenerated at `2ea6356`, the commit that carries the AVX2 `dot` and
@@ -1745,10 +1790,11 @@ columns of §5.10 and §5.11, the NEON and A/B microbenchmarks of §5.12, and th
   orders below the plateau's own `1.05×` spread. So no cutoff in `C = 8 … 44`
   recovers the rank-4 error: it is rank-limited, and more window buys tail only,
   at `1309 s` and `1951 s` per `m = 4` cell on the checked-in `x86_64` record
-  (`717 s` and `1183 s` on the `aarch64` host that measured the campaign). The
-  `aarch64` extension run was loaded (load average `9.6`, peak `30.7`), so its
-  cell times are upper bounds — by at most `12 %`, measured across two reruns
-  rather than assumed against its previous quiet run (§5.12).
+  (`686 s` and `1004 s` on the `aarch64` host that measured the campaign, from
+  the quiet run of §5.12; the loaded runs it replaced read `717 s` and
+  `1183 s`). That campaign's cell times were upper bounds — by at most `12 %`,
+  measured across two reruns rather than assumed against its previous quiet run
+  — until that sixth attempt replaced them.
   The checked-in record is `17 × 2` cells in `151.0 min` and `4.24 GB` peak RSS.
 * Measured and adopted: §3.4's change-of-basis control. The diagonal phase
   unitary transports seed, operator and observable together; with `θ_φ = 0` the

@@ -1,6 +1,6 @@
-//! PRIMARY MODEL — continuous-momentum nested-Fock λφ⁴ inner Hamiltonian.
+//! The continuous-momentum scalar fibre and a localized classical packet wall.
 //!
-//! This is the `book.tex` operator of `docs/PHI4_ANALYTIC_PLAN.md`:
+//! The implemented shift-invert benchmark uses the fibre operator
 //!
 //! ```text
 //! h_cont(k, φ) = ½ p_φ² + ½ (k₁²+k₂²+k₃²) φ² + (λ/4)(φ² − v²)²
@@ -58,6 +58,35 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const PHI_MODE: u32 = 0;
 /// Mehler modes of the continuous momentum multipliers `(k₁, k₂, k₃)`.
 pub const MOMENTUM_MODES: [u32; 3] = [1, 2, 3];
+
+/// Gaussian wall localized by χ(x) = exp(−π|x|²). Each real field is
+/// Σ 2a χ(x) cos(2π u·x), with packet amplitudes a and centres u in cycles per length.
+/// Computes λ/4 times the continuous Fourier norm squared of χ(field² − v²).
+/// The finite sum labels analytic packet products. This evaluates a classical potential.
+pub fn localized_packet_wall(packets: &[([f64; 3], f64)], lam: f64, v: f64) -> f64 {
+    // Each Fourier term represents the transform of c exp(−π n |x|² + 2π i u·x).
+    let mut terms = vec![(1.0, [0.0; 3], -v * v)];
+    for &(left, a) in packets {
+        for &(right, b) in packets {
+            for s in [-1.0, 1.0] {
+                for t in [-1.0, 1.0] {
+                    let centre = std::array::from_fn(|j| s * left[j] + t * right[j]);
+                    terms.push((3.0, centre, a * b));
+                }
+            }
+        }
+    }
+    let mut norm_sq = 0.0;
+    for &(n, left, a) in &terms {
+        for &(m, right, b) in &terms {
+            let distance_sq: f64 = (0..3).map(|j| (left[j] - right[j]).powi(2)).sum();
+            let width: f64 = n + m;
+            norm_sq +=
+                a * b * width.powf(-1.5) * (-std::f64::consts::PI * distance_sq / width).exp();
+        }
+    }
+    lam * norm_sq / 4.0
+}
 
 /// A continuous-momentum λφ⁴ inner Hamiltonian `h_cont`.
 #[derive(Clone, Copy, Debug, PartialEq)]

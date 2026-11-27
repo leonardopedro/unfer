@@ -79,64 +79,58 @@ Use Hilbert–Schmidt norms in the physical metrics. For an inexact seed represe
 add $\|\psi-Vc\|$. The identity explains why the three-mode window alone cannot price
 the error: $hV$ has components in the other eight output modes of the exact fixture.
 
-## 3. Exact results to reuse and next derivations
+**Adjoint pairing symmetry for real symmetric $(h, \psi)$.** In the Duhamel return-amplitude
+overlap, $\langle\psi, e^{-i(t-s)h} r(s)\rangle = \langle e^{+i(t-s)h}\psi,\, r(s)\rangle$.
+Because $h$ and the Gaussian seed $\psi$ are real in the Mehler basis, complex conjugation
+reverses the sign of time: $e^{+i(t-s)h}\psi = \overline{e^{-i(t-s)h}\psi}$. Omitting
+complex conjugation on the reduced vector $w(t-s) \approx e^{-i(t-s)h}\psi$ evaluates
+the wrong time sign (`sm_defect.rs`, queued fix `Q6`), whereas conjugating $w(t-s)$
+uses the true real-symmetric adjoint flow (up to its explicitly bounded defect).
 
-The scalar Cadabra2 module and its exact JSON fixture already exist. Its Gaussian
-Fourier check computes $\int f^4=1/2$ for $f(x)=e^{-\pi x^2}$ in one dimension.
-Its operator calculation retains the constant and contractions, completes the square
-(giving the unit-parameter floor $7/64$ with the oscillator inequality), and evaluates
-the full images of three even seed modes in eleven symmetric output modes. The Gaussian
-mean is $17/8$, variance $553/32$, and squared seed tail outside the three modes $9/2$.
-At physical shifts $10,5$ the rank-two calculation supplies rational dissipativity
-and defect identities and return endpoints $319447/320000$ and $39999/40000$
-at $t=1/100$. The endpoints concern the full fibre orbit under the analytic error
-argument. They are not an interval test on the raw compressed return.
-[Cadabra2 source](phi4_momentum_nested.cdb) · [Rational fixture](fixtures/phi4_momentum_mehler.json) ·
-[Replay and checks](VERIFY_PHI4_MOMENTUM.md)
+## 3. Exact results to reuse and next derivations (`Q3`–`Q5`)
 
-1. **Check the fibre proof against the fixture.** Reuse the core lower bound,
-   full polynomial action, physical Gram matrix, compressed-resolvent inverse and
-   full defect Gram in the scalar Lean sources. Trace the rational estimates through
-   the complex Hilbert-space embedding and Duhamel estimate to a theorem on the
-   normalized seed return. Record the actual closing declaration and its hypotheses
-   before attributing the two endpoints to a kernel-checked orbit theorem.
-   [Core bound](../../timepiece/BookProof/Phi4/ChapterScalarMomentumGap.lean) ·
-   [Action and Gram identities](../../timepiece/BookProof/Phi4/ChapterScalarMomRankTwo.lean) ·
-   [Orbit bridge](../../timepiece/BookProof/Phi4/ChapterScalarMomOrbit.lean)
-2. **Compute a localized double well with mixed momenta.** For real Schwartz $f$ and
-   real Schwartz localization $\chi$, set
-   $B_\chi=\widehat\chi*(\widehat f*\widehat f)-v^2\widehat\chi$. Derive and
-   test by two independent evaluations
-   $$
-   \tfrac\lambda4\int |\chi(x)|^2(f(x)^2-v^2)^2\,dx
-     =\tfrac\lambda4\int |B_\chi(Q)|^2\,dQ.
-   $$
-   The unlocalized constant background on infinite volume would give a Dirac mass
-   whose square has no ordinary integral. Keep the localization, its constant
-   contribution and the Fourier measure explicit. Take polarized packets with
-   $\widehat g_j(p)=e^{-\pi|p-u_j|^2}$ and distinct nonzero centres. Their mixed
-   convolution at $Q=u_1+u_2$ equals $2^{-3/2}$ in three dimensions. Using $Q+p$
-   in place of $Q-p$ misses that value for $u_1\ne0$. Then use real packets
-   $f_j=g_j+\overline{g_j}$, $f=a f_1+b f_2$ for real $a,b$, and a real Gaussian
-   $\chi$. The $a^2b^2$ energy coefficient must equal
-   $\tfrac{3\lambda}{2}\int |\chi|^2 f_1^2 f_2^2\,dx$. Export both checks and
-   the single-packet controls as exact fixtures. Omitting mixed pairs must change
-   the mixed energy coefficient.
-3. **Define the inner operator represented by the mixed vertex.** Specify continuous
-   packet field operators, reality and commutation relations, common Mehler core,
-   ordering and contractions. If ultraviolet smearing is needed, give its scale
-   separately from the spatial localization. Derive the matrix elements of the
-   smeared square, its adjoint and its positive quadratic form on that core.
-   Exhibit a nonzero mixed-packet matrix element and match its convention to step 2.
-   State the Hilbert space on which this is a one-particle operator for the *outer*
-   lift. Pointwise multiplication of arbitrary $L^2$ fields does not define that form.
-4. **Identify the dynamics before removing a regulator.** Prove dense definition,
-   closability and semiboundedness, identify a self-adjoint realization, and state
-   separately any core or essential-self-adjointness result. Then lift the identified
-   operator and compare its one-excitation matrix elements with the numerical packet
-   calculation. Any removal of localization or ultraviolet smearing needs a specified
-   limiting topology, uniform estimates and identification of the limit. The single-fibre
-   floor and return interval apply to their own operator throughout.
+The scalar Cadabra2 module [`phi4_momentum_nested.cdb`](phi4_momentum_nested.cdb) and its
+exact rational fixture [`fixtures/phi4_momentum_mehler.json`](fixtures/phi4_momentum_mehler.json)
+already pass all 32 `(0 = ok): 0` checks under `verify_cdb_modules.sh --strict`.
+The Gaussian Fourier check computes $\int f^4 = 1/2$ for $f(x) = e^{-\pi x^2}$ in continuous 1D;
+the operator checks retain $\lambda v^4/4$ and all contractions, complete the square for
+the unit floor $7/64$, evaluate the full 11-mode $S_3$ action of `unitMomCont` (mean $17/8$,
+variance $553/32$, outside-window tail $9/2$), verify rank-2 Hashimoto–SIRK at shifts
+$(10, 5)$ with return interval $[319447/320000, 39999/40000]$ at $t = 1/100$, and check
+outer shift $d\Gamma(h+cI) = d\Gamma(h)+cN_{\rm out}$ on occupations $0, 1, 2$.
+**Throughout, only the Krylov space in SIRK approximations is discrete, never momentum space.**
+
+1. **Continuous classical localized-wall checks & Lean alignment (`Q3`).**
+   For $\chi(x) = e^{-\pi|x|^2}$ and continuous test fields $f_j(x) = 2\chi(x)\cos(2\pi u_j\cdot x)$
+   with centres $u_0 = (1,0,0)$ and $u_1 = (0,2,0)$ ($\lambda = v = 1$, $k = 2\pi\xi$),
+   `phi4_momentum_nested.cdb` verifies that the $a^2 b^2$ coefficient of the continuous
+   integral $\frac{\lambda}{4}\int_{\mathbb{R}^3} |\chi(x)|^2 \big((a f_0 + b f_1)^2 - v^2\big)^2 d^3x$ is
+   $\frac{3}{2}\int_{\mathbb{R}^3} \chi^2 f_0^2 f_1^2 = (1+e^{-2\pi/3})(1+e^{-8\pi/3})/\sqrt{6} \approx 0.458627352548$,
+   versus $0.152875784183$ when the mixed pair is omitted, recorded in
+   [`fixtures/phi4_localized_wall.json`](fixtures/phi4_localized_wall.json).
+   *(Audit note: the draft two-mode Lean file `ChapterScalarPacketForm.lean` both discretized
+   momentum space into two modes and had four math/terminology errors; `Q3` retires it and
+   proves the continuous gradient Plancherel identity and continuous `localizedWall_energy`
+   polarization directly on continuous $\mathcal{S}(\mathbb{R}^3)$ in
+   [`ChapterScalarFourierIntegral.lean`](../../timepiece/BookProof/Phi4/ChapterScalarFourierIntegral.lean).)*
+2. **Next Cadabra2 derivation (`Q4`): Continuous Mehler–Hermite Momentum-Convolution Integrals:**
+   Extend [`phi4_momentum_nested.cdb`](phi4_momentum_nested.cdb) with exact **continuous**
+   $\int_{\mathbb{R}^3} d^3p$ and $\int_{\mathbb{R}^3} d^3Q$ momentum-convolution integrals of
+   continuous Mehler–Hermite functions $g_\alpha(p) = \prod_{r=1}^3 \mathrm{He}_{\alpha_r}(p_r) e^{-p_r^2/4}$
+   on continuous $\mathbb{R}^3_{\vec p}$ (**zero discrete momentum sums and zero finite-mode projection**):
+   - Evaluate closed-form continuous convolutions $\Psi_{\alpha,\beta}(Q) = \int_{\mathbb{R}^3} g_\alpha(p) g_\beta(Q - p)\,d^3p$
+     for continuous pairs such as $(0,0,0)\!*\!(0,0,0)$, $(2,0,0)\!*\!(0,0,0)$, and $(2,0,0)\!*\!(0,2,0)$.
+   - Verify exact continuous Plancherel equality $\int_{\mathbb{R}^3} |\Psi_{\alpha,\beta}(Q)|^2\,d^3Q = \int_{\mathbb{R}^3} |\widehat{g}_\alpha(x)\widehat{g}_\beta(x)|^2\,d^3x$
+     via SymPy continuous integration.
+   - Print `(0 = ok): 0` checks plus a `distinguish` mutation control removing the cross-coordinate factor,
+     emit `phi4_momentum_convolution.json`, and pass `scripts/verify_cdb_modules.sh --strict`.
+3. **Continuous dispersion & composite-pair positivity (`Q5`, `Q8`):**
+   Lean (`Q5`) proves the continuous $\|\vec k\| \ge k_0$ dispersion floor on continuous
+   $L^2(\mathbb{R}^3_{\vec k} \times \mathbb{R}_\phi)$ and `localizedWall_energy_nonneg` on $\mathcal{S}(\mathbb{R}^3)$;
+   Rust (`Q8`) cross-checks the continuous Mehler–Hermite convolution integrals in
+   `nested_fock_algebra/src/phi4_momentum.rs` against `docs/fixtures/phi4_momentum_convolution.json`.
+
+[`Replay and checks`](VERIFY_PHI4_MOMENTUM.md) · [`Master work order`](../../timepiece/PHI4_IMPROVEMENT_PLAN.md) · [`Numerical plan`](PHI4_NUMERICAL_PLAN.md)
 
 ## 4. Frozen Comparison Benchmarks Only (Do Not Extend)
 

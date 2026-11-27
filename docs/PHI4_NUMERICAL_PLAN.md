@@ -4,8 +4,11 @@
 
 The existing Rust suite evolves one outer excitation. Its normalized inner seed is a
 Gaussian on continuous $(k,s)\in\mathbb R^3\times\mathbb R$, and its observable is
-the return probability $|\langle\psi,e^{-ith}\psi\rangle|^2$. The implemented
-`ScalarMomCont` uses angular wavevector $k$ and
+the return probability $|\langle\psi,e^{-ith}\psi\rangle|^2$. **Only the Krylov space
+in the SIRK approximations is discrete, never momentum space.** Any finite Hermite
+degree bound $C$ used in numerical resolvent solves is solely a solver-internal basis
+truncation converging strongly to the full continuous operator as $C\to\infty$
+(`Model.window_solve_convergence`). The implemented `ScalarMomCont` uses angular wavevector $k$ and
 
 $$
 h=\tfrac12 p_s^2+\tfrac12|k|^2s^2+\tfrac\lambda4(s^2-v^2)^2.
@@ -14,12 +17,12 @@ $$
 The two occurrences of a field at the same inner coordinate share its ladder operators,
 with $s=b+b^\dagger$, $p_s=i(b^\dagger-b)/2$ at unit width. Apply complete ordered
 words, including contractions and the constant, before projecting. The outer operator is
-$H=\sum_{ij}\langle e_i,h e_j\rangle C^\dagger(e_i)A(e_j)$. It annihilates the
+$H=\sum_{ij}\langle e_i,h e_j\rangle C^\dagger(e_i)A(e_j)$ over a countable basis of
+continuous functions on $\mathbb{R}^3_k\times\mathbb{R}_s$. It annihilates the
 empty outer vacuum, agrees with $h$ on one excitation, and lifts $cI$ to $cN_{\rm out}$.
-A finite list of Hermite coefficients represents functions on continuous momentum space.
 The quadratic spatial gradient gives a diagonal Fourier multiplier and requires no
-derivative constraints. The spatially local quartic couples distinct momenta and is a
-separate operator development in §4.
+derivative constraints. Continuous momentum-convolution integrals beyond fibrewise $h$ are
+checked in §4.
 [Scalar builder](../nested_fock_algebra/src/phi4_momentum.rs) · [Analytic plan](PHI4_ANALYTIC_PLAN.md)
 
 ## 2. Reproducible fibre baseline (P11–P13)
@@ -28,112 +31,71 @@ separate operator development in §4.
 |---|---|
 | Ordered action at unit widths, $\lambda=v=1$ | Compare all three columns in the eleven-mode Mehler table using the physical Gram metric. Mean $17/8$, variance $553/32$, seed tail squared $9/2$. The independent-jet comparison has the same mean but variance $145/32$ and lacks the $\mathrm{He}_2(s)\sum_j\mathrm{He}_2(k_j)$ coupling. |
 | Rank two, degree-two even window, physical shifts $10,5$, $t=0.01$ | The SIRK return is $0.9978594340$, the dense same-window reference $0.9987243519$, and the $C=12$ reference $0.9982985830$. Compare the last with the full-orbit analytic interval $[319447/320000,39999/40000]$. Record the raw compressed discrepancy and leakage separately. |
-| Independent cutoff and rank sweeps at $t=0.05$ | At fixed rank two the reported tail falls from about $1.79$ to $0.13$ over $C=4$ to $28$. At $C=8$ the suite attains ranks $2,4,6$. These observations do not bound the maximum error for all cutoffs, ranks or times. Forward products are a measured same-window comparison. |
-| Response to coupling or packet width at $C=8,m=4$ | Dense-window differences are $0.00161315$ for $\lambda:1\to1.1$ and $0.05616051$ for momentum width $1\to1.5$. The identical-cell difference is zero. The wider unit-coordinate seed represents a physically wider momentum packet. |
+| Independent cutoff and rank sweeps (`C = 4..44`) at $t=0.05$ | At fixed rank $m=2$ the outside-window tail shrinks monotonically $1.79 \to 0.0208$ over $C=4\dots 44$, while rank-4 inside-window error **plateaus flat at $2.88\times 10^{-3}$** across $C=8\dots 44$ ($151\text{ min}$, $4.24\text{ GB}$ RSS at $C=44$). **Do not extend $C > 24$ at fixed $m \le 4$** — the solver is Krylov-rank-limited here, not cutoff-limited. Forward products are a measured same-window comparison. |
+| Response to coupling or packet width at $C=8,m=4$ | Dense-window differences are $-0.00161315$ for $\lambda:1\to1.1$ and $-0.05616051$ for `width_k`: $1\to1.5$. The identical-cell difference is zero. The wider unit-coordinate seed represents a physically wider continuous momentum packet. |
 | Absolute floor and parity | Check each sector against the unit fibre lower bound $7/64$ and record the odd–even splitting separately. Finite Ritz values above the floor are consistency checks. |
 
 The sweep's state-based estimates put zero inside both response intervals. The per-cell
 amplitude-based probability charges are approximately $0.000763$, $0.001024$ and
-$0.01189$ (base, coupled, spread). Their paired charge is $0.001786$ for coupling
-and $0.01266$ for spread. The computed spread interval excludes zero and the coupling
-interval includes it. The JSON field named `certified` uses a sampled overlap integral.
-The field named `exact` is the exact seed column of the declared window's evolution
-(a Hermitian-Lanczos `exp(-i t H_window)` action; formerly a dense floating-point Padé
-exponential, reproduced to about $10^{-15}$ — see [§5.8](VERIFY_PHI4_MOMENTUM.md)).
-They provide reproducible comparisons. Neither supplies the missing error bounds in §3.
-The periodic one- and two-site data and the static jet remain regression controls
-for different Hamiltonians.
+$0.01189$ (base, coupled, spread), giving paired charges $0.001786$ (coupling) and
+$0.01266$ (spread). Thus the `width_k` interval excludes zero while the $\lambda$
+interval still includes it. Furthermore, the 2026-11-27 audit identified two defects
+in the current [`amplitude_terms`](../fock_sirk/src/sm_defect.rs) helper: (1) it computes
+`inner(&w, &r)` instead of `inner(&conjugate_nested(&w), &r)` for the real-symmetric
+adjoint $e^{+i(t-s)h}\psi$ (see [`PHI4_ANALYTIC_PLAN.md`](PHI4_ANALYTIC_PLAN.md) §2), and
+(2) its JSON field `certified` is a sampled floating-point trapezoid without panel derivative
+remainders, GMRES residual bounds, or outward `Interval` rounding. Do not label it certified
+until `Q6`–`Q7` land. The field named `exact` is the seed column of `exp(-i t H_window)`
+via Hermitian Lanczos (`1e-13`). Periodic 1- and 2-site data and the static jet remain
+frozen comparison controls for different Hamiltonians.
 [Exact table](fixtures/phi4_momentum_mehler.json) · [Sweep](fixtures/phi4_momentum_sirk_sweep.json) ·
 [Tests](../fock_sirk/tests/phi4_momentum_sirk.rs) · [Replay, timings and measurements](VERIFY_PHI4_MOMENTUM.md)
 
-## 3. Next fibre experiment — enclose a return response
+## 3. Next fibre experiments (`Q6`–`Q8`) — fix adjoint conjugation, enclose rigorously, and tune Hashimoto–SIRK
 
-1. **Reproduce the baseline before changing the solver.** Replay the scalar unit tests,
-   the seven momentum SIRK tests and the release evidence runner using the commands in the
-   replay record. Save source and fixture digests. Preserve the unit rational table,
-   parity sectors, empty-vacuum action and $0,c,2c$ shifts as regression checks.
-   [Evidence runner](../fock_sirk/examples/phi4_momentum_sirk.rs)
-2. **Use the physical metric and actual shifted solves.** For window $P_C$ set
-   $h_C=P_C h P_C$ on its range. Use positive physical shifts
-   $\tilde\gamma_j=(N-jd)/t$ with $m<N/d$. With basis $V$ and its physical dual
-   $V^+$, compress the last resolvent to $B=V^+(\tilde\gamma_m I+i h_C)^{-1}V$.
-   Evolve with $G=\tilde\gamma_m I-B^{-1}$. Compute the full defect
-   $D=iVG-hV$ by applying $h$ before projection. Store $P_CD$ and $(I-P_C)D$,
-   initial projection error, Gram conditioning, solve residuals, attained rank and
-   any failed cell. Fix $m$ while varying $C$, then fix $C$ while varying $m$.
-   Quote any Hashimoto approximation bound with its shift and approximation factors.
-   [Rational solver](../fock_sirk/src/joint_sirk.rs)
-3. **Enclose the propagated defect.** A sampled maximum can miss a peak between
-   times. First enclose the conservative Frobenius/product estimate using verified
-   inputs or bound each time panel with a derivative majorant. For the sharper
-   observable estimate derive the dual weight $e^{+i(t-s)h}\psi$ in the Duhamel
-   pairing. The current overlap samples a forward reduced flow; justify any symmetry
-   substitution on the actual residual, or propagate the adjoint and bound its error.
-   Enclose the overlap, replacement integral and initial leakage. Include quadrature
-   remainder, shifted solves, Gram inversion, reduced exponential and rounding.
-   Refinement agreement and outward rounding of final endpoints alone leave these
-   errors open. Report a finite-window bound first, then include the full-action tail
-   for a fibre bound.
-   [Defect and amplitude implementation](../fock_sirk/src/sm_defect.rs)
-4. **Repeat the paired test.** For amplitude error $a$ and a normalized physical
-   seed, $2a+a^2$ bounds the return-probability error. Add independently enclosed
-   charges from both trajectories. Keep the interval when it crosses zero. Require
-   the null interval to contain zero and report which physical response, if any,
-   excludes it after *all* charges. Add a change-of-basis control that transports
-   the same physical seed, operator and observable together. Its exact response
-   is zero, unlike changing the physical packet spread at fixed Hamiltonian.
-   *Implemented*: the diagonal phase unitary `U = exp(iΣ_m θ_m n_m)` in
-   [`ScalarMomCont::hamiltonian_with`](../nested_fock_algebra/src/phi4_momentum.rs)
-   with the seed rotated by the same phases. **Why its exact response is zero.**
-   With `h' = U h U†` and `ψ' = Uψ`, the exponential factorises the same way,
-   `e^{-it h'} = U e^{-it h} U†`, so for any observable transported as
-   `O' = U O U†` the amplitude is equal term by term,
-   `⟨ψ'|e^{-it h'} O' e^{it h'}|ψ'⟩ = ⟨ψ|e^{-it h} O e^{it h}|ψ⟩`: no window size,
-   rank or cutoff can produce a response, so the control's exact arm must agree
-   in bits, not merely to solver precision. A nonzero exact response would mean
-   the transport itself is wrong, which is why the conjugation identity
-   `h' Γ(U)ψ = Γ(U)hψ` is checked symbolically before either solve
-   (`1.1e-15` here). The compressed arm is *not* zero by construction — the two
-   arms solve different matrices in different Krylov bases, so each carries its
-   own compressive defect — and it measures `3.1e-15` inside an `8.09e-5`
-   budget.
+1. **Reproduce the baseline cleanly (`Q8`).** Replay the scalar unit tests and momentum
+   integration suite, and gate cutoffs $C > 24$ in
+   [`examples/phi4_momentum_sirk.rs`](../fock_sirk/examples/phi4_momentum_sirk.rs) behind an
+   opt-in env var (`PHI4_EXTENDED_CUTOFFS=1`) so default fixture verification completes in `< 60 s`
+   instead of `151 min`. Preserve the unit rational table, parity sectors, vacuum annihilation,
+   and `0, c, 2c` shift checks as regressions.
+2. **Fix the Duhamel conjugation bug in [`sm_defect.rs`](../fock_sirk/src/sm_defect.rs) (`Q6`).**
+   For real symmetric $(H, \psi)$ (asserted explicitly on the window and seed),
+   $e^{+i(t-s)H}\psi = \overline{e^{-i(t-s)H}\psi}$, so replace `inner(&w, &r)` with
+   `inner(&conjugate_nested(&w), &r)`. Rename heuristic sampled helpers cleanly (stop calling
+   un-enclosed sampled runs `certified_cell`).
+3. **Implement rigorous interval-enclosed `amplitude_interval_terms` (`Q6`).**
+   Using outward-rounded `Interval` arithmetic (`sm_defect::Interval`), enclose:
+   (a) initial leakage,
+   (b) composite trapezoid overlap and action integrals **plus exact panel second-derivative remainders**
+       $\frac{t^3}{12 M^2}\max_s |d^2/ds^2\,\cdot|$ bounded from $\|G\|, \|D\|, \|V\|$ in `Interval` arithmetic,
+   (c) triangular replacement term + remainder, and
+   (d) GMRES `shift_solve_error_bounds` propagated from `JointSirkResult`.
+   Verify with a small exact 3-mode dense $e^{+i(t-s)H}\psi$ conjugation test in `fock_sirk`.
+4. **Tune Hashimoto–Nodera Krylov rank and shifts (`Q7`) per [`Hashimoto.md`](../../papers/Hashimoto.md) §4 Theorem 4.1:**
+   Instead of pushing truncation $C$ past $24$, keep $C \in \{8, 12\}$ and sweep higher discrete Krylov rank
+   $m \in \{4, 6, 8\}$ with Hashimoto–Nodera decreasing physical shifts $\tilde\gamma_j = (N - j d)/t$
+   ($m < N/d$, moderate $g = \tilde\gamma_m$ controlling $W_m$ conditioning) so that the **rigorous**
+   `amplitude_interval_terms` paired probability charge **strictly excludes zero for BOTH
+   $\lambda: 1.0 \to 1.1$ AND `width_k`: $1.0 \to 1.5$** while containing zero on both null controls
+   (identical cell and the verified diagonal-phase `change_of_basis` control, whose exact response
+   is zero and compressed response measures `3.1e-15` inside `8.09e-5` with `‖Ph'P − PhP‖_F = 78.6`).
 
-   That is the contrast with the `width_k` response: changing the physical
-   packet at fixed `h` moves the exact return probability by `5.6e-2` and does
-   exclude zero, while a pure change of basis cannot. The chosen `U` is what the
-   model's substitution API expresses directly, and the pair `(q, p)` is
-   unnormalized, so the transport is
-   the squeeze `q_r → cos θ_r q_r + 2 sin θ_r p_r`,
-   `p_r → cos θ_r p_r − ½ sin θ_r q_r`. `θ_φ = 0` keeps the one-quantum seed
-   bit-identical (a nonzero `φ` angle is only a global phase for that seed),
-   while `‖P h' P − P h P‖_F = 78.6` on the 35-label window shows the operator
-   really changed. The model crate pins that number with a floor in
-   `change_of_basis_changes_the_window_operator_matrix`; the measured values are
-   in [§5.3](VERIFY_PHI4_MOMENTUM.md).
+## 4. Continuous momentum-convolution verification (`Q8`)
 
-## 4. First numerical test of a quartic coupling distinct momenta
+1. **Continuous classical packet integral baseline (executed):** `localized_packet_wall` in
+   [`nested_fock_algebra/src/phi4_momentum.rs`](../nested_fock_algebra/src/phi4_momentum.rs) evaluates
+   continuous Gaussian Fourier overlaps for the localized double well ($0.458627352548$ mixed $a^2 b^2$
+   coefficient, background $\lambda v^4/(4\cdot 2^{3/2})$ retained), checked against
+   [`fixtures/phi4_localized_wall.json`](fixtures/phi4_localized_wall.json) in
+   [`tests/phi4_momentum_sirk.rs`](../fock_sirk/tests/phi4_momentum_sirk.rs).
+2. **Continuous Mehler–Hermite convolution fixture test (`Q8`, NO discrete momentum models):**
+   Once `phi4_momentum_convolution.json` lands from `Q4`, add `continuous_mehler_convolution_matches_fixture`
+   in [`nested_fock_algebra/src/phi4_momentum.rs`](../nested_fock_algebra/src/phi4_momentum.rs) verifying the
+   closed-form continuous $\int_{\mathbb{R}^3} d^3p$ / $\int_{\mathbb{R}^3} d^3Q$ Mehler–Hermite pair convolutions
+   and Plancherel norms to `1e-12` — **strictly on continuous $\mathbb{R}^3_{\vec k}$ with zero finite-mode or
+   lattice momentum discretization**.
 
-1. **Build a continuous packet reference.** Take the two modulated real-field packets
-   and localization $\chi$ from analytic step 2. In the cycles-per-length convention
-   compare the coefficient of $a^2b^2$ in the localized wall energy of $a f_1+b f_2$
-   against the Cadabra2 value. Independently evaluate the mixed convolution at a
-   nonzero transfer $Q$ so that using $Q+p$ in place of $Q-p$ on a polarized pair
-   fails. Use analytic Gaussian integrals or continuous quadrature with explicit tail
-   and integration errors. Record packet centres, widths, Fourier measure and $v$.
-   Quadrature points serve only to evaluate an integral.
-2. **Test the ordered quantum matrix elements.** Once the inner representation and
-   core are specified, project the *complete* smeared operator into two overlapping
-   Mehler windows. Retain contractions, quadratic and constant terms. Compare an
-   off-diagonal mixed-packet element with an independently derived symbolic value,
-   check Hermiticity in the Gram metric, and require deleting the mixed contribution
-   to fail. Check the outer vacuum, one-excitation action and two-excitation shift.
-   Keep the new operator and fixtures separately identifiable from `ScalarMomCont`.
-3. **Evolve the identified operator.** Repeat the shift-invert protocol on the same
-   packets, with an independently evaluated finite-window reference and the full-action
-   defect. Vary window, rank and integration tolerance one at a time at fixed physical
-   smearing and localization. Record those scales separately when varying them later.
-   A resolved mixed matrix element establishes coupling at the specified scales.
-   Cutoff-independent dynamics or a positive spectral floor for that interaction
-   require estimates for that operator.
-   [Symbolic acceptance tests](PHI4_ANALYTIC_PLAN.md) ·
-   [Scalar proof work order](../../timepiece/PHI4_IMPROVEMENT_PLAN.md)
+*(Scope note: All work stays strictly inside the continuous-momentum `book.tex` Mehler / nested-Fock
+and `Hashimoto.md` SIRK framework; frozen lattice/static-jet/Higgs benchmarks are comparison controls only.)*
+[`Symbolic plan`](PHI4_ANALYTIC_PLAN.md) · [`Master work order`](../../timepiece/PHI4_IMPROVEMENT_PLAN.md)

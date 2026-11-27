@@ -81,12 +81,49 @@ direct = sp.integrate((f**2)**2, (x, -sp.oo, sp.oo))
 check("continuous-composite-pair-integral", pair-direct)
 check("continuous-composite-pair-value", direct-sp.Rational(1, 2))
 
+# Localized 3D real packets: unit Gaussian envelopes, centres (1,0,0) and
+# (0,2,0), χ = exp(-π|x|²), λ = v = 1. Fourier transform uses cycles per length.
+def signs_pair(u, v):
+    return [(s*u[0]+t*v[0], s*u[1]+t*v[1]) for s in (-1, 1) for t in (-1, 1)]
+
+def packet_gram(left, right):
+    return sum(sp.exp(-sp.pi*((x1-x2)**2+(y1-y2)**2)/6)
+               for x1,y1 in left for x2,y2 in right) / (6*sp.sqrt(6))
+
+u1, u2 = (1, 0), (0, 2)
+mixed_pair = signs_pair(u1, u2)
+diagonal = packet_gram(signs_pair(u1, u1), signs_pair(u2, u2))
+cross = packet_gram(mixed_pair, mixed_pair)
+mixed_wall = diagonal/2 + cross
+# Coordinate check from the separate cos² integrals along axes 1 and 2.
+cosine_wall = (1+sp.exp(-2*sp.pi/3))*(1+sp.exp(-8*sp.pi/3))/sp.sqrt(6)
+check("localized-mixed-wall", mixed_wall-cosine_wall)
+check("localized-omitted-pair", diagonal/2-mixed_wall/3)
+# Polarized pair at Q = u1 + u2. Flipping Q-p to Q+p shifts the centre by 2u1.
+peak = 2**(-sp.Rational(3,2))
+wrong_peak = peak*sp.exp(-2*sp.pi)
+assert 0 < wrong_peak < peak
+# With only one real packet, cos² and cos⁴ integrate separately. These rows
+# retain the quadratic shift as well as the isolated constant.
+def single_wall(u):
+    ksq = sum(coord**2 for coord in u)
+    quadratic = (1+sp.exp(-sp.pi*ksq))/4
+    quartic = (3+4*sp.exp(-2*sp.pi*ksq/3)+sp.exp(-8*sp.pi*ksq/3))/(3*sp.sqrt(6))
+    return (quartic - 2*quadratic + peak)/4
+
+localized_fixture = dict(schema="phi4-localized-classical-wall/v1", centres=[[*u1, 0], [*u2, 0]],
+                         lambda_value=1, v=1, single_packet_energies=[float(single_wall(u)) for u in (u1, u2)],
+                         mixed_coefficient=float(mixed_wall),
+                         without_mixed_pair=float(diagonal/2), pair_peak=float(peak),
+                         reversed_transfer=float(wrong_peak))
+print("PHI4_LOCALIZED_FIXTURE|" + json.dumps(localized_fixture, sort_keys=True))
+
 # ---------------------------------------------------------------------------
 # 3. Unconditional coercivity by square completion.
 # ---------------------------------------------------------------------------
-completion = (lam/4)*(alpha**2-v**2)**2 - (alpha**2/2)*alpha**2 \
+completion = (lam/4)*(x**2-v**2)**2 - (alpha**2/2)*x**2 \
     + alpha**2*v**2/2 + alpha**4/(4*lam) \
-    - (lam/4)*(alpha**2-v**2-alpha**2/lam)**2
+    - (lam/4)*(x**2-v**2-alpha**2/lam)**2
 check("coercivity-square-completion", completion)
 unit_completion = (alpha/2) - alpha**2*v**2/2 - alpha**4/(4*lam)
 check("coercivity-unit-value", unit_completion.subs({alpha: sp.Rational(1, 2), lam: 1, v: 1})
@@ -256,11 +293,20 @@ check("return-interval-arithmetic", return_lo - sp.Rational(319447, 320000))
 # 6. Outer quadratic ordering dGamma(h).
 # ---------------------------------------------------------------------------
 shift = sp.symbols("shift", positive=True)
+energy = sp.Symbol("energy", real=True)
+outer_ann = sp.zeros(3)
+for n in (1, 2):
+    outer_ann[n-1, n] = sp.sqrt(n)
+
+def outer_lift(value):
+    return outer_ann.T * (value * outer_ann)
+
+shifted = outer_lift(energy+shift) - outer_lift(energy)
 for n in range(3):
-    check("outer-shift-lift-" + str(n), n*shift - n*shift)
-check("outer-vacuum-annihilation", sp.Integer(0))
-cross_defect = 2*shift**2
-assert cross_defect != 0
+    check("outer-shift-lift-" + str(n), shifted[n, n] - n*shift)
+check("outer-vacuum-annihilation", outer_lift(energy)[:, 0])
+cross_defect = outer_lift(shift)**2 - outer_lift(shift**2)
+assert cross_defect == sp.diag(0, 0, 2*shift**2)
 print("PHI4_MOM_CHECK|outer-cross-particle-defect-nonzero|0")
 print("CHECK outer-cross-particle-defect-nonzero (0 = ok): 0")
 
