@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Resumable per-cell quiet-window sweep for the phi4 momentum example.
+#
+# `fock_sirk/examples/phi4_momentum_sirk` measures every cell inside one process,
+# so a load burst forty minutes in discarded the cells that had already run in a
+# clean window (docs/VERIFY_PHI4_MOMENTUM.md §5.12 records five such runs). This
+# driver runs **one cell per invocation** instead: each cell is merged into an
+# accumulating record, so an aborted or killed run loses at most the cell that
+# was in flight, and re-running the script resumes at the first cell the record
+# does not hold yet.
+#
+# The per-cell timing contract is unchanged: a cell only counts if the host was
+# idle for the whole cell. The driver waits for five idle minutes, aborts the
+# cell if load1 stays at or above the burst threshold for three samples, and
+# never records a contaminated cell.
+#
+#   scripts/sweep-phi4-cells                  # resume into target/tmp/phi4_cells.json
+#   PHI4_OUT=/tmp/run.json scripts/sweep-phi4-cells
+#   PHI4_CELLS=cutoff_sweep.tail_sweep_fixed_rank_2.C44 scripts/sweep-phi4-cells
+#
+# Environment:
+#   PHI4_OUT         accumulated record (default target/tmp/phi4_cells.json)
+#   PHI4_BIN         example binary (default target/release/examples/phi4_momentum_sirk)
+#   PHI4_CELLS       comma list of cells to *re-run* even if already recorded
+#   PHI4_IDLE_MAX    load1 below which the host counts as idle (default 2.5)
+#   PHI4_BURST_MAX   load1 at which the cell is abandoned (default 6.0)
+#   PHI4_IDLE_SAMPLES consecutive idle samples required (default 10, 30 s apart)
+#
+# Exit codes: 0 all cells measured, 75 a cell was abandoned to a load burst
+# (re-run to resume), anything else a real failure.
+set -uo pipefail
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root"
+
+OUT="${PHI4_OUT:-target/tmp/phi4_cells.json}"
+BIN="${PHI4_BIN:-target/release/examples/phi4_momentum_sirk}"
+IDLE_MAX="${PHI4_IDLE_MAX:-2.5}"
+BURST_MAX="${PHI4_BURST_MAX:-6.0}"
+IDLE_SAMPLES="${PHI4_IDLE_SAMPLES:-10}"
+REDO="${PHI4_CELLS:-}"
+LOGDIR="$(dirname "$OUT")/phi4_cells_log"
+mkdir -p "$LOGDIR" "$(dirname "$OUT")"
+
+if [ ! -x "$BIN" ]; then
+    echo "== building $BIN" >&2
+    cargo build --release -p fock_sirk --example phi4_momentum_sirk || exit 1
+fi
+
+load1() { cut -d' ' -f1 /proc/loadavg; }
+below() { awk -v l="$(load1)" -v t="$1" 'BEGIN{exit !(l<t)}'; }
+
+# The record is the resume state, so ask it — never a side file — which cells it
+# holds. `measured_cells` is written by the example itself.
+has_cell() {
+    [ -f "$OUT" ] || return 1
+    python3 - "$OUT" "$1" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if sys.argv[2] in doc.get("measured_cells", []) else 1)
+PY
+}
+
+wait_idle() {
+    local idle=0
+    while :; do
+        local l
+        l="$(load1)"
+        echo "$(date -Is) waiting load1=$l" >> "$LOGDIR/load.log"
+        if below "$IDLE_MAX"; then idle=$((idle + 1)); else idle=0; fi
+        [ "$idle" -ge "$IDLE_SAMPLES" ] && return 0
+        sleep 30
+    done
+}
+
+# One cell, guarded by the load sampler. Returns 0 measured, 75 contaminated.
+run_cell() {
+    local cell="$1" part="$OUT.part" status=0
+    wait_idle
+    echo "=== $cell start $(date -Is) load=$(cat /proc/loadavg)" >> "$LOGDIR/load.log"
+    local args=(env "PHI4_CELLS=$cell" "PHI4_OUT=$part")
+    [ -f "$OUT" ] && args+=("PHI4_MERGE=$OUT")
+    "${args[@]}" "$BIN" > "$LOGDIR/$cell.log" 2>&1 &
+    local pid=$! hot=0 contaminated=0
+    while kill -0 "$pid" 2>/dev/null; do
+        local l
+        l="$(load1)"
+        echo "$(date -Is) $cell running load1=$l" >> "$LOGDIR/load.log"
+        if below "$BURST_MAX"; then hot=0; else hot=$((hot + 1)); fi
+        if [ "$hot" -ge 3 ]; then
+            echo "=== $cell contaminated at load1=$l, abandoning" >> "$LOGDIR/load.log"
+            kill "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            contaminated=1
+            break
+        fi
+        sleep 15
+    done
+    if [ "$contaminated" -eq 1 ]; then
+        rm -f "$part"
+        return 75
+    fi
+    wait "$pid" || status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "=== $cell failed status=$status (see $LOGDIR/$cell.log)" >> "$LOGDIR/load.log"
+        rm -f "$part"
+        return "$status"
+    fi
+    mv "$part" "$OUT"
+    echo "=== $cell measured $(date -Is)" >> "$LOGDIR/load.log"
+    return 0
+}
+
+mapfile -t cells < <(env PHI4_LIST_CELLS=1 "$BIN")
+if [ "${#cells[@]}" -eq 0 ]; then
+    echo "the example printed no cell ids (PHI4_LIST_CELLS=1)" >&2
+    exit 1
+fi
+
+pending=0
+for cell in "${cells[@]}"; do
+    # Skip a recorded cell unless PHI4_CELLS explicitly asks to re-run it.
+    if has_cell "$cell" && { [ -z "$REDO" ] || [[ ",$REDO," != *",$cell,"* ]]; }; then
+        continue
+    fi
+    pending=$((pending + 1))
+    run_cell "$cell"
+    rc=$?
+    if [ "$rc" -eq 75 ]; then
+        echo "load burst abandoned $cell; re-run this script to resume" >&2
+        exit 75
+    fi
+    if [ "$rc" -ne 0 ]; then
+        echo "$cell failed with status $rc" >&2
+        exit "$rc"
+    fi
+done
+
+echo "all ${#cells[@]} cells measured in $OUT (this run: $pending)" >&2
