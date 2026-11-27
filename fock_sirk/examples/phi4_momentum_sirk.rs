@@ -39,7 +39,7 @@ use nested_fock_algebra::phi4_scalar::ScalarGrid;
 use num_complex::Complex64 as C;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 mod common;
@@ -112,6 +112,14 @@ fn sweep_method(cutoff: u32) -> JointKrylovMethod {
 /// components) needs more than C = 38's, and C = 44 (about 15000 labels, so
 /// n^2 ~ 2.3e8 before the span images) needs more than C = 40's.
 const SWEEP_COMPONENT_BUDGET: usize = 300_000_000;
+
+/// Ranks of the `C = 8` rank sweep. Shared with `cell_ids` so the resumable
+/// driver and the sweep itself cannot disagree about which cells exist.
+const RANK_SWEEP_RANKS: [usize; 3] = [2, 4, 6];
+
+/// Record keys of the four paired-response arms (their cell ids are
+/// `responses.<key>`).
+const RESPONSE_CELLS: [&str; 4] = ["base", "null_control", "coupled", "spread"];
 
 fn solve(
     h: &InnerExpr,
@@ -259,8 +267,156 @@ fn peak_rss_kb() -> Option<u64> {
     })
 }
 
+/// Per-cell selection for a resumable sweep run.
+///
+/// The full sweep is roughly eighty minutes of wall clock, and a timing cell is
+/// only valid if the host was quiet while it ran. Before this plan existed a
+/// load burst discarded the whole run, including the cells that had already
+/// finished in a clean window. Now:
+///
+/// * `PHI4_LIST_CELLS=1` prints the canonical cell ids and exits.
+/// * `PHI4_CELLS=a,b` runs only those cells; every other cell is taken from the
+///   record named by `PHI4_MERGE`, or recorded as not run in this invocation.
+/// * `PHI4_OUT` overrides the output path, so a partially measured record can
+///   accumulate in `target/` and never overwrite the checked-in fixture.
+///
+/// The record carries `measured_cells` (root) so the driver can tell which
+/// cells still need a quiet window without re-deriving the id scheme.
+struct CellPlan {
+    /// `None` means every cell runs (the historical behaviour).
+    only: Option<BTreeSet<String>>,
+    /// Cells of the record named by `PHI4_MERGE`, keyed by cell id.
+    prior: BTreeMap<String, Value>,
+    merged_from: Option<String>,
+}
+
+/// Cell id used in the log when a cell was neither selected nor available from
+/// a previous record.
+const NOT_RUN: &str = "not run in this invocation";
+
+impl CellPlan {
+    fn from_env() -> Self {
+        let only = std::env::var("PHI4_CELLS").ok().map(|list| {
+            list.split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>()
+        });
+        let merged_from = std::env::var("PHI4_MERGE").ok().filter(|p| !p.is_empty());
+        let prior = merged_from
+            .as_deref()
+            .map(|path| {
+                let text = std::fs::read_to_string(path)
+                    .unwrap_or_else(|err| panic!("read PHI4_MERGE={path}: {err}"));
+                let doc: Value = serde_json::from_str(&text)
+                    .unwrap_or_else(|err| panic!("parse PHI4_MERGE={path}: {err}"));
+                index_cells(&doc)
+            })
+            .unwrap_or_default();
+        Self {
+            only,
+            prior,
+            merged_from,
+        }
+    }
+
+    fn wanted(&self, id: &str) -> bool {
+        self.only
+            .as_ref()
+            .map(|set| set.contains(id))
+            .unwrap_or(true)
+    }
+
+    /// `Some(cell)` when this invocation must not recompute `id`: either it was
+    /// not selected, or it is already in the merged record.
+    fn reuse(&self, id: &str) -> Option<Value> {
+        if self.wanted(id) {
+            return None;
+        }
+        Some(
+            self.prior
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| json!({ "status": NOT_RUN, "id": id })),
+        )
+    }
+}
+
+/// Canonical cell order: the ids `PHI4_LIST_CELLS=1` prints and the driver
+/// walks one per invocation.
+fn cell_ids() -> Vec<String> {
+    let mut ids = vec!["rank_two_cell".to_string()];
+    for cutoff in SWEEP_CUTOFFS {
+        ids.push(format!("cutoff_sweep.tail_sweep_fixed_rank_2.C{cutoff}"));
+    }
+    for cutoff in SWEEP_CUTOFFS {
+        ids.push(format!(
+            "cutoff_sweep.method_contrast_fixed_rank_4.C{cutoff}"
+        ));
+    }
+    for m in RANK_SWEEP_RANKS {
+        ids.push(format!("rank_sweep.m{m}"));
+    }
+    for name in RESPONSE_CELLS {
+        ids.push(format!("responses.{name}"));
+    }
+    ids.push("responses.change_of_basis".to_string());
+    ids.push("parity_and_comparisons".to_string());
+    ids
+}
+
+/// Map a record's cells back to their ids. The sweep writes the ids itself; this
+/// is what lets a merged record be read back without trusting a side file.
+fn index_cells(doc: &Value) -> BTreeMap<String, Value> {
+    let mut index = BTreeMap::new();
+    for (key, prefix) in [
+        (
+            "tail_sweep_fixed_rank_2",
+            "cutoff_sweep.tail_sweep_fixed_rank_2",
+        ),
+        (
+            "method_contrast_fixed_rank_4",
+            "cutoff_sweep.method_contrast_fixed_rank_4",
+        ),
+    ] {
+        for cell in doc["cutoff_sweep"][key].as_array().into_iter().flatten() {
+            if let Some(cutoff) = cell["hermite_cutoff"].as_u64() {
+                index.insert(format!("{prefix}.C{cutoff}"), cell.clone());
+            }
+        }
+    }
+    for cell in doc["rank_sweep"]["cells"].as_array().into_iter().flatten() {
+        if let Some(m) = cell["requested_rank"].as_u64() {
+            index.insert(format!("rank_sweep.m{m}"), cell.clone());
+        }
+    }
+    for name in RESPONSE_CELLS {
+        let cell = &doc["responses"]["cells"][name];
+        if cell.is_object() {
+            index.insert(format!("responses.{name}"), cell.clone());
+        }
+    }
+    for (id, cell) in [
+        (
+            "responses.change_of_basis",
+            &doc["responses"]["change_of_basis_control"],
+        ),
+        ("parity_and_comparisons", &doc["parity_and_comparisons"]),
+        ("rank_two_cell", &doc["rank_two_cell"]),
+    ] {
+        if cell.is_object() {
+            index.insert(id.to_string(), cell.clone());
+        }
+    }
+    index
+}
+
 /// Rank-2 Hashimoto cell on the degree-≤2 window at `t = 0.01`.
-fn rank_two_cell() -> Value {
+fn rank_two_cell(plan: &CellPlan) -> Value {
+    if let Some(cell) = plan.reuse("rank_two_cell") {
+        return cell;
+    }
     let started = Instant::now();
     let t = 0.01;
     let model = ScalarMomCont::unit();
@@ -280,6 +436,7 @@ fn rank_two_cell() -> Value {
 
     json!({
         "status": "measured",
+        "id": "rank_two_cell",
         "model": "ScalarMomCont (continuous k in R^3, phi in R), lambda = v = 1, unit Mehler widths",
         "energy_convention": "H = 1/2 p^2 + 1/2 k^2 phi^2 + lambda/4 (phi^2 - v^2)^2, lambda v^4/4 retained",
         "seed": "outer vacuum with one inner Gaussian, He_0(phi) label",
@@ -309,7 +466,7 @@ fn rank_two_cell() -> Value {
 }
 
 /// Hermite-cutoff sweep at fixed rank `m = 2`, then the rank-4 method contrast.
-fn cutoff_sweep() -> Value {
+fn cutoff_sweep(plan: &CellPlan) -> Value {
     let started = Instant::now();
     let t = 0.05;
     let model = ScalarMomCont::unit();
@@ -318,6 +475,11 @@ fn cutoff_sweep() -> Value {
 
     let mut tail_cells = Vec::new();
     for cutoff in SWEEP_CUTOFFS {
+        let id = format!("cutoff_sweep.tail_sweep_fixed_rank_2.C{cutoff}");
+        if let Some(cell) = plan.reuse(&id) {
+            tail_cells.push(cell);
+            continue;
+        }
         let cell_started = Instant::now();
         let window = ScalarMomCont::window_labels(cutoff);
         let shifts = physical_shifts(t, 8.0, 3.0, 2);
@@ -326,6 +488,7 @@ fn cutoff_sweep() -> Value {
         let exact = WindowOperator::build(&h, &window).reference_return(&initial, t);
         tail_cells.push(json!({
             "status": "measured",
+            "id": id,
             "hermite_cutoff": cutoff,
             "window_labels": window.len(),
             "requested_rank": 2,
@@ -350,6 +513,11 @@ fn cutoff_sweep() -> Value {
     // Rank 4: the labeled ForwardProducts diagnostic against shift-invert.
     let mut method_cells = Vec::new();
     for cutoff in SWEEP_CUTOFFS {
+        let id = format!("cutoff_sweep.method_contrast_fixed_rank_4.C{cutoff}");
+        if let Some(cell) = plan.reuse(&id) {
+            method_cells.push(cell);
+            continue;
+        }
         let cell_started = Instant::now();
         let window = ScalarMomCont::window_labels(cutoff);
         let shifts = physical_shifts(t, 14.0, 3.0, 4);
@@ -367,6 +535,7 @@ fn cutoff_sweep() -> Value {
         let p_forward = return_probability(&forward, &initial, t);
         method_cells.push(json!({
             "status": "measured",
+            "id": id,
             "hermite_cutoff": cutoff,
             "window_labels": window.len(),
             "requested_rank": 4,
@@ -398,7 +567,7 @@ fn cutoff_sweep() -> Value {
 }
 
 /// Krylov-rank sweep on the fixed `C = 8` window.
-fn rank_sweep() -> Value {
+fn rank_sweep(plan: &CellPlan) -> Value {
     let started = Instant::now();
     let t = 0.05;
     let model = ScalarMomCont::unit();
@@ -408,7 +577,12 @@ fn rank_sweep() -> Value {
     let exact = WindowOperator::build(&h, &window).reference_return(&initial, t);
 
     let mut cells = Vec::new();
-    for m in [2usize, 4, 6] {
+    for m in RANK_SWEEP_RANKS {
+        let id = format!("rank_sweep.m{m}");
+        if let Some(cell) = plan.reuse(&id) {
+            cells.push(cell);
+            continue;
+        }
         let cell_started = Instant::now();
         let shifts = physical_shifts(t, 3.0 * m as f64 + 2.0, 3.0, m);
         let result = solve(&h, &initial, &shifts, &window, shift_invert());
@@ -423,6 +597,7 @@ fn rank_sweep() -> Value {
         let p_forward = return_probability(&forward, &initial, t);
         cells.push(json!({
             "status": "measured",
+            "id": id,
             "requested_rank": m,
             "attained_rank": result.rank(),
             "hashimoto": { "N": 3.0 * m as f64 + 2.0, "h": 3.0, "m": m, "t": t },
@@ -664,14 +839,27 @@ fn change_of_basis_control(t: f64) -> Value {
     })
 }
 
-fn response_pairs() -> Value {
+fn response_pairs(plan: &CellPlan) -> Value {
     let started = Instant::now();
     let t = 0.05;
-    let base = response_cell(1.0, 1.0, t);
-    let control = response_cell(1.0, 1.0, t);
-    let coupled = response_cell(1.1, 1.0, t);
-    let spread = response_cell(1.0, 1.5, t);
-    let change_of_basis = change_of_basis_control(t);
+    let arm = |name: &str, lam: f64, width_k: f64| -> Value {
+        let id = format!("responses.{name}");
+        if let Some(cell) = plan.reuse(&id) {
+            return cell;
+        }
+        let mut cell = response_cell(lam, width_k, t);
+        cell["id"] = json!(id);
+        cell
+    };
+    let base = arm("base", 1.0, 1.0);
+    let control = arm("null_control", 1.0, 1.0);
+    let coupled = arm("coupled", 1.1, 1.0);
+    let spread = arm("spread", 1.0, 1.5);
+    let change_of_basis = plan.reuse("responses.change_of_basis").unwrap_or_else(|| {
+        let mut cell = change_of_basis_control(t);
+        cell["id"] = json!("responses.change_of_basis");
+        cell
+    });
 
     let read = |cell: &Value, key: &str| cell[key].as_f64().unwrap();
     let charge = |cell: &Value| cell["sharp_charge"]["value"].as_f64().unwrap();
@@ -698,40 +886,75 @@ fn response_pairs() -> Value {
         })
     };
 
-    json!({
-        "status": "measured",
-        "time": t,
-        "null_control": {
-            "cell_a": "lambda = 1.0, width_k = 1.0",
-            "cell_b": "lambda = 1.0, width_k = 1.0",
-            "exact": interval(&base, &control, "return_probability_window_exact"),
-            "sirk": interval(&base, &control, "return_probability_sirk"),
-            "certified": certified_interval(&base, &control, "return_probability_sirk"),
-            "contains_zero": true,
-        },
-        "coupling_response": {
-            "cell_a": "lambda = 1.0",
-            "cell_b": "lambda = 1.1",
-            "exact": interval(&base, &coupled, "return_probability_window_exact"),
-            "sirk": interval(&base, &coupled, "return_probability_sirk"),
-            "certified": certified_interval(&base, &coupled, "return_probability_sirk"),
-        },
-        "momentum_spread_response": {
-            "cell_a": "width_k = 1.0",
-            "cell_b": "width_k = 1.5",
-            "exact": interval(&base, &spread, "return_probability_window_exact"),
-            "sirk": interval(&base, &spread, "return_probability_sirk"),
-            "certified": certified_interval(&base, &spread, "return_probability_sirk"),
-        },
-        "change_of_basis_control": change_of_basis,
-        "cells": { "base": base, "null_control": control, "coupled": coupled, "spread": spread },
-        "runtime_ms": started.elapsed().as_millis() as u64,
-    })
+    // A placeholder has no numbers, and every paired interval needs both arms.
+    let complete = [&base, &control, &coupled, &spread]
+        .into_iter()
+        .all(|cell| {
+            cell["return_probability_sirk"].is_number()
+                && cell["return_probability_window_exact"].is_number()
+                && cell["sharp_charge"]["value"].is_number()
+                && cell["certified_charge"]["value"].is_number()
+        });
+
+    let mut root = Map::new();
+    root.insert("status".into(), json!("measured"));
+    root.insert("time".into(), json!(t));
+    if complete {
+        root.insert(
+            "null_control".into(),
+            json!({
+                "cell_a": "lambda = 1.0, width_k = 1.0",
+                "cell_b": "lambda = 1.0, width_k = 1.0",
+                "exact": interval(&base, &control, "return_probability_window_exact"),
+                "sirk": interval(&base, &control, "return_probability_sirk"),
+                "certified": certified_interval(&base, &control, "return_probability_sirk"),
+                "contains_zero": true,
+            }),
+        );
+        root.insert(
+            "coupling_response".into(),
+            json!({
+                "cell_a": "lambda = 1.0",
+                "cell_b": "lambda = 1.1",
+                "exact": interval(&base, &coupled, "return_probability_window_exact"),
+                "sirk": interval(&base, &coupled, "return_probability_sirk"),
+                "certified": certified_interval(&base, &coupled, "return_probability_sirk"),
+            }),
+        );
+        root.insert(
+            "momentum_spread_response".into(),
+            json!({
+                "cell_a": "width_k = 1.0",
+                "cell_b": "width_k = 1.5",
+                "exact": interval(&base, &spread, "return_probability_window_exact"),
+                "sirk": interval(&base, &spread, "return_probability_sirk"),
+                "certified": certified_interval(&base, &spread, "return_probability_sirk"),
+            }),
+        );
+    } else {
+        root.insert(
+            "partial".into(),
+            json!("this invocation did not measure all four arms; each paired interval needs both, so they are omitted rather than computed against a placeholder"),
+        );
+    }
+    root.insert("change_of_basis_control".into(), change_of_basis);
+    root.insert(
+        "cells".into(),
+        json!({ "base": base, "null_control": control, "coupled": coupled, "spread": spread }),
+    );
+    root.insert(
+        "runtime_ms".into(),
+        json!(started.elapsed().as_millis() as u64),
+    );
+    Value::Object(root)
 }
 
 /// ℤ₂ parity, the unconditional inner bound `θ ≥ 7/64`, and the frozen
 /// comparison contrast.
-fn parity_and_comparisons() -> Value {
+fn parity_and_comparisons(plan: &CellPlan) -> Value {
+    if let Some(cell) = plan.reuse("parity_and_comparisons") {
+        return cell;
+    }
     let started = Instant::now();
     let t = 0.05;
     let model = ScalarMomCont::unit();
@@ -797,6 +1020,7 @@ fn parity_and_comparisons() -> Value {
 
     json!({
         "status": "measured",
+        "id": "parity_and_comparisons",
         "even_seed_inner_excitation": even["ritz_ground"].clone(),
         "odd_seed_inner_excitation": odd["ritz_ground"].clone(),
         "odd_minus_even": odd["ritz_ground"].as_f64().unwrap_or(f64::NAN)
@@ -826,16 +1050,26 @@ fn parity_and_comparisons() -> Value {
 }
 
 fn main() {
+    if std::env::var("PHI4_LIST_CELLS")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        for id in cell_ids() {
+            println!("{id}");
+        }
+        return;
+    }
+    let plan = CellPlan::from_env();
     let started = Instant::now();
     let fixture = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../docs/fixtures/phi4_momentum_mehler.json"
     );
-    let rank2 = rank_two_cell();
-    let cutoffs = cutoff_sweep();
-    let ranks = rank_sweep();
-    let responses = response_pairs();
-    let parity = parity_and_comparisons();
+    let rank2 = rank_two_cell(&plan);
+    let cutoffs = cutoff_sweep(&plan);
+    let ranks = rank_sweep(&plan);
+    let responses = response_pairs(&plan);
+    let parity = parity_and_comparisons(&plan);
 
     let mut root = Map::new();
     root.insert("schema".into(), json!("phi4-momentum-sirk-sweep/v1"));
@@ -899,23 +1133,49 @@ fn main() {
         json!(started.elapsed().as_millis() as u64),
     );
     root.insert("peak_rss_kb".into(), json!(peak_rss_kb()));
-
-    let document = Value::Object(root);
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../docs/fixtures/phi4_momentum_sirk_sweep.json"
+    root.insert(
+        "selection".into(),
+        json!({
+            "cells": plan.only.as_ref().map(|set| set.iter().cloned().collect::<Vec<_>>()),
+            "merged_from": plan.merged_from,
+            "note": "a merged record's root runtime_ms and peak_rss_kb describe the last invocation only; each cell's runtime_ms is that cell's own measure",
+        }),
     );
+
+    let mut document = Value::Object(root);
+    // Which cells this record actually holds, so a resumable driver can skip
+    // them without re-deriving the id scheme.
+    let mut measured: Vec<String> = index_cells(&document)
+        .into_iter()
+        .filter(|(_, cell)| cell["status"] != NOT_RUN)
+        .map(|(id, _)| id)
+        .collect();
+    measured.sort();
+    document["measured_cells"] = json!(measured);
+
+    let path = std::env::var("PHI4_OUT").unwrap_or_else(|_| {
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../docs/fixtures/phi4_momentum_sirk_sweep.json"
+        )
+        .to_string()
+    });
     let mut text = serde_json::to_string_pretty(&document).expect("serialize record");
     text.push('\n');
-    std::fs::write(path, &text).expect("write evidence record");
+    std::fs::write(&path, &text).expect("write evidence record");
     println!("wrote {path} ({} bytes)", text.len());
     println!(
-        "return probabilities: rank2 {:.9}, converged {:.9}",
-        document["rank_two_cell"]["return_probability_sirk"]
-            .as_f64()
-            .unwrap(),
+        "measured {} of {} cells: {}",
+        document["measured_cells"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or(0),
+        cell_ids().len(),
+        document["measured_cells"]
+    );
+    println!(
+        "return probabilities: rank2 {}, converged {}",
+        document["rank_two_cell"]["return_probability_sirk"],
         document["rank_two_cell"]["return_probability_converged_window"]
-            .as_f64()
-            .unwrap()
     );
 }

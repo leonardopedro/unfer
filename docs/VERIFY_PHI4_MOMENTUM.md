@@ -1293,8 +1293,11 @@ below).
 
 **The other target's build, leaf by leaf.** The suite prints its diagnostics with
 `{:?}`, so a cross build can be compared leaf for leaf instead of through the
-`1e-12` tolerance of the record assertion. `scripts/check-phi4-scalar-fallback`
-builds the suite for `x86_64-unknown-linux-gnu` and runs it under `qemu-x86_64`;
+`1e-12` tolerance of the record assertion. `scripts/check-phi4-cross-target`
+builds the suite for a named target and runs it under that target's `qemu`: with
+`PHI4_TARGET=x86_64-unknown-linux-gnu` that is the scalar loop, with
+`PHI4_TARGET=aarch64-unknown-linux-gnu` the `NEON` kernel, so the same script
+covers both implementations from either host (CI runs both legs);
 `scripts/compare-phi4-leaves` diffs its `29` printed leaves against this host's
 `aarch64` run and against the record's `19` stored ones:
 
@@ -1732,13 +1735,19 @@ columns of §5.10 and §5.11, the NEON and A/B microbenchmarks of §5.12, and th
   sharp budget (§5.3). The conjugation `h' Γ(U)ψ = Γ(U) h ψ` is pinned to
   `1e-12` in `nested_fock_algebra` and the record assertion is in
   `fock_sirk/tests/phi4_momentum_sirk.rs`.
-* Measured: the scalar fallback is not asserted to reproduce the record, it is
-  run — `scripts/check-phi4-scalar-fallback` cross-compiles
-  `tests/phi4_momentum_sirk.rs` for `x86_64-unknown-linux-gnu` (GCC `16.2.0`,
-  glibc `2.44`) and executes it under `qemu-x86_64` `11.1.2` (`~93 s`). Against
-  the checked-in native `x86_64` record all nine tests pass, the two record
-  assertions included (§5.12, which compares **all 29** printed leaves rather
-  than the `C`-sweep rows).
+* Measured: neither kernel implementation is merely asserted, each is run —
+  `scripts/check-phi4-cross-target` cross-compiles `tests/phi4_momentum_sirk.rs`
+  for a target other than the host's and executes it under that target's `qemu`.
+  The scalar loop was checked from this `aarch64` host with
+  `PHI4_TARGET=x86_64-unknown-linux-gnu` (GCC `16.2.0`, glibc `2.44`, `qemu-x86_64`
+  `11.1.2`, `~93 s`); against the checked-in native `x86_64` record all nine
+  tests pass, the two record assertions included (§5.12, which compares **all
+  29** printed leaves rather than the `C`-sweep rows). CI `ubuntu-latest` is
+  `x86_64`, where a plain `cargo test` can only ever run the scalar loop, so it
+  now runs both legs of the same script: the host target through a second
+  toolchain, and `aarch64-unknown-linux-gnu` under `qemu-aarch64`, which is the
+  only place the `NEON` kernel executes at all. That leg builds the cross suite
+  from `gcc-aarch64-linux-gnu` and the `aarch64` rust target.
 * Measured across every printed leaf: `scripts/compare-phi4-leaves` diffs the
   `{:?}` leaves of the native `aarch64` run and the emulated `x86_64` run. Of
   `29` leaves `8` are bit-identical across builds (`lambda` and `width_k`

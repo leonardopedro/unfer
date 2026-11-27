@@ -38,6 +38,6 @@
   },
   "coordinate_entry": "sqrt(3)*(exp(16*pi/3) + exp(12*pi) + exp(16*pi) + exp(52*pi/3))*exp(-52*pi/3)/36",
   "fourier_colour_3": "sqrt(3)*(exp(16*pi/3) + exp(12*pi) + exp(16*pi) + exp(52*pi/3))*exp(-52*pi/3)/54",
-  "fourier_colour_2": "sqrt(3)*(exp(16*pi/3) + exp(12*pi) + exp(16*pi) + exp(52*pi/3))*exp(-52*pi/3)/108",
+  "fourier_colour_2": "sqrt(2)/8",
   "entry_decimal": "0.0488421330902749521180563611401"
 }

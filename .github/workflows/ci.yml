@@ -556,25 +556,44 @@ jobs:
           bash scripts/check-status --recount unfer=/tmp/unfer_tests.log
       - name: cargo test (release, fock_sirk)
         run: cargo test --locked -p fock_sirk --release --verbose
-      # The phi4 momentum suite's `coords_inner_product` keeps a scalar loop as
-      # the fallback for every non-aarch64 target, and this runner is x86_64, so
-      # the step above already exercises that loop. What it does NOT exercise is
-      # a second build of it: this step rebuilds the suite through the
-      # `CC_x86_64_unknown_linux_gnu` driver and runs it under qemu's user-mode
-      # emulation, so a result that only holds for one codegen/link path is
-      # caught here. It also keeps scripts/check-phi4-scalar-fallback itself
-      # green, which is what the aarch64 host uses to reach this fallback.
-      # The aarch64/NEON half of `coords_inner_product` is still not covered by
-      # CI: doing that needs an aarch64 cross toolchain and qemu-aarch64, and
-      # nothing in this repo runs the kernel on an aarch64 host.
-      - name: phi4 scalar-fallback cross-check (qemu)
+      # `coords_inner_product` has two implementations — the NEON kernel on
+      # aarch64, the scalar loop everywhere else — and a plain `cargo test` on
+      # any one runner executes exactly one of them. Both cross-checks below
+      # build the suite for the other target and run it under qemu's user-mode
+      # emulation, so neither implementation can rot unnoticed. Each suite run
+      # includes `recorded_cutoff_sweep_matches_the_live_model`, which recomputes
+      # the live C = 12 cell and holds it to the checked-in record at 1e-12, so a
+      # kernel that disagrees with the record fails rather than merely running.
+      #
+      # This runner is x86_64, so the scalar fallback also runs natively in the
+      # step above; this leg's value is the *second toolchain and link path* for
+      # the same code (scripts/check-phi4-cross-target says so on stdout rather
+      # than pretending to cover the other kernel). The NEON leg below is the
+      # one that closes the real gap.
+      - name: phi4 second-toolchain cross-check (qemu-x86_64)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq qemu-user
-          PHI4_X86_CC=gcc \
-          PHI4_X86_QEMU=qemu-x86_64 \
-          PHI4_X86_SYSROOT=/ \
-            ./scripts/check-phi4-scalar-fallback
+          PHI4_TARGET=x86_64-unknown-linux-gnu \
+          PHI4_CROSS_CC=gcc \
+          PHI4_CROSS_QEMU=qemu-x86_64 \
+          PHI4_CROSS_SYSROOT=/ \
+            ./scripts/check-phi4-cross-target
+      # The aarch64 leg is the one that was missing: this runner is x86_64, so
+      # without it the NEON kernel was never executed by CI at all. It needs an
+      # aarch64 cross toolchain, the aarch64 rust target and qemu-aarch64;
+      # Ubuntu's cross gcc puts the loader and libc under /usr/aarch64-linux-gnu,
+      # which is the sysroot qemu has to be pointed at.
+      - name: phi4 NEON kernel cross-check (qemu-aarch64)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu qemu-user
+          rustup target add aarch64-unknown-linux-gnu
+          PHI4_TARGET=aarch64-unknown-linux-gnu \
+          PHI4_CROSS_CC=aarch64-linux-gnu-gcc \
+          PHI4_CROSS_QEMU=qemu-aarch64 \
+          PHI4_CROSS_SYSROOT=/usr/aarch64-linux-gnu \
+            ./scripts/check-phi4-cross-target
       # The heavy nested_fock_algebra physics unit tests (e.g. the quartic QYM
       # builder) are #[ignore]d so the debug default suite stays fast; they run
       # here in release via --ignored (0.01s each) — same mode as

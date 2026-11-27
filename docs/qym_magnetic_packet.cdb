@@ -230,6 +230,19 @@ check("longitudinal-metric", integrate_poly(grad_poly.dot(grad_poly),2)-
       3*pi/2**sp.Rational(3,2))
 check("curl-cross-metric", integrate_poly(curl_bell(u).dot(curl_bell(v)),2))
 
+# In the exact orbit chart five amplitude directions have metric M. The sixth
+# and gauge time form this block. chi is the longitudinal coefficient, so
+# d chi / d tau = 1 for the one-parameter subgroup.
+rr = sp.symbols("rr", real=True)
+second = integrate_poly(u.dot(u),4)/metric
+J = integrate_poly(grad_poly.dot(grad_poly),2)
+D = J + metric*second*coupling**2*rr**2
+H = metric*projection*coupling*rr
+block = sp.Matrix([[metric,H],[H,D]])
+S = J + metric*defect*coupling**2*rr**2
+check("one-smearing-orbit-volume-squared", metric**5*block.det() - metric**6*S)
+check("horizontal-volume-squared", metric**5*(metric-H**2/D) - metric**6*S/D)
+
 record = {
     "schema": "qym-cubic-continuous-packet/v1",
     "spatial_units": "Gaussian length 1, Fourier exp(-2 pi i k.x), Lebesgue dx and dk",

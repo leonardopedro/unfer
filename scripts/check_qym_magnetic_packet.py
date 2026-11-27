@@ -216,6 +216,24 @@ def check_local_gauss_trials():
         assert abs(leak - (2**(-2.5) - (2/3)**5)) < 2e-14
         assert abs(curl*width**2/metric - 5*pi) < 1e-12
         assert abs(wall/width**3 - 5/(512*pi*pi)) < 1e-14
+        # Magnetic curvature excess when the spatially varying colour angle is
+        # replaced by its compression. A=u(x/L)/L, gauge time 1 and coupling 2.
+        grad_wall = radial(lambda r: 4*pi*pi*(2/3)*r**4*bell(r,1)**4) / width**4
+        assert abs(2*grad_wall*width - 5/32) < 2e-14
+        # Metric of the exact one-parameter orbit at unit width. Integrate the
+        # square of the raw velocity, then check the minimizing orbit velocity.
+        j_metric = radial(lambda r: 4*pi*pi*r*r*bell(r,1)**2) / width**3
+        m_unit = metric / width**3
+        second = leak + proj**2
+        for colour_speed in (0, 1, 3):
+            twist = 2 * colour_speed
+            orbit_metric = j_metric + m_unit*second*twist**2
+            sigma = -m_unit*proj*twist / orbit_metric
+            horizontal = (radial(lambda r: (2/3)*r*r*bell(r,1)**2 *
+                                 (1 + twist*sigma*bell(r,1))**2) / width**3
+                          + j_metric*sigma**2)
+            assert abs(horizontal - (m_unit - (m_unit*proj*twist)**2/orbit_metric)) < 2e-14
+            assert m_unit*(1-proj**2/second) <= horizontal <= m_unit+2e-14
         # Six independent amplitudes of standard deviation 1/L, g=2.
         energy = 6*width**2/(8*metric) + 3*curl/width**2 + 12*wall/width**4
         if fixed_product is None:

@@ -1,5 +1,27 @@
 # PLAN M — the mass-gap pipeline (planner side: everything except Lean4 code)
 
+## Local Gauss tests of the widened states · 2026-11-27
+
+The three-profile Gaussian translates by half a standard deviation under a matched
+Schwartz gauge test at every width. A fixed smearing becomes less sensitive. The
+continuous quadrature prints both shifts at widths 1, 2, 4 and 8.
+
+Two transverse profiles carrying all three colours give a second Gaussian with
+zero projected charge and energy $15.9921728201/L$ at coupling 2. Its quartic
+expectation is positive. Restoring the longitudinal profile driven by the gauge
+parameter gives charge norm 0.5 in the extended Gaussian. The Rust packet suite
+checks both the inner action in one occupied outer sector and outer-vacuum annihilation.
+
+The symbolic replay compares the magnetic energy around an exact local rotation
+with the compression to a constant angle. Only the exact angle supplies the spatial
+derivative that cancels the longitudinal commutator. For the next calculation use
+the position-dependent angle and its induced metric. The longitudinal pairing fixes
+this one orbit uniquely. Distinguish its volume per unit gauge time from the
+horizontal metric volume when deriving the reduced measure
+and symmetric kinetic form from the Gauss prescription.
+Then test two noncommuting smearings on a common domain before reporting a physical
+mass interval. [Derivation and coefficients](../timepiece/softmodes.md)
+
 ## Three fixed profiles at coupling 2 · 2026-11-26
 
 The smooth three-profile Hamiltonian has an absolute form floor of 18.5 across
