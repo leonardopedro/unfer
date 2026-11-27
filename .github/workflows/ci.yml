@@ -536,26 +536,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - name: cargo build
         run: cargo build --locked --workspace --release --verbose
-      # Heavy tests run in release mode (per policy) with the numerically
-      # optimized profile (lto=thin, codegen-units=1). Debug mode is reserved
-      # for the fast unit suites; the physics/SIRK suites are release-only.
-      # Split in two so the status block's count can be recounted from the run
-      # CI already performs (X2 drift half): the workspace proper is teed and
-      # handed to `check-status --recount`, and `fock_sirk` — cited separately
-      # in the README as an external physics dependency — runs as its own step.
-      # Together they cover exactly what the single `--workspace --release`
-      # step this replaced did, with no extra build and no extra suite run.
-      #
-      # `pipefail` matters: without it a failing suite would exit 0 through
-      # `tee` and the step would look green. A failed suite also stops before
-      # the recount, which is right — a broken run cannot evidence a count.
-      - name: cargo test (release, workspace excluding fock_sirk)
-        run: |
-          set -o pipefail
-          cargo test --locked --workspace --release --exclude fock_sirk --verbose 2>&1 | tee /tmp/unfer_tests.log
-          bash scripts/check-status --recount unfer=/tmp/unfer_tests.log
-      - name: cargo test (release, fock_sirk)
-        run: cargo test --locked -p fock_sirk --release --verbose
       # `coords_inner_product` has two implementations — the NEON kernel on
       # aarch64, the scalar loop everywhere else — and a plain `cargo test` on
       # any one runner executes exactly one of them. Both cross-checks below
@@ -566,10 +546,14 @@ jobs:
       # kernel that disagrees with the record fails rather than merely running.
       #
       # This runner is x86_64, so the scalar fallback also runs natively in the
-      # step above; this leg's value is the *second toolchain and link path* for
+      # suite below; this leg's value is the *second toolchain and link path* for
       # the same code (scripts/check-phi4-cross-target says so on stdout rather
       # than pretending to cover the other kernel). The NEON leg below is the
       # one that closes the real gap.
+      #
+      # They run before the long workspace suite on purpose: they are the only
+      # CI execution of either kernel, and every run that carried them (448,
+      # 449, 450 on 2026-11-27) skipped both because that suite failed first.
       - name: phi4 second-toolchain cross-check (qemu-x86_64)
         run: |
           sudo apt-get update -qq
@@ -594,6 +578,26 @@ jobs:
           PHI4_CROSS_QEMU=qemu-aarch64 \
           PHI4_CROSS_SYSROOT=/usr/aarch64-linux-gnu \
             ./scripts/check-phi4-cross-target
+      # Heavy tests run in release mode (per policy) with the numerically
+      # optimized profile (lto=thin, codegen-units=1). Debug mode is reserved
+      # for the fast unit suites; the physics/SIRK suites are release-only.
+      # Split in two so the status block's count can be recounted from the run
+      # CI already performs (X2 drift half): the workspace proper is teed and
+      # handed to `check-status --recount`, and `fock_sirk` — cited separately
+      # in the README as an external physics dependency — runs as its own step.
+      # Together they cover exactly what the single `--workspace --release`
+      # step this replaced did, with no extra build and no extra suite run.
+      #
+      # `pipefail` matters: without it a failing suite would exit 0 through
+      # `tee` and the step would look green. A failed suite also stops before
+      # the recount, which is right — a broken run cannot evidence a count.
+      - name: cargo test (release, workspace excluding fock_sirk)
+        run: |
+          set -o pipefail
+          cargo test --locked --workspace --release --exclude fock_sirk --verbose 2>&1 | tee /tmp/unfer_tests.log
+          bash scripts/check-status --recount unfer=/tmp/unfer_tests.log
+      - name: cargo test (release, fock_sirk)
+        run: cargo test --locked -p fock_sirk --release --verbose
       # The heavy nested_fock_algebra physics unit tests (e.g. the quartic QYM
       # builder) are #[ignore]d so the debug default suite stays fast; they run
       # here in release via --ignored (0.01s each) — same mode as

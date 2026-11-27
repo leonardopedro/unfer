@@ -1582,6 +1582,52 @@ map-walk era of §5.6 and §5.9, the dense reference of §5.8, the before/after
 columns of §5.10 and §5.11, the NEON and A/B microbenchmarks of §5.12, and the
 `C = 34 … 44` campaign — are labelled as such in place.
 
+**The `aarch64` and `x86_64` tails differ by summation order, not by
+architecture or revision.** Comparing the clean `aarch64` record (`0e85e65`)
+with the checked-in `x86_64` record (`2ea6356`), all `34`
+`return_probability_window_exact` values are byte-identical — window, basis,
+`H_proj` and the exact projected reference are the same to the bit — while
+`window_tail_norm_max` moves by `2.2e-16` at `C = 4` and `1.25e-11` at `C = 44`
+(`6.0e-10` relative). Revision is excluded: the only source difference under
+`fock_sirk/src` and `nested_fock_algebra/src` between those commits is the AVX2
+`coords_norm`, which is `cfg(target_arch = "x86_64")` and never compiled on
+`aarch64` (the `aarch64` dispatcher still resolves to the same scalar fold).
+The cause was then isolated on one host at one revision: with the `aarch64`
+dispatcher temporarily forcing `coords_inner_product_scalar`, the `C = 32` tail
+is `0.08017007880954587` against `0.08017007881086600` with NEON and
+`0.08017007880697495` on the `x86_64` AVX2 record — `1.3e-12` and `2.6e-12`
+apart, so the *same-architecture* scalar-vs-NEON gap (`1.7e-11` relative) is as
+large as the cross-architecture gap (`4.9e-11` relative). Four-accumulator
+reassociation, not NEON's arithmetic, is the whole effect.
+
+The tail is `‖(I − P_C) H v_k‖`, so it inherits the Krylov-vector difference at
+the `1e-13` acceptance scale multiplied by the operator's scale; the tail itself
+shrinks `1.79 → 0.0208` as `C` grows, which is why the same absolute error reads
+as `1e-16` relative at `C = 4` and `6e-10` at `C = 44`. It is also why six cells
+(`C = 8`, `20`, `32`, `36`, `38`, `40`) flip one Arnoldi step on the boundary
+already traced at `C = 8`. Independent confirmation of that sensitivity:
+re-solving the `C = 20` cell at `1e-13` instead of the policy's `1e-10` accepts
+`3` steps later and moves its tail `8.4e-11` absolute (`2.6e-10` relative). The
+quoted tail is three digits (`0.0208`), and the SIRK probability moves at most
+`7.4e-14` relative.
+
+**A solve that stalls at its rounding floor now reports that instead of
+spending the cap.** The acceptance gate recomputes the true residual whenever
+the Givens estimate dips below the tolerance; near the floor the estimate can
+read below it while the recomputed residual cannot improve, and the old loop
+then re-tested (one full action per candidate) until the budget ran out. It also
+reported the *cap* as the iteration count even when a lucky breakdown had
+already stopped the loop earlier. `StallWatch` in `joint_sirk.rs` now counts
+consecutive acceptance checks that fail to beat the best recomputed residual;
+three in a row stop the solve and return
+`ShiftSolve { residual: <best>, iterations: <steps actually taken> }`. Accepted
+solves are untouched (the watch only runs after a failed acceptance). Measured
+on the `C = 12` cell with the probe tolerance `1e-16`: the solve reports
+`residual: 1.97e-15, iterations: 48`; with the watch disabled the same residual
+takes `210` steps, where lucky breakdown stops the loop (and the old code would
+have reported `512`). The watch's two unit tests live in `joint_sirk.rs`, and
+the suite's ten tests pass unchanged.
+
 ## 6. Limitations — read this before quoting a number
 
 1. **How the defect estimates changed.**
@@ -1816,7 +1862,13 @@ columns of §5.10 and §5.11, the NEON and A/B microbenchmarks of §5.12, and th
   against `qemu-aarch64` `11.1.2` (`60.2 s`, ten tests, using the host's own
   kernel under emulation — plumbing, not the missing coverage); the Ubuntu cross
   toolchain CI installs for that leg (`gcc-aarch64-linux-gnu`, sysroot
-  `/usr/aarch64-linux-gnu`) cannot be reproduced here and is unverified. CI `ubuntu-latest` is
+  `/usr/aarch64-linux-gnu`) cannot be reproduced here and is unverified. All three
+  GitHub Actions runs that have carried the leg (runs `448`, `449`, `450` at
+  `a53714f`, `6aae00f`, `be874e5`) skipped it: each time the earlier
+  `cargo test (release, workspace excluding fock_sirk)` step exited `101` and
+  every following step was skipped, a pre-existing failure the leg did not cause. The two cross-check steps now run *before* that suite so the kernels
+  are covered even while it is red; the leg itself stays unverified until a run
+  executes it. CI `ubuntu-latest` is
   `x86_64`, where a plain `cargo test` can only ever run the scalar loop, so it
   now runs both legs of the same script: the host target through a second
   toolchain, and `aarch64-unknown-linux-gnu` under `qemu-aarch64`, which is the

@@ -1352,6 +1352,52 @@ impl GmresProfile {
     }
 }
 
+/// Consecutive acceptance checks a shift solve may spend without improving its
+/// recomputed true residual before it reports a stall.
+const GMRES_STALL_CHECKS: usize = 3;
+
+/// Watches the *recomputed* residual, not the incremental estimate.
+///
+/// The Givens estimate is exact for the projected system, but near the rounding
+/// floor the full action and the compressed residual disagree in their last
+/// bits; the estimate can then read below the tolerance while the recomputed
+/// residual stays above it, and every further candidate costs a full action to
+/// test. Once `GMRES_STALL_CHECKS` consecutive checks fail to improve on the
+/// best residual actually reached, more steps cannot be shown to help, so the
+/// solve stops and reports that residual instead of exhausting the cap.
+struct StallWatch {
+    best: f64,
+    missed: usize,
+}
+
+impl Default for StallWatch {
+    fn default() -> Self {
+        Self {
+            best: f64::INFINITY,
+            missed: 0,
+        }
+    }
+}
+
+impl StallWatch {
+    /// Records one recomputed true residual; `true` means the solve stalled.
+    fn stalled(&mut self, residual: f64) -> bool {
+        if residual < self.best {
+            self.best = residual;
+            self.missed = 0;
+            false
+        } else {
+            self.missed += 1;
+            self.missed >= GMRES_STALL_CHECKS
+        }
+    }
+
+    /// The best true residual seen, or infinity if no check ever ran.
+    fn best(&self) -> f64 {
+        self.best
+    }
+}
+
 fn gmres_shift<F, P>(
     matvec: &F,
     projected_matvec: &P,
@@ -1386,7 +1432,10 @@ where
     let mut basis = vec![first];
     let mut h = DMatrix::<C>::zeros(iterations + 1, iterations);
     let mut last_residual = f64::INFINITY;
+    let mut stall = StallWatch::default();
+    let mut steps = 0;
     for k in 0..iterations {
+        steps = k + 1;
         let clock = std::time::Instant::now();
         let image = projected_matvec(&basis[k])?;
         profile.matvec += clock.elapsed();
@@ -1432,10 +1481,13 @@ where
             let compressed = project_joint(&residual, options).0;
             last_residual = joint_norm(&compressed) / beta;
             if last_residual <= tolerance {
-                profile.report(k + 1);
-                return Ok((solution, full_norm / shift.im.abs(), k + 1));
+                profile.report(steps);
+                return Ok((solution, full_norm / shift.im.abs(), steps));
             }
             if next_norm <= 1e-14 {
+                break;
+            }
+            if stall.stalled(last_residual) {
                 break;
             }
         }
@@ -1446,10 +1498,10 @@ where
         joint_axpy(&mut normalized, &w, C::new(1.0 / next_norm, 0.0), limits)?;
         basis.push(normalized);
     }
-    profile.report(iterations);
+    profile.report(steps);
     Err(JointSirkError::ShiftSolve {
-        residual: last_residual,
-        iterations,
+        residual: stall.best().min(last_residual),
+        iterations: steps,
     })
 }
 
@@ -1539,7 +1591,10 @@ where
     let mut transformed = DVector::<C>::zeros(iterations + 1);
     transformed[0] = C::new(beta, 0.0);
     let mut last_residual = f64::INFINITY;
+    let mut stall = StallWatch::default();
+    let mut steps = 0;
     for k in 0..iterations {
+        steps = k + 1;
         let clock = std::time::Instant::now();
         let image = cache.image_coords(&basis[k], limits)?;
         profile.matvec += clock.elapsed();
@@ -1617,10 +1672,13 @@ where
             let compressed = project_joint(&residual, options).0;
             last_residual = joint_norm(&compressed) / beta;
             if last_residual <= tolerance {
-                profile.report(k + 1);
-                return Ok((solution, full_norm / shift.im.abs(), k + 1));
+                profile.report(steps);
+                return Ok((solution, full_norm / shift.im.abs(), steps));
             }
             if next_norm <= 1e-14 {
+                break;
+            }
+            if stall.stalled(last_residual) {
                 break;
             }
         }
@@ -1631,10 +1689,10 @@ where
         coords_axpy(&mut normalized, &w, C::new(1.0 / next_norm, 0.0), limits)?;
         basis.push(normalized);
     }
-    profile.report(iterations);
+    profile.report(steps);
     Err(JointSirkError::ShiftSolve {
-        residual: last_residual,
-        iterations,
+        residual: stall.best().min(last_residual),
+        iterations: steps,
     })
 }
 
@@ -1770,4 +1828,36 @@ fn project_joint(state: &NestedVector, options: &JointSirkOptions) -> (NestedVec
                         <= cutoff
                 })
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GMRES_STALL_CHECKS, StallWatch};
+
+    #[test]
+    fn a_residual_that_stops_improving_reports_a_stall() {
+        let mut watch = StallWatch::default();
+        assert!(!watch.stalled(2.3e-13));
+        for _ in 1..GMRES_STALL_CHECKS {
+            assert!(!watch.stalled(2.3e-13));
+        }
+        assert!(
+            watch.stalled(2.3e-13),
+            "{GMRES_STALL_CHECKS} consecutive non-improvements must report the stall"
+        );
+        assert_eq!(watch.best(), 2.3e-13);
+    }
+
+    #[test]
+    fn an_improvement_resets_the_stall_window() {
+        let mut watch = StallWatch::default();
+        assert!(!watch.stalled(1e-12));
+        assert!(!watch.stalled(1e-12));
+        assert!(!watch.stalled(9e-13));
+        for _ in 1..GMRES_STALL_CHECKS {
+            assert!(!watch.stalled(9e-13));
+        }
+        assert!(watch.stalled(9e-13));
+        assert_eq!(watch.best(), 9e-13);
+    }
 }
