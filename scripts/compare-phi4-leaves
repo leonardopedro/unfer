@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Compare every printed leaf of `phi4_momentum_sirk` across builds and record.
+
+`tests/phi4_momentum_sirk.rs` prints its diagnostic leaves with `{:?}` (shortest
+round-trip `f64`), so two builds can be compared digit-for-digit instead of
+through a tolerance. This script reads two `--nocapture` logs (an aarch64 native
+run and the x86_64-under-qemu scalar-fallback run produced by
+`scripts/check-phi4-scalar-fallback`) plus the checked-in record, and reports per
+leaf: both values, their absolute and relative difference, whether they agree to
+the bit, and whether each build's 12-significant-digit rounding matches the
+record's stored value.
+
+Usage:
+    scripts/compare-phi4-leaves NATIVE_LOG CROSS_LOG [RECORD_JSON]
+
+Relative differences are printed for values that are not near zero; below
+`1e-4` the absolute difference is the meaningful one (two builds can agree to
+`2e-16` absolute on a `1e-8` walk error and still read as `1e-8` relative).
+"""
+import json
+import re
+import sys
+
+CUTOFFS = [4, 8, 12]
+RANKS = [2, 3, 4]
+# Leaves that are iteration counts: a cross-build difference here is discrete
+# (the stop test sits on a rounding boundary) and has no meaningful "relative".
+INTEGER_LEAVES = {"m2_iters_C4", "m2_iters_C8", "m2_iters_C12", "m4_iters_C4",
+                  "m4_iters_C8", "m4_iters_C12"}
+# Leaves the record does not store: they are differences of two stored
+# probabilities, so differencing two values rounded to 12 digits loses the last
+# two, and a mismatch here says nothing about the builds.
+DERIVED_LEAVES = {"lambda", "width_k", "lambda_charge", "width_k_charge"}
+
+
+def leaves(text):
+    """Pull every printed leaf out of one `--nocapture` log."""
+    out = {}
+    m = re.search(
+        r"NOTE amplitude charge: base=(\S+) coupled=(\S+) spread=(\S+) \| "
+        r"lambda response (\S+) vs charge (\S+) \| width_k response (\S+) vs charge (\S+)",
+        text,
+    )
+    if not m:
+        raise SystemExit("coupling NOTE not found -- was the binary rebuilt after "
+                         "the full-precision change?")
+    keys = ["base", "coupled", "spread", "lambda", "lambda_charge", "width_k",
+            "width_k_charge"]
+    out.update(zip(keys, (float(v) for v in m.groups())))
+
+    m = re.search(
+        r"m2_tails=\[([^\]]+)\] m2_iters=\[([^\]]+)\] m4_rational=\[([^\]]+)\] "
+        r"m4_forward=\[([^\]]+)\] m4_iters=\[([^\]]+)\]",
+        text,
+    )
+    if not m:
+        raise SystemExit("C-sweep NOTE not found")
+    for name, body in zip(["tail", "m2_iters", "m4_err", "m4_fwd", "m4_iters"],
+                          m.groups()):
+        for cutoff, value in zip(CUTOFFS, body.split(", ")):
+            out[f"{name}_C{cutoff}"] = float(value)
+
+    m = re.search(r"NOTE rank-m errors=\[([^\]]+)\] forward=\[([^\]]+)\] exact=(\S+)", text)
+    if not m:
+        raise SystemExit("rank-m NOTE not found")
+    for rank, value in zip(RANKS, m.group(1).split(", ")):
+        out[f"rank_err_m{rank}"] = float(value)
+    for rank, value in zip(RANKS, m.group(2).split(", ")):
+        out[f"rank_fwd_m{rank}"] = float(value)
+    out["exact"] = float(m.group(3))
+    return out
+
+
+def record_leaves(record):
+    """Map the same leaf names onto the checked-in record."""
+    tails = record["cutoff_sweep"]["tail_sweep_fixed_rank_2"]
+    cons = record["cutoff_sweep"]["method_contrast_fixed_rank_4"]
+    cells = record["responses"]["cells"]
+    out = {
+        "base": cells["base"]["amplitude_defect"]["probability_bound"],
+        "coupled": cells["coupled"]["amplitude_defect"]["probability_bound"],
+        "spread": cells["spread"]["amplitude_defect"]["probability_bound"],
+        "exact": cells["base"]["return_probability_window_exact"],
+    }
+    base_exact = cells["base"]["return_probability_window_exact"]
+    out["lambda"] = abs(base_exact - cells["coupled"]["return_probability_window_exact"])
+    out["width_k"] = abs(base_exact - cells["spread"]["return_probability_window_exact"])
+    for i, cutoff in enumerate(CUTOFFS):
+        out[f"tail_C{cutoff}"] = tails[i]["window_tail_norm_max"]
+        out[f"m2_iters_C{cutoff}"] = tails[i]["solver"]["gmres_iterations_max"]
+        out[f"m4_err_C{cutoff}"] = cons[i]["shift_invert"]["error"]
+        out[f"m4_fwd_C{cutoff}"] = cons[i]["forward_products_diagnostic"]["error"]
+        out[f"m4_iters_C{cutoff}"] = cons[i]["shift_invert"]["solver"]["gmres_iterations_max"]
+    return out
+
+
+def main():
+    if len(sys.argv) < 3:
+        raise SystemExit(__doc__)
+    native = leaves(open(sys.argv[1]).read())
+    cross = leaves(open(sys.argv[2]).read())
+    record = {}
+    if len(sys.argv) > 3:
+        record = record_leaves(json.load(open(sys.argv[3])))
+
+    print(f"{'leaf':<16}{'record':>23}{'aarch64':>23}{'x86 (qemu)':>23}"
+          f"{'|a-x|':>9}{'rel':>9}")
+    bitwise = 0
+    floats, ints = [], []
+    for key in native:
+        n, c = native[key], cross[key]
+        r = record.get(key)
+        diff = abs(n - c)
+        rel = diff / abs(n) if n else 0.0
+        if diff == 0.0:
+            bitwise += 1
+        (ints if key in INTEGER_LEAVES else floats).append((key, diff, rel))
+        flag = "  bit" if diff == 0.0 else ""
+        shown = "-" if r is None else repr(r)
+        rel_txt = "  (count)" if key in INTEGER_LEAVES else f"{rel:9.1e}"
+        print(f"{key:<16}{shown:>23}{n!r:>23}{c!r:>23}{diff:9.1e}{rel_txt}{flag}")
+
+    print()
+    print(f"leaves: {len(native)}; bit-identical across builds: {bitwise}; "
+          f"integer leaves differing: "
+          f"{sum(1 for k, d, _ in ints if d)}; "
+          f"max float |a-x|: {max(d for _, d, _ in floats):.1e}; "
+          f"max float rel (|value| > 1e-4): "
+          f"{max(r for k, _, r in floats if abs(native[k]) > 1e-4):.1e}")
+
+    if record:
+        stored = [k for k in native if k in record and k not in DERIVED_LEAVES]
+        for build, values in (("aarch64", native), ("x86 (qemu)", cross)):
+            agree = 0
+            for key in stored:
+                r = record[key]
+                if key in INTEGER_LEAVES:
+                    agree += int(r) == int(values[key])
+                else:
+                    agree += f"{r:.12g}" == f"{values[key]:.12g}"
+            print(f"{build}: {agree}/{len(stored)} stored leaves agree with the "
+                  f"record at 12 significant digits")
+        mismatched = []
+        for key in native:
+            r = record.get(key)
+            if r is None or key in DERIVED_LEAVES:
+                continue
+            if key in INTEGER_LEAVES:
+                if int(r) != int(native[key]) or int(r) != int(cross[key]):
+                    mismatched.append((key, r, native[key], cross[key]))
+            elif f"{r:.12g}" != f"{native[key]:.12g}" or \
+                    f"{r:.12g}" != f"{cross[key]:.12g}":
+                mismatched.append((key, r, native[key], cross[key]))
+        print(f"leaves not matching the record at 12 significant digits: "
+              f"{len(mismatched)}")
+        for key, r, n, c in mismatched:
+            print(f"  {key}: record={r:.12g} aarch64={n:.12g} x86={c:.12g}")
+
+
+if __name__ == "__main__":
+    main()
