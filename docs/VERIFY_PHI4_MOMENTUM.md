@@ -1817,6 +1817,16 @@ columns of §5.10 and §5.11, the NEON and A/B microbenchmarks of §5.12, and th
   toolchain, and `aarch64-unknown-linux-gnu` under `qemu-aarch64`, which is the
   only place the `NEON` kernel executes at all. That leg builds the cross suite
   from `gcc-aarch64-linux-gnu` and the `aarch64` rust target.
+* Measured: the sweep is resumable per cell, so a load burst no longer discards
+  the cells it has not reached. `fock_sirk/examples/phi4_momentum_sirk` takes a
+  per-cell plan (`PHI4_LIST_CELLS`, `PHI4_CELLS`, `PHI4_MERGE`, `PHI4_OUT`) and
+  `scripts/sweep-phi4-cells` runs one cell per invocation, resuming from the
+  record's own `measured_cells`. Checked end to end on this host: the example
+  lists `44` ids; `rank_two_cell` alone then `rank_sweep.m2` merged into the same
+  record reports `measured 2 of 44`, keeps the first cell's digits and labels
+  every cell it did not run `not run in this invocation`; a stubbed binary
+  driven with `PHI4_BURST_MAX=0` exits `75`, drops the in-flight cell and writes
+  nothing (§5.12).
 * Measured across every printed leaf: `scripts/compare-phi4-leaves` diffs the
   `{:?}` leaves of the native `aarch64` run and the emulated `x86_64` run. Of
   `29` leaves `8` are bit-identical across builds (`lambda` and `width_k`

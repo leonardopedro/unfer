@@ -1,0 +1,25 @@
+{
+  "centres": [
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      2,
+      0
+    ]
+  ],
+  "lambda_value": 1,
+  "mixed_coefficient": 0.4586273525475036,
+  "pair_peak": 0.3535533905932738,
+  "reversed_transfer": 0.0006602407095341247,
+  "schema": "phi4-localized-classical-wall/v1",
+  "single_packet_energies": [
+    0.07681437666450447,
+    0.06548127871385936
+  ],
+  "v": 1,
+  "without_mixed_pair": 0.1528757841825012
+}
