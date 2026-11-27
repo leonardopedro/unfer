@@ -1862,13 +1862,21 @@ the suite's ten tests pass unchanged.
   against `qemu-aarch64` `11.1.2` (`60.2 s`, ten tests, using the host's own
   kernel under emulation — plumbing, not the missing coverage); the Ubuntu cross
   toolchain CI installs for that leg (`gcc-aarch64-linux-gnu`, sysroot
-  `/usr/aarch64-linux-gnu`) cannot be reproduced here and is unverified. All three
-  GitHub Actions runs that have carried the leg (runs `448`, `449`, `450` at
-  `a53714f`, `6aae00f`, `be874e5`) skipped it: each time the earlier
-  `cargo test (release, workspace excluding fock_sirk)` step exited `101` and
-  every following step was skipped, a pre-existing failure the leg did not cause. The two cross-check steps now run *before* that suite so the kernels
-  are covered even while it is red; the leg itself stays unverified until a run
-  executes it. CI `ubuntu-latest` is
+  `/usr/aarch64-linux-gnu`) cannot be reproduced here and is unverified. The first four
+  GitHub Actions runs that carried the leg (runs `448`, `449`, `450` at
+  `a53714f`, `6aae00f`, `be874e5`, then `451` at `c402761`) did not exercise it.
+  The first three skipped it because the earlier
+  `cargo test (release, workspace excluding fock_sirk)` step exited `101`; run
+  `451` moved the cross-checks ahead of that suite and the x86_64 leg then
+  failed with exit `69`. That is the script's own precondition, not a toolchain
+  gap: it tested the bare names from the workflow (`gcc`, `qemu-x86_64`) with
+  `[ -x ]`, which looks in the current directory rather than `PATH`. The script
+  now resolves a bare name through `command -v` before checking it, and the
+  aarch64 step carries `if: success() || failure()` so the NEON leg reports even
+  when the x86_64 leg trips. The resolution fix was exercised here with bare
+  names on the aarch64 leg (`gcc`, `qemu-aarch64`, ten tests passed); the `if:`
+  guard is configuration and was not exercised. The Ubuntu toolchain itself is
+  still unverified — run `451` never reached the aarch64 step. CI `ubuntu-latest` is
   `x86_64`, where a plain `cargo test` can only ever run the scalar loop, so it
   now runs both legs of the same script: the host target through a second
   toolchain, and `aarch64-unknown-linux-gnu` under `qemu-aarch64`, which is the

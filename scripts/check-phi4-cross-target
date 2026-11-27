@@ -64,6 +64,26 @@ if [ -z "${PHI4_CROSS_CC:-}" ] || [ -z "${PHI4_CROSS_QEMU:-}" ] || [ -z "${PHI4_
     PHI4_CROSS_SYSROOT="${PHI4_CROSS_SYSROOT:-$(resolve_nix "$cross_attr.glibc")}"
 fi
 
+# A bare command name (`gcc`, `qemu-x86_64`) is a PATH lookup, not a file in the
+# current directory: without this, `[ -x qemu-x86_64 ]` is false in an empty
+# directory and the run stops at exit 69 even though the tool is installed.
+# That is how the first Ubuntu CI leg failed while the nix legs, which pass
+# absolute paths, worked.
+resolve_tool() {
+    case "$1" in
+        */*) printf '%s' "$1" ;;
+        *)
+            if resolved="$(command -v -- "$1")"; then
+                printf '%s' "$resolved"
+            else
+                printf '%s' "$1"
+            fi
+            ;;
+    esac
+}
+PHI4_CROSS_CC="$(resolve_tool "$PHI4_CROSS_CC")"
+PHI4_CROSS_QEMU="$(resolve_tool "$PHI4_CROSS_QEMU")"
+
 if [ ! -x "$PHI4_CROSS_CC" ] || [ ! -x "$PHI4_CROSS_QEMU" ] || [ ! -d "$PHI4_CROSS_SYSROOT" ]; then
     echo "cross toolchain, qemu or sysroot not found:" >&2
     echo "  cc=$PHI4_CROSS_CC" >&2
