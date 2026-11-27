@@ -19,14 +19,26 @@
 //! * the recovery rule: what a missing file means and what a damaged one does;
 //! * the number of writers (a single one, because two writers on one path have
 //!   no publish order);
+//! * whether the writer refuses to publish a sequence older than the one it
+//!   already published;
 //! * the byte bound, when the store enforces one.
 //!
 //! [`StorageContract::atomic_snapshot`] is the marker: it is produced only by a
 //! contract that syncs before publishing and that refuses damage instead of
 //! resetting to a default. The marker is Rust-side evidence, not a proof: the
 //! filesystem must still honour `fsync`/`rename` ordering, which is an
-//! assumption on the host, and this module does not claim a monotone snapshot
-//! (nothing here prevents a stale writer from publishing an older state).
+//! assumption on the host.
+//!
+//! [`StorageContract::monotone_snapshot`] is the second marker: it is produced
+//! only by a contract that declares [`MonotoneRule::NonDecreasing`], and it is
+//! paired with a runtime guard ([`PublishWatermark`]) the writer consults before
+//! replacing the file. The watermark remembers the highest sequence it has
+//! published and refuses anything lower, so a stale writer that still holds an
+//! older state cannot replace a newer one. What it does not do is make a stale
+//! writer impossible on its own: the guard is per open handle, the contract's
+//! single-writer premise is what makes that handle the path's watermark, and an
+//! equal sequence is still accepted because a publish may change only the
+//! outbox and not the committed prefix.
 //!
 //! ```
 //! use unfer_protocol::storage_contracts::{
@@ -96,6 +108,64 @@ pub enum RecoveryRule {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AtomicSnapshot(());
 
+/// What a storage boundary promises about the order of its publishes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MonotoneRule {
+    /// The writer refuses a sequence below the last one it published, so the
+    /// durable state never moves backwards.
+    NonDecreasing,
+    /// The boundary makes no ordering claim; a stale writer may replace a
+    /// newer state.
+    Unclaimed,
+}
+
+/// The marker produced only by a contract whose writer refuses to publish an
+/// older sequence than the one already published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonotoneSnapshot(());
+
+/// The runtime half of [`MonotoneRule::NonDecreasing`]: the highest sequence a
+/// writer has published, and the refusal of anything below it.
+///
+/// Sequence is the amount of durable state the boundary publishes (for the
+/// ledger, its committed length). A publisher that changes only local pending
+/// state publishes the same sequence, which is accepted; a publisher offering
+/// less is a state the boundary already superseded and is refused.
+#[derive(Debug, Clone, Default)]
+pub struct PublishWatermark {
+    last: Option<u64>,
+}
+
+impl PublishWatermark {
+    pub fn new() -> Self {
+        Self { last: None }
+    }
+
+    /// Start from what a load observed, so the first publish after a restart is
+    /// compared against the durable state rather than against nothing.
+    pub fn seed(&mut self, sequence: u64) {
+        self.last = Some(self.last.map_or(sequence, |last| last.max(sequence)));
+    }
+
+    /// Admit a publish, or refuse it as older than one already published.
+    pub fn admit(&mut self, sequence: u64) -> Result<(), ContractError> {
+        if let Some(published) = self.last
+            && sequence < published
+        {
+            return Err(ContractError::StaleSnapshot {
+                published,
+                offered: sequence,
+            });
+        }
+        self.last = Some(self.last.map_or(sequence, |last| last.max(sequence)));
+        Ok(())
+    }
+
+    pub fn last(&self) -> Option<u64> {
+        self.last
+    }
+}
+
 /// One durable snapshot boundary. Every premise is a field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageContract {
@@ -105,6 +175,7 @@ pub struct StorageContract {
     publish: PublishProtocol,
     recovery: RecoveryRule,
     writers: UsageCap,
+    monotone: MonotoneRule,
     bytes: Option<UsageCap>,
 }
 
@@ -129,6 +200,7 @@ impl StorageContract {
             publish,
             recovery,
             writers,
+            monotone: MonotoneRule::Unclaimed,
             bytes: None,
         })
     }
@@ -167,6 +239,27 @@ impl StorageContract {
 
     pub fn byte_bound(&self) -> Option<&UsageCap> {
         self.bytes.as_ref()
+    }
+
+    /// Record that the writer refuses to publish a sequence older than the one
+    /// it already published.
+    pub fn monotone(mut self) -> Self {
+        self.monotone = MonotoneRule::NonDecreasing;
+        self
+    }
+
+    pub fn monotone_rule(&self) -> MonotoneRule {
+        self.monotone
+    }
+
+    /// The marker a stale writer's victim may rely on: the boundary declares
+    /// that publishes never go backwards. A contract that makes no such claim
+    /// yields no marker.
+    pub fn monotone_snapshot(&self) -> Result<MonotoneSnapshot, ContractError> {
+        match self.monotone {
+            MonotoneRule::NonDecreasing => Ok(MonotoneSnapshot(())),
+            MonotoneRule::Unclaimed => Err(ContractError::NoMonotonePublishRule),
+        }
     }
 
     /// The marker a restart may rely on: synced before published, and damage is
@@ -250,7 +343,10 @@ pub fn consensus_recorder_snapshot_contract() -> Result<StorageContract, Contrac
 /// state that existed. A corrupt file is surfaced to the caller instead of being
 /// replaced by an empty ledger, because an empty ledger silently un-commits the
 /// node's history. The file's size is not bounded here: it grows with the
-/// committed log.
+/// committed log. It is also the one boundary that declares a monotone publish
+/// rule: `LedgerFile::save` admits the snapshot's committed length through a
+/// [`PublishWatermark`] it seeded from the last load, so a caller still holding
+/// an older state is refused instead of replacing the newer ledger.
 pub fn consensus_ledger_snapshot_contract() -> Result<StorageContract, ContractError> {
     let writer = Location::new(
         Repo::Unfer,
@@ -264,7 +360,7 @@ pub fn consensus_ledger_snapshot_contract() -> Result<StorageContract, ContractE
     )?;
     let schema = SchemaId::new("unfer.consensus.ledger-snapshot", 1)?;
     let writers = UsageCap::new("concurrent snapshot writers", 1, CapWitness::StaticLayout)?;
-    StorageContract::new(
+    Ok(StorageContract::new(
         writer,
         reader,
         schema,
@@ -273,7 +369,10 @@ pub fn consensus_ledger_snapshot_contract() -> Result<StorageContract, ContractE
         },
         RecoveryRule::MissingIsEmptyCorruptRefused,
         writers,
-    )
+    )?
+    // D19: the ledger is the one boundary a stale writer could move backwards,
+    // so it is the one that declares a monotone publish rule (H10).
+    .monotone())
 }
 
 fn snapshot_contract(
@@ -404,6 +503,73 @@ mod tests {
         ] {
             assert_eq!(contract.byte_bound(), None, "{}", contract.schema().name());
         }
+    }
+
+    #[test]
+    fn only_the_ledger_declares_a_monotone_publish_rule() {
+        assert_eq!(
+            consensus_ledger_snapshot_contract()
+                .unwrap()
+                .monotone_rule(),
+            MonotoneRule::NonDecreasing
+        );
+        assert!(
+            consensus_ledger_snapshot_contract()
+                .unwrap()
+                .monotone_snapshot()
+                .is_ok()
+        );
+        for contract in [
+            consensus_runtime_snapshot_contract().unwrap(),
+            consensus_submission_journal_contract().unwrap(),
+            consensus_recorder_snapshot_contract().unwrap(),
+        ] {
+            assert_eq!(contract.monotone_rule(), MonotoneRule::Unclaimed);
+            assert_eq!(
+                contract.monotone_snapshot(),
+                Err(ContractError::NoMonotonePublishRule),
+                "{}",
+                contract.schema().name()
+            );
+        }
+    }
+
+    #[test]
+    fn a_watermark_refuses_a_sequence_below_the_one_it_published() {
+        let mut watermark = PublishWatermark::new();
+        assert_eq!(watermark.last(), None);
+        // The first publish establishes the sequence, whatever it is.
+        watermark.admit(3).expect("the first publish is admitted");
+        // An equal sequence is a publish that changed only the outbox.
+        watermark.admit(3).expect("an equal sequence is admitted");
+        watermark.admit(5).expect("a newer sequence is admitted");
+        assert_eq!(
+            watermark.admit(4),
+            Err(ContractError::StaleSnapshot {
+                published: 5,
+                offered: 4,
+            })
+        );
+        // A refused publish does not move the watermark backwards.
+        assert_eq!(watermark.last(), Some(5));
+        watermark
+            .admit(5)
+            .expect("the refused offer changed nothing");
+    }
+
+    #[test]
+    fn a_watermark_seeded_from_a_load_refuses_the_state_it_loaded_over() {
+        let mut watermark = PublishWatermark::new();
+        watermark.seed(7);
+        assert_eq!(watermark.last(), Some(7));
+        assert_eq!(
+            watermark.admit(6),
+            Err(ContractError::StaleSnapshot {
+                published: 7,
+                offered: 6,
+            })
+        );
+        watermark.admit(8).expect("progress past the loaded state");
     }
 
     #[test]

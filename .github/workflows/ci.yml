@@ -735,9 +735,15 @@ jobs:
           python3 scripts/gen_symbol_artifacts check || { echo "FAIL: run scripts/gen_symbol_artifacts"; exit 1; }
       - name: assert uk_* symbols match EXPECTED_SYMBOLS.txt (generated census)
         run: |
+          # LC_ALL=C on both sides: the artifact is in byte order, while a UTF-8
+          # collation locale (en_US.UTF-8 ignores punctuation first) reorders the
+          # nm dump and reports a bogus mismatch — measured 2026-11-26 with the
+          # sets actually identical. Sorting both sides keeps this an order-
+          # canonical set comparison wherever the runner sits.
           nm -D --defined-only target/release/libunfer_ffi.so \
-            | awk '/ T uk_/ {print $3}' | sort > /tmp/got_uk.txt
-          if ! diff -u unfer_ffi/EXPECTED_SYMBOLS.txt /tmp/got_uk.txt; then
+            | awk '/ T uk_/ {print $3}' | LC_ALL=C sort > /tmp/got_uk.txt
+          LC_ALL=C sort unfer_ffi/EXPECTED_SYMBOLS.txt > /tmp/exp_uk.txt
+          if ! diff -u /tmp/exp_uk.txt /tmp/got_uk.txt; then
             echo "FAIL: uk_* symbols mismatch (see diff above)." >&2
             echo "If you added/removed a uk_* symbol, add it to unfer_protocol::symbols and run scripts/gen_symbol_artifacts." >&2
             exit 1
@@ -747,8 +753,9 @@ jobs:
       - name: assert 5 uz_* symbols match EXPECTED_SYMBOLS_ZENODO.txt (zenodo feature)
         run: |
           nm -D --defined-only target/release/libunfer_ffi.so \
-            | awk '/ T uz_/ {print $3}' | sort > /tmp/got_uz.txt
-          if ! diff -u unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt /tmp/got_uz.txt; then
+            | awk '/ T uz_/ {print $3}' | LC_ALL=C sort > /tmp/got_uz.txt
+          LC_ALL=C sort unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt > /tmp/exp_uz.txt
+          if ! diff -u /tmp/exp_uz.txt /tmp/got_uz.txt; then
             echo "FAIL: uz_* symbols mismatch (see diff above)." >&2
             echo "If you added/removed a uz_* symbol, update unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt." >&2
             exit 1
@@ -1082,27 +1089,64 @@ jobs:
       # The ECMAScript backend runs each module in a workerd sidecar. The tests
       # auto-discover the runtime (UNFER_WORKERD, $PATH, fnm installs) and
       # *skip themselves* when it is absent — which is exactly how this suite
-      # could be green while covering nothing. The `command -v` assertion makes
-      # the install a precondition: no runtime = red, never a silent skip.
-      # HONESTY: the install line is verified against the npm registry
-      # (`npm view workerd` resolves) but the full suite has not been observed
-      # green on a fresh runner; treat the first run as the experiment.
+      # could be green while covering nothing. Resolving the native binary here
+      # makes the install a precondition: no runtime = red, never a silent skip.
+      #
+      # `$(command -v workerd)` is NOT good enough on its own. Two packagings
+      # exist: older ones let the postinstall move the native binary over the
+      # Node launcher, newer ones (measured 2026-11-26, workerd@1.20261125.1)
+      # always ship `bin/workerd` as a `#!/usr/bin/env node` shim and put the
+      # ELF in `@cloudflare/workerd-<platform>/bin/workerd`. Handing ModuleHost
+      # the shim arms SO_PEERCRED with the launcher's pid, the real workerd's
+      # connection is 403'd, and every test fails with a cryptic
+      # "reading ... of undefined". So: prefer an ELF at the resolved path,
+      # else search the global tree for the platform package's binary, and pass
+      # the winner explicitly through UNFER_WORKERD — plus UNFER_WORKERD_IMPORT
+      # pointing at the package holding workerd.capnp, which does not live
+      # beside the platform binary. Measured 2026-11-26: with both set the
+      # ecmascript_module suite is 10/10 green; with UNFER_WORKERD alone it
+      # panics "cannot locate workerd.capnp".
       - name: install the workerd sidecar runtime
         run: |
           npm install -g workerd
           command -v workerd
-          # The package's postinstall moves the native binary over its Node
-          # launcher. If npm blocks install scripts, bin/workerd stays the
-          # launcher: ModuleHost arms SO_PEERCRED with the launcher's pid, the
-          # real workerd's connection is then 403'd with a body the harness
-          # maps to `undefined`, and every test fails with a cryptic
-          # "reading ... of undefined" — measured locally (2026-10-07). Assert
-          # ELF so a blocked postinstall fails here, loudly, instead.
+          is_elf() { [ -f "$1" ] && head -c 4 "$1" | od -An -tx1 | grep -q "7f 45 4c 46"; }
+          root="$(npm root -g)"
+          find_native() {
+            local cand
+            for cand in "$root"/@cloudflare/workerd-*/bin/workerd "$root"/workerd/bin/workerd; do
+              if is_elf "$cand"; then echo "$cand"; return 0; fi
+            done
+            return 1
+          }
           bin="$(readlink -f "$(command -v workerd)")"
-          if ! head -c 4 "$bin" | od -An -tx1 | grep -q "7f 45 4c 46"; then
-            echo "::error::workerd at $bin is the Node launcher, not the native ELF (postinstall blocked) — the suite would fail with undefined kernel calls"
+          if ! is_elf "$bin"; then
+            # Newer packagings ship the Node shim at bin/workerd and the ELF in the
+            # platform package. If that package is missing entirely the postinstall
+            # that fetches it was blocked — approve and retry once before failing.
+            native="$(find_native || true)"
+            if [ -z "$native" ] && npm install-scripts approve workerd >/dev/null 2>&1; then
+              npm install -g workerd >/dev/null 2>&1 || true
+              native="$(find_native || true)"
+            fi
+            if [ -z "$native" ]; then
+              echo "::error::no native workerd ELF found under $root — found only the Node shim at $bin"
+              ls -l "$root/@cloudflare" 2>/dev/null || true
+              exit 1
+            fi
+            echo "resolved native workerd from the platform package: $native (shim at $bin)"
+            bin="$native"
+          fi
+          # The capnp schema is not next to the platform binary: the harness derives its
+          # import dir as `<bin>/../..` (the `workerd` package root), so it must be told.
+          capnp="$(find "$root" -maxdepth 4 -name workerd.capnp 2>/dev/null | head -1)"
+          if [ -z "$capnp" ]; then
+            echo "::error::workerd.capnp not found under $root"
             exit 1
           fi
+          echo "UNFER_WORKERD=$bin" >> "$GITHUB_ENV"
+          echo "UNFER_WORKERD_IMPORT=$(dirname "$capnp")" >> "$GITHUB_ENV"
+          "$bin" --version
       - name: client + gatekeeper pair e2e (submit → approve/reject → merged result, + deny)
         working-directory: unfer
         run: >

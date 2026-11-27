@@ -1204,6 +1204,7 @@ is `14950` labels, i.e. `2.235e8` before the span images;
 `C = 44` cell also set that run's memory: `4.20 GB` peak RSS, up from
 `2.29 GB` at `C = 40` and `1.19 GB` at `C = 36`.
 
+<<<<<<< HEAD
 **These cell times are wall clock on a loaded host.** The `aarch64` run that
 produced this campaign's record shared the 12-core host with other repositories'
 jobs and sampled a load
@@ -1213,6 +1214,39 @@ average of `9.6` at the end (`30.7` at peak), so the `s` columns moved by up to
 rather than bench figures. The ratios between neighbouring rows and every
 physics leaf are unaffected — the thirty pre-existing cells reproduce their step
 counts, tails, errors and probabilities exactly (extension note below).
+=======
+**These cell times are wall clock on a loaded host, and the spread is now
+measured rather than guessed.** That `aarch64` extension run shared the
+12-core host with other repositories' jobs and sampled a load average of `9.6`
+at the end (`30.7` at peak), so the `s` columns moved by up to `±12 %` against
+the previous quiet run in both directions (`C = 32`'s `48.9 s → 54.5 s`,
+`C = 40`'s `535 s → 470 s`). Two full reruns were then made to replace that
+guessed band with a measured one. This host did not offer the ~`80 min` window
+a sweep needs: the first rerun completed in `80.1 min` (`4535 s` of CPU) with
+the load unsampled, the second in `1:23:49` (`4755 s` of CPU) with the load
+sampled every `30 s` — median `6.0`, minimum `1.7`, maximum `10.9`, `139` of
+its `168` samples above `4.0`. So the reruns are measurements of the same
+contended host, not of a quiet one, and they say how far that table can be
+from a quiet figure: `19` of the `34` cells reproduce within `3 %` and none is
+further than `12 %` away. The pattern is the load, not the code — the first
+rerun started while the host was still busy and its small `m = 2` windows
+(`C ≤ 20`) came out `5–10 %` slower, while the three `m = 2` cells at `C = 32`,
+`34`, `36` and the `C = 44` `m = 4` cell came out `4–12 %` **faster** in both
+reruns (`C = 44` at `m = 4`: `1183 s` recorded, `1036 s` and `1088 s` rerun);
+the load-sampled rerun, run under the heavier median (`6.0`), is the one that
+put the `C = 38 … 42` `m = 4` cells `8–11 %` above the `aarch64` table. That
+table keeps the slowest of the three runs on purpose: with no quiet window
+available, a conservative figure with a measured band is worth more than a
+fast one that cannot be reproduced, so the `s` columns stand as upper bounds
+**by at most `12 %`**, that ceiling being measured here. The
+ratios between neighbouring rows and every physics leaf are unaffected — all
+three runs reproduce the step counts and every tail, error and probability
+exactly, and the reruns differ only in `runtime_ms` and in the
+`amplitude_defect` fields, which the current tree rounds to twelve significant
+digits (`6f0d9c6`) while that `aarch64` run still stored them at full precision
+(the checked-in `x86_64` record is the first rounded one — provenance note
+below).
+>>>>>>> 13f548811c37d26acf2374b5f1cc13ac5e592f8d
 
 **Trying to cut the other `36 %`, and failing.** Three variants were measured on
 the `aarch64` host against the §5.11 `C = 26` baseline (`axpy 2.21 s`,
@@ -1365,7 +1399,8 @@ quiet run. The physics is load-invariant — every one of the thirty pre-existin
 cells is identical leaf for leaf — which is the same conclusion the earlier
 loaded/quiet pair reached (`3593560` loaded against `2158332` quiet for the
 `15 × 2` record, with no physics difference). So treat the new cell times as
-upper bounds, and compare ratios inside the record, not against another machine.
+upper bounds — by at most `12 %`, once two reruns measured the spread (§5.12) —
+and compare ratios inside the record, not against another machine.
 
 **Record provenance: the checked-in record is now the native `x86_64` run.** The
 fixture was regenerated at `93cccfc` on the `x86_64` host of this note, which at
@@ -1600,7 +1635,8 @@ labelled as such in place.
   at `1356 s` and `2309 s` per `m = 4` cell on the checked-in `x86_64` record
   (`717 s` and `1183 s` on the `aarch64` host that measured the campaign). The
   `aarch64` extension run was loaded (load average `9.6`, peak `30.7`), so its
-  cell times are upper bounds, `±12 %` against its previous quiet run (§5.12).
+  cell times are upper bounds — by at most `12 %`, measured across two reruns
+  rather than assumed against its previous quiet run (§5.12).
   The checked-in record is `17 × 2` cells in `162.3 min` and `4.24 GB` peak RSS.
 * Measured and adopted: §3.4's change-of-basis control. The diagonal phase
   unitary transports seed, operator and observable together; with `θ_φ = 0` the
@@ -1610,15 +1646,22 @@ labelled as such in place.
   sharp budget (§5.3). The conjugation `h' Γ(U)ψ = Γ(U) h ψ` is pinned to
   `1e-12` in `nested_fock_algebra` and the record assertion is in
   `fock_sirk/tests/phi4_momentum_sirk.rs`.
-* Measured: the scalar fallback is not asserted to reproduce the `aarch64`
-  record, it is run. Cross-compiled for `x86_64-unknown-linux-gnu` (GCC `16.2.0`,
-  glibc `2.44`) and executed under `qemu-x86_64` `11.1.2`, all seven tests of
-  `tests/phi4_momentum_sirk.rs` pass — `recorded_cutoff_sweep_matches_the_live_model`
-  included, which pins the live `C = 12` cell to this record at `1e-12`. The
-  printed digits differ from this host's by at most `3.1e-15` absolute and
-  `2.7e-15` relative on the `O(1)` values, and the `C = 8` rank-2 Krylov count
-  moves `18 → 19` where the `1e-13` stop test sits on the crossed boundary
-  (§5.12).
+* Measured: the scalar fallback is not asserted to reproduce the record, it is
+  run — `scripts/check-phi4-scalar-fallback` cross-compiles
+  `tests/phi4_momentum_sirk.rs` for `x86_64-unknown-linux-gnu` (GCC `16.2.0`,
+  glibc `2.44`) and executes it under `qemu-x86_64` `11.1.2` (`~93 s`). Against
+  the checked-in native `x86_64` record all nine tests pass, the two record
+  assertions included, and the digits are close to bit-identical: the `C = 4`,
+  `8`, `12` tails reproduce **exactly** (`0.0e+00`), the rank-2 Krylov counts
+  match to the integer (`6`, `19`, `43`), and only the `m = 4` inside-window
+  errors move — by `2.6e-15` at `C = 8` and `9.0e-15` at `C = 12` (`8e-13` and
+  `4e-12` relative). The earlier build, measured against the `aarch64` record
+  that preceded this one, differed more: `3.1e-15` absolute and `2.7e-15`
+  relative on the `O(1)` values, with the `C = 8` rank-2 count at `18` rather
+  than `19`. So the cross build reproduces the checked-in *x86* arithmetic and
+  it is the `aarch64` NEON kernel that sat on the other side of that `1e-13`
+  boundary — a difference inside one target's two builds, not a verdict on the
+  target (§5.12).
 * Corrected: the rank-4 `C = 28` step row of §5.2 had been quoting that cell's
   shift-solve counts under a bounded-resolvent heading. It now shows the
   resolvent counts; no measurement changed, the label was wrong (§5.11).

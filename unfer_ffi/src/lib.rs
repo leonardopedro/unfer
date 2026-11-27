@@ -1818,6 +1818,22 @@ pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
                     // retry is safe once the store is healthy again.
                     return Err(Diagnostic::new(Code::STORAGE_FAILED, e, Severity::Error));
                 }
+                Err(e @ outbox::DispatchError::Policy(_)) => {
+                    // The execution-point policy refused. A sensitive-forward
+                    // latched principal (S26) has its own code; any other policy
+                    // refusal is a plain denial. Either way nothing ran, and the
+                    // outbox recorded the refusal durably.
+                    let code = if handles::is_sensitive_latched(&record.principal) {
+                        Code::SENSITIVE_LATCHED
+                    } else {
+                        Code::CALL_DENIED
+                    };
+                    return Err(Diagnostic::new(
+                        code,
+                        format!("action {action_handle} was not dispatched: {e}"),
+                        Severity::Error,
+                    ));
+                }
                 Err(e) => {
                     // A stale approval, a revoked principal, a terminal state: no
                     // effect ran and none will without a new decision.
@@ -1851,6 +1867,21 @@ pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
             }
             push_resolved(action_handle)?;
             return Ok(0);
+        }
+        // S26: the RAM-only path enforces the same execution-point latch the
+        // durable outbox enforces through `outbox::SensitiveLatch`. Without a
+        // store there is no refusal record to write, but the effect must still
+        // not fire for a latched principal.
+        if handles::is_sensitive_latched(&record.principal) {
+            return Err(Diagnostic::new(
+                Code::SENSITIVE_LATCHED,
+                format!(
+                    "action {action_handle} was not applied: principal {} is \
+                     sensitive-forward latched (UK-4701)",
+                    record.principal
+                ),
+                Severity::Error,
+            ));
         }
         // Durable in-flight marker + checkpoint BEFORE the side effect fires.
         handles::mark_inflight(&record)
@@ -5669,11 +5700,12 @@ mod tests {
         assert_eq!(action_get(handle)["state"], "reverted");
     }
 
-    /// D15: with a durable store configured, `uk_action_apply` commits the
-    /// effect intent and dispatches it through the durable dispatcher, so the
-    /// intent and its acknowledgment are on the `dispatches` stream.
+    /// D15: with a durable store configured, `uk_action_apply` dispatches
+    /// through the outbox (`streams::ACTIONS`), and the queue record it leaves
+    /// behind is durably resolved with the sink's own acknowledgment — not a
+    /// value re-derived at the FFI boundary.
     #[test]
-    fn action_apply_dispatches_through_the_durable_dispatcher() {
+    fn action_apply_records_the_sink_acknowledgment_durably() {
         use unfer_protocol::durable::DurableStore as _;
         let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -5697,25 +5729,45 @@ mod tests {
         assert!(handle > 0);
         assert_eq!(uk_action_apply(handle), 0);
 
-        let records = store
-            .replay(unfer_protocol::durable::streams::DISPATCH)
-            .expect("dispatch stream");
-        let states: Vec<String> = records
+        // The outbox's acknowledgment is durable, and it carries the sink's
+        // result rather than a value the FFI layer made up.
+        let actions = store
+            .replay(unfer_protocol::durable::streams::ACTIONS)
+            .expect("actions stream");
+        let acks: Vec<serde_json::Value> = actions
             .iter()
-            .map(|raw| {
-                serde_json::from_slice::<serde_json::Value>(raw).unwrap()["state"]
-                    .as_str()
-                    .unwrap()
-                    .to_string()
+            .filter_map(|raw| serde_json::from_slice::<serde_json::Value>(raw).ok())
+            .filter(|v| {
+                v.get("outbox")
+                    .and_then(|o| o.get("kind"))
+                    .and_then(|k| k.as_str())
+                    == Some("acknowledged")
             })
             .collect();
-        assert_eq!(states.first().map(String::as_str), Some("Committed"));
-        assert_eq!(states.last().map(String::as_str), Some("Acknowledged"));
+        assert_eq!(acks.len(), 1, "one acknowledgment per applied effect");
+        assert_eq!(acks[0]["outbox"]["result"]["effect"], "send_notification");
 
-        // The applied value is what the sink acknowledged, not a re-derived one.
+        // The queue record is durably resolved too, with that same value.
         let record = action_get(handle);
         assert_eq!(record["state"], "approved");
         assert_eq!(record["applied"]["effect"], "send_notification");
+        // The queue's resolved record rides the same stream, wrapped as
+        // `{"id": …, "record": <ActionRecord>}`.
+        let resolved: Vec<serde_json::Value> = actions
+            .iter()
+            .filter_map(|raw| serde_json::from_slice::<serde_json::Value>(raw).ok())
+            .filter(|v| {
+                v.get("record")
+                    .and_then(|r| r.get("state"))
+                    .and_then(|s| s.as_str())
+                    == Some("approved")
+            })
+            .collect();
+        assert_eq!(resolved.len(), 1, "the resolved queue record is on disk");
+        assert_eq!(
+            resolved[0]["record"]["applied"]["effect"],
+            "send_notification"
+        );
 
         handles::reset_durable_for_tests();
         handles::clear_local_sink_for_tests();
@@ -5750,8 +5802,9 @@ mod tests {
         handles::set_sensitive_latch("test_module", true);
         assert_eq!(
             uk_action_apply(handle),
-            -5000,
-            "a refusal is definite, not unknown"
+            -4701,
+            "a latched principal is refused UK-4701 (S26) — a definite refusal, \
+             not an unknown outcome"
         );
         handles::set_sensitive_latch("test_module", false);
 
@@ -5759,12 +5812,12 @@ mod tests {
         let record = action_get(handle);
         assert_eq!(record["state"], "pending");
         let records = store
-            .replay(unfer_protocol::durable::streams::DISPATCH)
-            .expect("dispatch stream");
+            .replay(unfer_protocol::durable::streams::ACTIONS)
+            .expect("actions stream");
         let last: serde_json::Value = serde_json::from_slice(records.last().unwrap()).unwrap();
-        assert_eq!(last["state"], "Refused");
+        assert_eq!(last["outbox"]["kind"], "refused");
         assert!(
-            last["detail"]["refused"]
+            last["outbox"]["reason"]
                 .as_str()
                 .unwrap()
                 .contains("sensitive-forward")

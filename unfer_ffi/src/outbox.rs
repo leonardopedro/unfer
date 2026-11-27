@@ -329,6 +329,25 @@ impl DispatchPolicy for AllowAll {
     }
 }
 
+/// The execution-point policy the kernel wires into `uk_action_apply` (S26).
+///
+/// The sensitive-forward latch is sticky per principal, so an action that was
+/// allowed at submission is still refused when its principal becomes latched
+/// before the effect fires. `AllowAll` would silently drop that guarantee now
+/// that `uk_action_apply` dispatches through the outbox rather than through
+/// `handles::dispatch_action_effect`.
+pub struct SensitiveLatch;
+
+impl DispatchPolicy for SensitiveLatch {
+    fn authorize(&self, intent: &EffectIntent) -> Result<(), String> {
+        if crate::handles::is_sensitive_latched(&intent.principal) {
+            Err("principal is sensitive-forward latched (UK-4701)".to_string())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Where one effect stands, folded from its records.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EffectState {
@@ -689,8 +708,19 @@ impl Outbox {
             EffectState::Planned | EffectState::Retryable(_) => {}
         }
         // Execution-point recheck, after the approval and before the sink: an
-        // approval does not outlive a revocation.
-        policy.authorize(&intent).map_err(DispatchError::Policy)?;
+        // approval does not outlive a revocation. The refusal is recorded like
+        // the fence one below — an operator reading the stream must see that
+        // the effect was refused and why, not just that nothing happened.
+        if let Err(reason) = policy.authorize(&intent) {
+            self.append(&OutboxRecord::Refused {
+                request_id: request_id.to_string(),
+                reason: reason.clone(),
+            })?;
+            if let Some(entry) = self.entries.get_mut(request_id) {
+                entry.state = EffectState::Refused(reason.clone());
+            }
+            return Err(DispatchError::Policy(reason));
+        }
         approval.covers(&intent).map_err(DispatchError::Approval)?;
         if let Some(fence) = fence
             && !sink.enforces_fence()
@@ -948,7 +978,7 @@ pub fn apply_action(
     let approval = intent.approval_by(approved_by);
     outbox.plan(intent, approval)?;
     let mut sink = KernelActionSink;
-    outbox.dispatch(&record.id, &mut sink, &AllowAll, None)
+    outbox.dispatch(&record.id, &mut sink, &SensitiveLatch, None)
 }
 
 /// Requests whose durable records say a dispatch may have landed with no

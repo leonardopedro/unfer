@@ -55,8 +55,9 @@ use unfer_protocol::channel_contracts::{
 use unfer_protocol::channel_contracts::{OrderingScope, RetryScope};
 use unfer_protocol::distributed::{Command, ReplicatedValue};
 use unfer_protocol::storage_contracts::{
-    StorageContract, consensus_ledger_snapshot_contract, consensus_recorder_snapshot_contract,
-    consensus_runtime_snapshot_contract, consensus_submission_journal_contract,
+    PublishWatermark, StorageContract, consensus_ledger_snapshot_contract,
+    consensus_recorder_snapshot_contract, consensus_runtime_snapshot_contract,
+    consensus_submission_journal_contract,
 };
 use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
@@ -197,11 +198,27 @@ fn check_live_recorder_snapshot_contract() -> Result<StorageContract, String> {
     check_storage_contract("recorder snapshot", consensus_recorder_snapshot_contract())
 }
 
+/// The ledger's storage contract, plus the one premise the other three stores
+/// do not make: publishes never go backwards. Refusing here means a ledger that
+/// lost the monotone rule cannot be opened, rather than one that opens and
+/// silently lets a stale state replace the committed log.
 fn check_live_ledger_snapshot_contract() -> Result<StorageContract, String> {
-    check_storage_contract(
+    let contract = check_storage_contract(
         "replicated ledger snapshot",
         consensus_ledger_snapshot_contract(),
-    )
+    )?;
+    check_monotone_snapshot(&contract)?;
+    Ok(contract)
+}
+
+/// The marker gate itself, separate from the one contract it reads, so a
+/// contract that drops the monotone rule can be shown to be refused rather than
+/// relying on the live constant always carrying it.
+fn check_monotone_snapshot(contract: &StorageContract) -> Result<(), String> {
+    contract
+        .monotone_snapshot()
+        .map_err(|error| format!("replicated ledger snapshot is not monotone: {error}"))?;
+    Ok(())
 }
 
 /// The submission journal's byte bound, read from its checked contract so the
@@ -267,6 +284,11 @@ pub struct LedgerSnapshot {
 #[derive(Debug, Clone)]
 struct LedgerFile {
     path: PathBuf,
+    /// The highest committed length this handle has published (seeded by the
+    /// last load). `save` admits through it, so a caller that still holds an
+    /// older state is refused. The storage contract's single-writer premise is
+    /// what makes this handle the path's watermark.
+    published: Arc<Mutex<PublishWatermark>>,
 }
 
 // D19-HOOK: H10 (storage: atomic ledger snapshot)
@@ -278,6 +300,7 @@ impl LedgerFile {
         check_live_ledger_snapshot_contract()?;
         Ok(Self {
             path: state_dir.join("ledger.json"),
+            published: Arc::new(Mutex::new(PublishWatermark::new())),
         })
     }
 
@@ -287,12 +310,21 @@ impl LedgerFile {
     /// committed log.
     fn load(&self) -> Result<LedgerSnapshot, String> {
         match fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
-                format!(
-                    "ledger snapshot {} is corrupt: {error}",
-                    self.path.display()
-                )
-            }),
+            Ok(bytes) => {
+                let snapshot: LedgerSnapshot = serde_json::from_slice(&bytes).map_err(|error| {
+                    format!(
+                        "ledger snapshot {} is corrupt: {error}",
+                        self.path.display()
+                    )
+                })?;
+                // The restart starts from what is on disk, so the first publish
+                // is compared with the durable state instead of from nothing.
+                self.published
+                    .lock()
+                    .expect("watermark lock")
+                    .seed(snapshot.bank.len() as u64);
+                Ok(snapshot)
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 Ok(LedgerSnapshot::default())
             }
@@ -313,6 +345,15 @@ impl LedgerFile {
     /// report as durable.
     fn save(&self, snapshot: &LedgerSnapshot) -> Result<(), String> {
         use std::io::Write;
+        // The committed length is the published sequence. A snapshot shorter
+        // than one this handle already published is a state the durable ledger
+        // superseded; overwriting the file with it would move the log backwards
+        // (for example a writer that kept an old `LedgerState` across a commit).
+        self.published
+            .lock()
+            .expect("watermark lock")
+            .admit(snapshot.bank.len() as u64)
+            .map_err(|error| format!("refusing stale ledger snapshot: {error}"))?;
         let bytes = serde_json::to_vec(snapshot)
             .map_err(|error| format!("ledger snapshot encode failed: {error}"))?;
         let parent = self.path.parent().unwrap_or(Path::new("."));
@@ -2333,6 +2374,14 @@ mod tests {
             journal_bytes(&consensus_submission_journal_contract().unwrap()).unwrap(),
             MAX_SUBMISSION_JOURNAL_BYTES as usize
         );
+
+        check_monotone_snapshot(&consensus_ledger_snapshot_contract().unwrap())
+            .expect("the ledger declares a monotone publish rule");
+        let error = check_monotone_snapshot(&unbounded).unwrap_err();
+        assert!(
+            error.contains("not monotone"),
+            "unexpected refusal: {error}"
+        );
     }
 
     fn tx(label: u64) -> ConsensusTransaction {
@@ -2929,5 +2978,58 @@ mod tests {
             error.contains("corrupt"),
             "the propagated error should name the corruption, got: {error}"
         );
+    }
+
+    /// A ledger handle that already published N committed entries must refuse a
+    /// snapshot carrying fewer, so a stale writer cannot replace the newer
+    /// state. The refusal is not cosmetic: the file on disk still holds N.
+    #[test]
+    fn a_stale_writer_cannot_publish_an_older_ledger_state() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-ledger-monotone-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = LedgerFile::new(&dir).unwrap();
+
+        let newer = LedgerSnapshot {
+            bank: vec![tx(1), tx(2)],
+            ..LedgerSnapshot::default()
+        };
+        let older = LedgerSnapshot {
+            bank: vec![tx(1)],
+            ..LedgerSnapshot::default()
+        };
+        file.save(&newer).expect("the first publish is admitted");
+
+        let error = file
+            .save(&older)
+            .expect_err("an older committed length must be refused");
+        assert!(
+            error.contains("older than the published sequence"),
+            "unexpected refusal: {error}"
+        );
+        assert_eq!(
+            file.load().unwrap().bank.len(),
+            2,
+            "a refused publish must not touch the durable ledger"
+        );
+
+        // An outbox-only publish keeps the committed length and is still
+        // admitted, and a load seeds the watermark so a fresh handle refuses
+        // the same stale state after a restart.
+        file.save(&newer).expect("an equal sequence is admitted");
+        let reopened = LedgerFile::new(&dir).unwrap();
+        reopened.load().unwrap();
+        assert!(
+            reopened.save(&older).is_err(),
+            "a handle that loaded N committed entries must refuse fewer"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

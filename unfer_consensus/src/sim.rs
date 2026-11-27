@@ -43,6 +43,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
+use unfer_protocol::simulator_contracts::{EngineViewContract, simulator_engine_view_contract};
 use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
 use unfer_protocol::{
     CertificateOp, CertificateOpKind, Code, ConsensusTransaction, Diagnostic, IdentityOp,
@@ -513,9 +514,14 @@ impl Sim {
                 writable: Arc::clone(&writable),
                 receipts: RwLock::new(BTreeMap::new()),
             });
-            let (mut node, _recovery) =
-                ConsensusNode::open(Box::new(SharedEngine(Arc::clone(&engine))), &journal)
-                    .expect("could not open a replica journal");
+            let (mut node, _recovery) = ConsensusNode::open(
+                Box::new(
+                    SharedEngine::attach(Arc::clone(&engine))
+                        .expect("the scheduler's engine view is admissible"),
+                ),
+                &journal,
+            )
+            .expect("could not open a replica journal");
             node.set_mint_authority(MintAuthority::Only(authority.clone()));
             slots.push(Replica {
                 name: format!("replica-{index}"),
@@ -802,7 +808,7 @@ impl Sim {
         let engine = Arc::clone(&slot.engine);
         // Re-open over the same engine view: the replica keeps whatever delivery
         // horizon it had, which is what makes a restore-then-deliver a catch-up.
-        let opened = ConsensusNode::open(Box::new(SharedEngine(engine)), &journal);
+        let opened = ConsensusNode::open(Box::new(SharedEngine::attach(engine)?), &journal);
         match opened {
             Ok((mut node, recovery)) => {
                 let authority = self.clients[0].did.clone();
@@ -1040,6 +1046,34 @@ impl Sim {
 /// keep its view (the same horizon and quorum flags) across a restart. This is
 /// that sharing: the node sees the process's view, and a restore reuses it.
 struct SharedEngine(Arc<EngineView>);
+
+impl SharedEngine {
+    /// The one crossing a scheduler-supplied view makes into a node. The view
+    /// is what `ConsensusNode` reads its log and receipts from, so the premises
+    /// `EngineViewContract` names — one view per replica, a horizon that only
+    /// hides a suffix, receipts only for accepted submissions, and a sequence
+    /// that ends the returned log — are checked here rather than assumed by the
+    /// harness that built it.
+    fn attach(view: Arc<EngineView>) -> Result<Self, String> {
+        check_live_simulator_view_contract()?;
+        Ok(Self(view))
+    }
+}
+
+/// D19: the gate itself, separate from the one live contract it reads, so a test
+/// can show that a violating view contract is refused.
+fn check_simulator_view_contract(contract: &EngineViewContract) -> Result<(), String> {
+    contract
+        .scheduler_view()
+        .map_err(|error| format!("the scheduler's engine view is not admissible: {error}"))?;
+    Ok(())
+}
+
+fn check_live_simulator_view_contract() -> Result<(), String> {
+    let contract = simulator_engine_view_contract()
+        .map_err(|error| format!("the simulator engine-view contract is invalid: {error}"))?;
+    check_simulator_view_contract(&contract)
+}
 
 // D19-HOOK: H14 (simulator: scheduler-supplied engine view)
 impl ConsensusEngine for SharedEngine {
@@ -1504,4 +1538,147 @@ pub fn state_digest(node: &ConsensusNode) -> String {
         None => hasher.update(b"running"),
     }
     format!("{}:{}", node.applied_seq(), hex::encode(hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use unfer_protocol::channel_contracts::{CapWitness, Location, Repo, SchemaId, UsageCap};
+    use unfer_protocol::simulator_contracts::{HorizonRule, ReceiptRule, SequenceRule};
+
+    fn root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("unfer-h14-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("could not create the test root");
+        root
+    }
+
+    fn decided(view: &EngineView) -> Vec<(u64, Vec<u8>)> {
+        view.get_log(1)
+            .into_iter()
+            .map(|(slot, tx)| (slot, crate::signing::canonical_bytes(&tx)))
+            .collect()
+    }
+
+    fn view_contract(
+        horizon: HorizonRule,
+        receipts: ReceiptRule,
+        sequence: SequenceRule,
+    ) -> EngineViewContract {
+        let supplier =
+            Location::new(Repo::Unfer, "unfer_consensus/src/sim.rs", "Sim::new").unwrap();
+        let reader = Location::new(Repo::Unfer, "unfer_consensus/src/sim.rs", "get_log").unwrap();
+        EngineViewContract::new(
+            supplier,
+            reader,
+            SchemaId::new("test.engine-view", 1).unwrap(),
+            horizon,
+            receipts,
+            sequence,
+            UsageCap::new("views", 1, CapWitness::StaticLayout).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_simulator_gate_accepts_the_live_view() {
+        check_live_simulator_view_contract().expect("the live engine view is admissible");
+    }
+
+    #[test]
+    fn the_simulator_gate_refuses_a_view_that_can_rewrite_history() {
+        let cases = [
+            (
+                view_contract(
+                    HorizonRule::RewritePrefix,
+                    ReceiptRule::OnlyAccepted,
+                    SequenceRule::EndsAtLogEnd,
+                ),
+                "rewrite a served prefix",
+            ),
+            (
+                view_contract(
+                    HorizonRule::SuffixOnly,
+                    ReceiptRule::AnySubmission,
+                    SequenceRule::EndsAtLogEnd,
+                ),
+                "a receipt must name a submission",
+            ),
+            (
+                view_contract(
+                    HorizonRule::SuffixOnly,
+                    ReceiptRule::OnlyAccepted,
+                    SequenceRule::BeyondLogEnd,
+                ),
+                "current_seq must end the log",
+            ),
+        ];
+        for (contract, needle) in cases {
+            let error = check_simulator_view_contract(&contract).unwrap_err();
+            assert!(error.contains(needle), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_partition_hides_a_suffix_and_a_heal_returns_it_unchanged() {
+        let root = root("suffix");
+        let mut sim = Sim::new(11, &root, 1, 1);
+        sim.step(Action::Admit {
+            client: 0,
+            replica: 0,
+            request: Request::AuthorizedMint,
+        })
+        .unwrap();
+        sim.step(Action::Deliver { replica: 0 }).unwrap();
+        let view = Arc::clone(&sim.replicas[0].engine);
+        let full = decided(&view);
+        assert_eq!(full.len(), 1);
+        assert_eq!(view.current_seq(), 1);
+
+        sim.step(Action::Partition { replica: 0 }).unwrap();
+        assert_eq!(view.current_seq(), 0, "a partition hides the suffix");
+        assert!(view.get_log(1).is_empty());
+        assert_eq!(sim.cluster.len(), 1, "the decided prefix is still there");
+        let tx = sim.transaction(Request::AuthorizedMint, 1);
+        assert!(
+            view.submit(tx).is_err(),
+            "a partitioned view must refuse to propose, not append"
+        );
+        assert_eq!(sim.cluster.len(), 1, "the refused proposal did not append");
+
+        sim.step(Action::Heal { replica: 0 }).unwrap();
+        assert_eq!(decided(&view), full, "healing returns the same prefix");
+        assert_eq!(view.current_seq(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_receipt_exists_only_for_an_accepted_submission() {
+        let root = root("receipt");
+        let sim = Sim::new(12, &root, 1, 1);
+        let view = Arc::clone(&sim.replicas[0].engine);
+        assert_eq!(
+            view.receipt(SubmissionId(1)),
+            ReceiptState::Unknown(UnknownReason::Unsubmitted),
+            "an unsubmitted request has no receipt to remember"
+        );
+
+        let tx = sim.transaction(Request::AuthorizedMint, 1);
+        let slot = view.submit(tx).expect("a writable view accepts");
+        assert_eq!(
+            view.receipt(SubmissionId(slot)),
+            ReceiptState::Committed(Slot(slot))
+        );
+        assert_eq!(
+            view.current_seq(),
+            slot,
+            "current_seq ends the log this view returns"
+        );
+        assert_eq!(
+            view.get_log(1).last().map(|(last, _)| *last),
+            Some(slot),
+            "the returned log ends at current_seq"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
