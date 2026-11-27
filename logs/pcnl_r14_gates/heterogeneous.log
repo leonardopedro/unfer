@@ -1,0 +1,26 @@
+r14=p6-heterogeneous decision=conditional-approve-heterogeneity-only seeds=3 members=3 adam_steps=600 tau=0.75 compute_cap=seeds:3,members:3,adam_steps:600 n_train=240 n_test=120
+seed=71 member_losses homogeneous=16:0.0337,16:0.1019,16:0.0567 heterogeneous=12:0.0010,17:0.0109,19:0.6192
+seed=71 arm=homogeneous widths=16,16,16 params=172134 in_region=1.000 test_rmse=0.107701 diversity_rank=1.9404 disagreement=0.160161 student_rmse=0.143197 teacher_fidelity=0.159154 latency_us=195.52
+seed=71 arm=heterogeneous widths=12,17,19 params=172550 param_ratio=1.002417 in_region=1.000 test_rmse=0.091405 diversity_rank=1.9514 disagreement=0.128454 student_rmse=0.143071 teacher_fidelity=0.138584 latency_us=202.35
+seed=82 member_losses homogeneous=16:0.1019,16:0.0567,16:0.2187 heterogeneous=12:0.0146,17:0.0251,19:24.9564
+seed=82 arm=homogeneous widths=16,16,16 params=172134 in_region=1.000 test_rmse=0.104931 diversity_rank=1.9387 disagreement=0.168672 student_rmse=0.162072 teacher_fidelity=0.166445 latency_us=192.50
+seed=82 arm=heterogeneous widths=12,17,19 params=172550 param_ratio=1.002417 in_region=0.667 test_rmse=0.100690 diversity_rank=1.6794 disagreement=0.147436 student_rmse=0.162211 teacher_fidelity=0.161044 latency_us=198.75
+seed=93 member_losses homogeneous=16:0.0567,16:0.2187,16:0.0005 heterogeneous=12:0.1308,17:11.0084,19:0.0000
+seed=93 arm=homogeneous widths=16,16,16 params=172134 in_region=1.000 test_rmse=0.102782 diversity_rank=1.9690 disagreement=0.150452 student_rmse=0.138219 teacher_fidelity=0.155387 latency_us=191.10
+seed=93 arm=heterogeneous widths=12,17,19 params=172550 param_ratio=1.002417 in_region=0.667 test_rmse=0.117223 diversity_rank=1.8054 disagreement=0.165705 student_rmse=0.138084 teacher_fidelity=0.155443 latency_us=198.39
+aggregate arm=homogeneous_test_rmse_mean=0.105138 se=0.001424
+aggregate arm=heterogeneous_test_rmse_mean=0.103106 se=0.007550
+aggregate arm=homogeneous_rank_mean=1.949359 se=0.009835
+aggregate arm=heterogeneous_rank_mean=1.812084 se=0.078591
+aggregate arm=homogeneous_disagreement_mean=0.159761 se=0.005264
+aggregate arm=heterogeneous_disagreement_mean=0.147198 se=0.010754
+aggregate arm=homogeneous_in_region_mean=1.000000 se=0.000000
+aggregate arm=heterogeneous_in_region_mean=0.777778 se=0.111111
+aggregate arm=homogeneous_student_rmse_mean=0.147829 se=0.007265
+aggregate arm=heterogeneous_student_rmse_mean=0.147788 se=0.007353
+aggregate arm=homogeneous_teacher_fidelity_mean=0.160328 se=0.003246
+aggregate arm=heterogeneous_teacher_fidelity_mean=0.151690 se=0.006750
+aggregate arm=homogeneous_latency_us_mean=193.040667 se=1.305935
+aggregate arm=heterogeneous_latency_us_mean=199.829000 se=1.262903
+paired heterogeneous_vs_homogeneous teacher_abs_delta=+0.091774 se=0.004751 student_abs_delta=+0.005889 se=0.002932 rmse_delta=-0.002032 se=0.008942
+verdict heterogeneity_hypothesis=not-supported promotion=blocked-by-review

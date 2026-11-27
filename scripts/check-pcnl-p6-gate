@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# P6 written-review gate.
+#
+# The design authority is docs/PCNL_P6_REVIEW.md.  This script checks that the
+# review exists with its required fields, that the P1-P5 evidence is present,
+# that the approved heterogeneous evaluation ran inside the declared compute
+# cap, and that promotion stays blocked until a human signs off on the full
+# P1-P5 campaigns.
+#
+# Usage:
+#   scripts/check-pcnl-p6-gate [--check]     verify the scoped gate (default)
+#   scripts/check-pcnl-p6-gate --status      print the gate state
+#   scripts/check-pcnl-p6-gate --promote     exit 0 only if promotion is allowed
+#
+# Exit codes: 0 pass, 1 missing evidence / gate failure, 2 promotion blocked.
+
+set -u
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+review="$root/docs/PCNL_P6_REVIEW.md"
+status="$root/docs/PCNL_STATUS.md"
+log="$root/logs/pcnl_r14_gates/heterogeneous.log"
+marker="$root/logs/pcnl_r14_gates/full_campaigns.complete"
+
+fail=0
+say_fail() { echo "p6-gate: FAIL: $*" >&2; fail=1; }
+have() { grep -qF -- "$1" "$2" 2>/dev/null; }
+
+require_file() {
+  if [ ! -s "$1" ]; then say_fail "missing or empty $1"; fi
+}
+require_line() {
+  if ! have "$1" "$2"; then say_fail "$2 does not contain: $1"; fi
+}
+
+check_review() {
+  require_file "$review"
+  [ -s "$review" ] || return
+  require_line "decision = conditional-approve-heterogeneity-only" "$review"
+  require_line "human_signoff = pending" "$review"
+  require_line "hypothesis = " "$review"
+  require_line "changed_objective = none" "$review"
+  require_line "compute_cap = seeds:3,members:3,adam_steps:600" "$review"
+  require_line "promotion = blocked" "$review"
+  require_line "## 4. Measured outcome" "$review"
+  require_line "Verdict: hypothesis not supported" "$review"
+}
+
+check_prerequisites() {
+  for f in \
+    logs/pcnl_r14_gates/plateau_quadrature.log \
+    logs/pcnl_r14_gates/supervised_campaign.log \
+    logs/pcnl_r14_gates/supervised_multiseed.log \
+    logs/pcnl_r14_gates/rl_campaign.log \
+    logs/pcnl_r14_gates/rl_multiseed.log; do
+    require_file "$root/$f"
+    if [ -s "$root/$f" ] && ! grep -qE 'r14(_gate)?=' "$root/$f"; then
+      say_fail "$f has no r14= / r14_gate= header"
+    fi
+  done
+  require_file "$root/pcnl/tests/r14.rs"
+  require_file "$status"
+  if [ -s "$status" ]; then
+    require_line "## R14" "$status"
+    require_line "### P6" "$status"
+  fi
+}
+
+check_evaluation() {
+  if [ ! -s "$log" ]; then
+    say_fail "missing evaluation log logs/pcnl_r14_gates/heterogeneous.log"
+    return
+  fi
+  require_line "r14=p6-heterogeneous decision=conditional-approve-heterogeneity-only seeds=3 members=3 adam_steps=600" "$log"
+  require_line "compute_cap=seeds:3,members:3,adam_steps:600" "$log"
+  require_line "verdict heterogeneity_hypothesis=not-supported promotion=blocked-by-review" "$log"
+  require_line "aggregate arm=homogeneous_test_rmse_mean=" "$log"
+  require_line "aggregate arm=heterogeneous_test_rmse_mean=" "$log"
+  require_line "aggregate arm=homogeneous_in_region_mean=" "$log"
+  require_line "aggregate arm=heterogeneous_in_region_mean=" "$log"
+  require_line "paired heterogeneous_vs_homogeneous" "$log"
+}
+
+promotion_allowed() {
+  [ -s "$review" ] || return 1
+  [ -f "$marker" ] || return 1
+  grep -qF "decision = approved-full" "$review" 2>/dev/null || return 1
+  grep -qF "human_signoff = signed" "$review" 2>/dev/null || return 1
+  grep -qF "promotion = allowed" "$review" 2>/dev/null || return 1
+  return 0
+}
+
+status_line() {
+  local decision signoff cap verdict
+  decision=$(grep -m1 '^decision = ' "$review" 2>/dev/null | cut -d= -f2- | sed 's/^ //')
+  signoff=$(grep -m1 '^human_signoff = ' "$review" 2>/dev/null | cut -d= -f2- | sed 's/^ //')
+  cap=$(grep -m1 '^compute_cap = ' "$review" 2>/dev/null | cut -d= -f2- | sed 's/^ //')
+  verdict=$(grep -m1 '^verdict heterogeneity_hypothesis=' "$log" 2>/dev/null | sed 's/.*hypothesis=//')
+  echo "p6-gate: review=${decision:-missing}"
+  echo "p6-gate: human_signoff=${signoff:-missing}"
+  echo "p6-gate: compute_cap=${cap:-missing}"
+  echo "p6-gate: evaluation_verdict=${verdict:-missing}"
+  if promotion_allowed; then
+    echo "p6-gate: promotion=allowed"
+  else
+    echo "p6-gate: promotion=blocked (full P1-P5 campaigns and/or human sign-off missing)"
+  fi
+}
+
+mode=check
+case "${1:-}" in
+  --check|"") mode=check ;;
+  --status) mode=status ;;
+  --promote) mode=promote ;;
+  -h|--help)
+    sed -n '2,20p' "$0"
+    exit 0
+    ;;
+  *)
+    echo "p6-gate: unknown option: $1" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$mode" = status ]; then
+  check_review
+  check_prerequisites
+  check_evaluation
+  status_line
+  # Status is diagnostic: missing evidence is reported by the lines above.
+  exit 0
+fi
+
+check_review
+check_prerequisites
+check_evaluation
+
+if [ "$mode" = promote ]; then
+  if promotion_allowed; then
+    echo "p6-gate: promotion allowed (review signed and full campaigns complete)"
+    exit 0
+  fi
+  echo "P6-PROMOTION-BLOCKED: P1-P5 full campaigns and/or human sign-off are incomplete" >&2
+  exit 2
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "p6-gate: FAILED" >&2
+  exit 1
+fi
+
+echo "p6-gate: ok (conditional heterogeneity gate; promotion blocked)"
+status_line
+exit 0

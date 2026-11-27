@@ -1,0 +1,35 @@
+warning: unknown and unstable feature specified for `-Ctarget-feature`: `fullfp16`
+  |
+  = note: it is still passed through to the codegen backend, but use of this feature might be unsound and the behavior of this feature can change in the future
+  = help: you might have meant: `fp16`
+
+warning: `pcnl` (lib) generated 1 warning
+   Compiling pcnl v0.1.0 (/home/leo/Projects/unfer/pcnl)
+warning: `pcnl` (example "r14_supervised_campaign") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 11.30s
+     Running `target/release/examples/r14_supervised_campaign`
+r14=pilot P4 fixture_rows train=96 test=48 dim=768 shapes=w2_ff4_l1_t2 params=3110 tau=0.75 kappa=20 alpha=0.05 delta=0.1 hinge=huberized
+target_identity=14797378543846149836
+warm_norm=78.672 warm_prior_penalty=1.801e3 start_norm=77.912 start_prior_penalty=1.594e3
+mobility scale=1e-6 accept=0/300 cn=0/298 moved_norm=0.000000e0
+mobility scale=1e-8 accept=0/300 cn=0/298 moved_norm=0.000000e0
+mobility hitrun accept=300/300 moved_norm=2.435556e1 final_loss=2.169352 in_region=false
+mobility hitrun_strict kappa=2000000 accept=300/300 moved_norm=7.980217e0 final_loss=0.749646 in_region_draws=16/20
+radical_single_trace0=567.137512 trace_last=1.468385
+arm=radical-single members=1 rmse=0.344692 nll=20.766834 coverage90=0.2500 z2=47.5251 in_region=0.000 loss_mean=1.4622 loss_min=1.4622 loss_median=1.4622 loss_max=1.4622 functional_var=0.000000e0 disagreement=0.000000e0 eff_rank=1.0000
+arm=radical-deep members=4 rmse=0.206873 nll=-1.300225 coverage90=0.9271 z2=1.0439 in_region=0.000 loss_mean=3.4200 loss_min=1.4622 loss_median=2.9673 loss_max=6.2831 functional_var=5.230467e-2 disagreement=2.564839e-1 eff_rank=2.8038
+warm_entry stops=["ceiling", "ceiling", "ceiling", "ceiling"] steps=[150, 200, 250, 150] losses=[0.7082433700561523, 0.602839469909668, 0.6386898159980774, 0.6072657108306885]
+arm=knee-stopped members=4 rmse=0.210869 nll=-1.267581 coverage90=0.8333 z2=1.2655 in_region=1.000 loss_mean=0.6393 loss_min=0.6028 loss_median=0.6230 loss_max=0.7082 functional_var=3.590551e-2 disagreement=2.289387e-1 eff_rank=2.5670
+arm=sgd-swa-single members=1 rmse=0.268738 nll=11.448329 coverage90=0.4062 z2=28.8881 in_region=1.000 loss_mean=0.5625 loss_min=0.5625 loss_median=0.5625 loss_max=0.5625 functional_var=0.000000e0 disagreement=0.000000e0 eff_rank=1.0000
+arm=last-iterate members=1 rmse=0.268273 nll=11.398382 coverage90=0.3958 z2=28.7882 in_region=1.000 loss_mean=0.5691 loss_min=0.5691 loss_median=0.5691 loss_max=0.5691 functional_var=0.000000e0 disagreement=0.000000e0 eff_rank=1.0000
+swa window=10 spacing=10 weight_vs_last_rmse_delta=-0.000300 weight_vs_output_rmse_delta=-0.000171 barrier=0.000000
+sharp_gibbs accept=0/900
+satisficing accept=0/1200 roundtrip=true
+arm=satisficing-pcnl members=4 rmse=0.210869 nll=-1.267581 coverage90=0.8333 z2=1.2655 in_region=1.000 loss_mean=0.6393 loss_min=0.6028 loss_median=0.6230 loss_max=0.7082 functional_var=3.590551e-2 disagreement=2.289387e-1 eff_rank=2.5670
+arm=prior-only members=4 rmse=1.164893 nll=57.336564 coverage90=0.0000 z2=118.9760 in_region=0.000 loss_mean=549.6777 loss_min=486.8725 loss_median=559.2743 loss_max=593.2896 functional_var=1.426452e-2 disagreement=1.555095e-1 eff_rank=2.5146
+arm=distilled-student members=1 rmse=0.209682 nll=5.797558 coverage90=0.3854 z2=17.5866 in_region=0.000 loss_mean=3.1987 loss_min=3.1987 loss_median=3.1987 loss_max=3.1987 functional_var=0.000000e0 disagreement=0.000000e0 eff_rank=1.0000
+arm=label-student-control members=1 rmse=0.194120 nll=4.540806 coverage90=0.4375 z2=15.0731 in_region=0.000 loss_mean=4.1751 loss_min=4.1751 loss_median=4.1751 loss_max=4.1751 functional_var=0.000000e0 disagreement=0.000000e0 eff_rank=1.0000
+distillation student_rmse=0.210869 label_control_rmse=0.194120 paired_delta=+0.012193 se=0.002330 teacher_student_rmse=0.185324 spread_coverage90=0.3854
+contrast satisficing_vs_knee_rmse=0.000000 satisficing_vs_radical_rmse=-0.133823 functional_rank=2.5670 in_region=1.000 disagreement=2.289387e-1
+paired satisficing_vs_knee delta=+0.000000 se=0.000000 n=48
+wall_clock_s=4.26

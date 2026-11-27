@@ -1,0 +1,59 @@
+warning: unknown and unstable feature specified for `-Ctarget-feature`: `fullfp16`
+  |
+  = note: it is still passed through to the codegen backend, but use of this feature might be unsound and the behavior of this feature can change in the future
+  = help: you might have meant: `fp16`
+
+warning: `pcnl` (lib) generated 1 warning
+   Compiling pcnl v0.1.0 (/home/leo/Projects/unfer/pcnl)
+warning: `pcnl` (example "r14_supervised_multiseed") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 11.41s
+     Running `target/release/examples/r14_supervised_multiseed`
+r14=multiseed P4 seeds=3 members=3 params=57378 train=120 test=60 tau=0.75 kappa_pcnl=20 kappa_strict=2000000 alpha=0.05 hinge=huberized noise=0.05
+target_identity=247685142171362412 strict_identity=11234914461837562791
+seed=101 arm=radical-single rmse=0.364119 coverage90=0.2333 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=101 arm=radical-deep rmse=0.231472 coverage90=0.8833 in_region=1.000 eff_rank=1.9145 disagreement=4.204304e-1
+seed=101 arm=knee-stopped rmse=0.106363 coverage90=0.8750 in_region=1.000 eff_rank=1.9933 disagreement=1.547922e-1
+seed=101 arm=sgd-swa rmse=0.168175 coverage90=0.4417 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=101 arm=sharp-gibbs rmse=0.177475 coverage90=0.4250 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=101 arm=satisficing-pcnl rmse=0.106363 coverage90=0.8750 in_region=1.000 eff_rank=1.9933 disagreement=1.547922e-1
+seed=101 arm=satisficing-hitrun rmse=0.106505 coverage90=0.8833 in_region=1.000 eff_rank=1.9956 disagreement=1.616964e-1
+seed=101 arm=distilled-student rmse=0.455984 coverage90=0.1750 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=101 arm=label-control rmse=0.450989 coverage90=0.1667 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=101 arm=prior-only rmse=0.850157 coverage90=0.9000 in_region=0.000 eff_rank=1.9591 disagreement=2.099954e0
+seed=101 radical_trace_first=1238.1917 radical_trace_last=0.0000 sharp_accept=0/200 pcnl_accept=0/900 hitrun_accept=240/240 hitrun_in_region_draws=60/60 swa_barrier=0.000000
+seed=202 arm=radical-single rmse=0.526707 coverage90=0.1667 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=202 arm=radical-deep rmse=0.302057 coverage90=0.8500 in_region=1.000 eff_rank=1.8616 disagreement=4.905038e-1
+seed=202 arm=knee-stopped rmse=0.138861 coverage90=0.8583 in_region=1.000 eff_rank=1.6186 disagreement=2.120905e-1
+seed=202 arm=sgd-swa rmse=0.275986 coverage90=0.2417 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=202 arm=sharp-gibbs rmse=0.272024 coverage90=0.2417 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=202 arm=satisficing-pcnl rmse=0.138861 coverage90=0.8583 in_region=1.000 eff_rank=1.6186 disagreement=2.120905e-1
+seed=202 arm=satisficing-hitrun rmse=0.136462 coverage90=0.8500 in_region=1.000 eff_rank=1.6705 disagreement=2.074929e-1
+seed=202 arm=distilled-student rmse=0.452431 coverage90=0.1833 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=202 arm=label-control rmse=0.450989 coverage90=0.1667 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=202 arm=prior-only rmse=1.474922 coverage90=0.7667 in_region=0.000 eff_rank=1.9730 disagreement=2.026131e0
+seed=202 radical_trace_first=2041.2311 radical_trace_last=0.0000 sharp_accept=0/200 pcnl_accept=0/900 hitrun_accept=240/240 hitrun_in_region_draws=60/60 swa_barrier=0.000000
+seed=303 arm=radical-single rmse=0.576007 coverage90=0.1333 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=303 arm=radical-deep rmse=0.243653 coverage90=0.9083 in_region=1.000 eff_rank=1.7079 disagreement=5.363776e-1
+seed=303 arm=knee-stopped rmse=0.109298 coverage90=0.8750 in_region=1.000 eff_rank=1.9380 disagreement=1.801008e-1
+seed=303 arm=sgd-swa rmse=0.208585 coverage90=0.3167 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=303 arm=sharp-gibbs rmse=0.203850 coverage90=0.3333 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=303 arm=satisficing-pcnl rmse=0.109298 coverage90=0.8750 in_region=1.000 eff_rank=1.9380 disagreement=1.801008e-1
+seed=303 arm=satisficing-hitrun rmse=0.117466 coverage90=0.9167 in_region=1.000 eff_rank=1.9527 disagreement=1.866203e-1
+seed=303 arm=distilled-student rmse=0.453438 coverage90=0.1667 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=303 arm=label-control rmse=0.450989 coverage90=0.1667 in_region=1.000 eff_rank=1.0000 disagreement=0.000000e0
+seed=303 arm=prior-only rmse=1.273211 coverage90=0.7417 in_region=0.000 eff_rank=1.6326 disagreement=1.812398e0
+seed=303 radical_trace_first=2045.4020 radical_trace_last=0.0000 sharp_accept=0/200 pcnl_accept=0/900 hitrun_accept=240/240 hitrun_in_region_draws=59/60 swa_barrier=0.000000
+aggregate arm=radical-single rmse_mean=0.488945 rmse_se=0.064015 coverage90_mean=0.1778 in_region_mean=1.000 eff_rank_mean=1.0000 disagreement_mean=0.000000e0
+aggregate arm=radical-deep rmse_mean=0.259061 rmse_se=0.021784 coverage90_mean=0.8806 in_region_mean=1.000 eff_rank_mean=1.8280 disagreement_mean=4.824373e-1
+aggregate arm=knee-stopped rmse_mean=0.118174 rmse_se=0.010378 coverage90_mean=0.8694 in_region_mean=1.000 eff_rank_mean=1.8500 disagreement_mean=1.823278e-1
+aggregate arm=sgd-swa rmse_mean=0.217582 rmse_se=0.031446 coverage90_mean=0.3333 in_region_mean=1.000 eff_rank_mean=1.0000 disagreement_mean=0.000000e0
+aggregate arm=sharp-gibbs rmse_mean=0.217783 rmse_se=0.028169 coverage90_mean=0.3333 in_region_mean=1.000 eff_rank_mean=1.0000 disagreement_mean=0.000000e0
+aggregate arm=satisficing-pcnl rmse_mean=0.118174 rmse_se=0.010378 coverage90_mean=0.8694 in_region_mean=1.000 eff_rank_mean=1.8500 disagreement_mean=1.823278e-1
+aggregate arm=satisficing-hitrun rmse_mean=0.120144 rmse_se=0.008751 coverage90_mean=0.8833 in_region_mean=1.000 eff_rank_mean=1.8729 disagreement_mean=1.852699e-1
+aggregate arm=distilled-student rmse_mean=0.453951 rmse_se=0.001057 coverage90_mean=0.1750 in_region_mean=1.000 eff_rank_mean=1.0000 disagreement_mean=0.000000e0
+aggregate arm=label-control rmse_mean=0.450989 rmse_se=0.000000 coverage90_mean=0.1667 in_region_mean=1.000 eff_rank_mean=1.0000 disagreement_mean=0.000000e0
+aggregate arm=prior-only rmse_mean=1.199430 rmse_se=0.184088 coverage90_mean=0.8028 in_region_mean=0.000 eff_rank_mean=1.8549 disagreement_mean=1.979494e0
+paired satisficing-pcnl_vs_knee delta_mean=+0.000000 se_across_seeds=0.000000
+paired satisficing-hitrun_vs_knee delta_mean=+0.001005 se_across_seeds=0.002637
+paired distilled_vs_label delta_mean=+0.002670 se_across_seeds=0.001152
+wall_clock_s_per_seed=46.04 seeds=3

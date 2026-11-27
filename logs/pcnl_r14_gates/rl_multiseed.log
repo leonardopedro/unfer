@@ -1,0 +1,62 @@
+warning: unknown and unstable feature specified for `-Ctarget-feature`: `fullfp16`
+  |
+  = note: it is still passed through to the codegen backend, but use of this feature might be unsound and the behavior of this feature can change in the future
+  = help: you might have meant: `fp16`
+
+warning: `pcnl` (lib) generated 1 warning
+   Compiling pcnl v0.1.0 (/home/leo/Projects/unfer/pcnl)
+warning: `pcnl` (example "r14_rl_multiseed") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 2.34s
+     Running `target/release/examples/r14_rl_multiseed`
+r14=multiseed P5 seeds=3 members=3 dim=15 tau=1.2 kappa_pcnl=200 kappa_strict=2000000 beta=0.05 transitions=48
+target_identity=14832790793954910783 strict_identity=9812571298464144319
+seed=401 arm=radical-single in_region=1.000 loss_mean=0.5446 diversity_tv=0.0000 nominal_return=-3.9702 nominal_se=0.419434 shifted_return=-5.8729 shifted_se=0.722440
+seed=401 arm=radical-deep in_region=1.000 loss_mean=0.5456 diversity_tv=0.0343 nominal_return=-4.0118 nominal_se=0.421911 shifted_return=-5.8854 shifted_se=0.722229
+seed=401 arm=knee-stopped in_region=1.000 loss_mean=0.9695 diversity_tv=0.2044 nominal_return=-6.5367 nominal_se=0.617410 shifted_return=-9.4527 shifted_se=0.928119
+seed=401 arm=sgd-swa in_region=1.000 loss_mean=0.7035 diversity_tv=0.0000 nominal_return=-4.3881 nominal_se=0.428710 shifted_return=-6.4636 shifted_se=0.750721
+seed=401 arm=sharp-gibbs in_region=1.000 loss_mean=0.8141 diversity_tv=0.0000 nominal_return=-5.8790 nominal_se=0.548606 shifted_return=-8.2886 shifted_se=0.855228
+seed=401 arm=satisficing-pcnl in_region=0.333 loss_mean=1.3167 diversity_tv=0.4153 nominal_return=-8.9252 nominal_se=0.867201 shifted_return=-13.6245 shifted_se=1.373213
+seed=401 arm=satisficing-hitrun in_region=1.000 loss_mean=1.1949 diversity_tv=0.2747 nominal_return=-7.2812 nominal_se=0.656836 shifted_return=-11.2196 shifted_se=1.042979
+seed=401 arm=prior-only in_region=0.000 loss_mean=1.8004 diversity_tv=0.6027 nominal_return=-13.0553 nominal_se=1.075517 shifted_return=-21.8554 shifted_se=1.921634
+seed=401 arm=distilled-student in_region=NA diversity_tv=NA nominal_return=-7.3154 nominal_se=0.680493 shifted_return=-10.8766 shifted_se=1.022140
+seed=401 arm=label-control in_region=NA diversity_tv=NA nominal_return=-4.0961 nominal_se=0.425615 shifted_return=-5.8779 shifted_se=0.722004
+seed=401 warm_stops=["ceiling", "ceiling", "ceiling"] pcnl_accept=594/900 hitrun_accept=480/480 hitrun_in_region=86/90 sharp_accept=2/200 swa_barrier=0.000000 once_per_episode=-7.7142 se=0.633633 swa_moves=10
+seed=502 arm=radical-single in_region=1.000 loss_mean=0.5414 diversity_tv=0.0000 nominal_return=-4.0249 nominal_se=0.420759 shifted_return=-5.8737 shifted_se=0.721330
+seed=502 arm=radical-deep in_region=1.000 loss_mean=0.5429 diversity_tv=0.0369 nominal_return=-4.0044 nominal_se=0.422122 shifted_return=-5.8851 shifted_se=0.722085
+seed=502 arm=knee-stopped in_region=1.000 loss_mean=0.9392 diversity_tv=0.2538 nominal_return=-5.8252 nominal_se=0.527196 shifted_return=-8.3686 shifted_se=0.844154
+seed=502 arm=sgd-swa in_region=1.000 loss_mean=0.6666 diversity_tv=0.0000 nominal_return=-4.6665 nominal_se=0.442163 shifted_return=-6.4812 shifted_se=0.756786
+seed=502 arm=sharp-gibbs in_region=1.000 loss_mean=0.9372 diversity_tv=0.0000 nominal_return=-6.0655 nominal_se=0.590346 shifted_return=-8.4964 shifted_se=0.886825
+seed=502 arm=satisficing-pcnl in_region=0.000 loss_mean=1.3425 diversity_tv=0.4361 nominal_return=-9.1911 nominal_se=0.818534 shifted_return=-15.0018 shifted_se=1.446170
+seed=502 arm=satisficing-hitrun in_region=1.000 loss_mean=1.1762 diversity_tv=0.3752 nominal_return=-8.3093 nominal_se=0.778051 shifted_return=-12.8497 shifted_se=1.242969
+seed=502 arm=prior-only in_region=0.000 loss_mean=2.2710 diversity_tv=0.5862 nominal_return=-13.0152 nominal_se=1.057555 shifted_return=-21.2323 shifted_se=1.797372
+seed=502 arm=distilled-student in_region=NA diversity_tv=NA nominal_return=-8.0116 nominal_se=0.706882 shifted_return=-12.2628 shifted_se=1.110960
+seed=502 arm=label-control in_region=NA diversity_tv=NA nominal_return=-4.0961 nominal_se=0.425615 shifted_return=-5.8779 shifted_se=0.722004
+seed=502 warm_stops=["ceiling", "ceiling", "ceiling"] pcnl_accept=594/900 hitrun_accept=480/480 hitrun_in_region=83/90 sharp_accept=0/200 swa_barrier=0.000000 once_per_episode=-7.7239 se=0.648130 swa_moves=10
+seed=603 arm=radical-single in_region=1.000 loss_mean=0.5242 diversity_tv=0.0000 nominal_return=-4.1688 nominal_se=0.428226 shifted_return=-5.9205 shifted_se=0.721060
+seed=603 arm=radical-deep in_region=1.000 loss_mean=0.5389 diversity_tv=0.0943 nominal_return=-4.0404 nominal_se=0.423426 shifted_return=-5.8981 shifted_se=0.721927
+seed=603 arm=knee-stopped in_region=1.000 loss_mean=0.8896 diversity_tv=0.2088 nominal_return=-5.6980 nominal_se=0.516026 shifted_return=-8.2774 shifted_se=0.833224
+seed=603 arm=sgd-swa in_region=1.000 loss_mean=0.6353 diversity_tv=0.0000 nominal_return=-4.6480 nominal_se=0.440910 shifted_return=-6.4347 shifted_se=0.750045
+seed=603 arm=sharp-gibbs in_region=1.000 loss_mean=0.8131 diversity_tv=0.0000 nominal_return=-6.3220 nominal_se=0.610834 shifted_return=-8.6241 shifted_se=0.920293
+seed=603 arm=satisficing-pcnl in_region=0.333 loss_mean=1.2259 diversity_tv=0.3464 nominal_return=-8.9673 nominal_se=0.814726 shifted_return=-13.1630 shifted_se=1.219179
+seed=603 arm=satisficing-hitrun in_region=1.000 loss_mean=1.1796 diversity_tv=0.2838 nominal_return=-9.6846 nominal_se=0.900004 shifted_return=-13.5143 shifted_se=1.295098
+seed=603 arm=prior-only in_region=0.000 loss_mean=2.0104 diversity_tv=0.6368 nominal_return=-11.0049 nominal_se=0.919598 shifted_return=-17.3898 shifted_se=1.566532
+seed=603 arm=distilled-student in_region=NA diversity_tv=NA nominal_return=-9.7667 nominal_se=0.910043 shifted_return=-13.6731 shifted_se=1.300453
+seed=603 arm=label-control in_region=NA diversity_tv=NA nominal_return=-4.0961 nominal_se=0.425615 shifted_return=-5.8779 shifted_se=0.722004
+seed=603 warm_stops=["ceiling", "ceiling", "ceiling"] pcnl_accept=579/900 hitrun_accept=480/480 hitrun_in_region=87/90 sharp_accept=0/200 swa_barrier=0.000000 once_per_episode=-9.7916 se=0.795839 swa_moves=10
+aggregate arm=radical-single in_region_mean=1.000 in_region_se=0.000 diversity_tv_mean=0.0000 nominal_return_mean=-4.0546 nominal_se=0.0592 shifted_return_mean=-5.8890 shifted_se=0.0157
+aggregate arm=radical-deep in_region_mean=1.000 in_region_se=0.000 diversity_tv_mean=0.0552 nominal_return_mean=-4.0189 nominal_se=0.0110 shifted_return_mean=-5.8895 shifted_se=0.0043
+aggregate arm=knee-stopped in_region_mean=1.000 in_region_se=0.000 diversity_tv_mean=0.2223 nominal_return_mean=-6.0200 nominal_se=0.2610 shifted_return_mean=-8.6996 shifted_se=0.3775
+aggregate arm=sgd-swa in_region_mean=1.000 in_region_se=0.000 diversity_tv_mean=0.0000 nominal_return_mean=-4.5675 nominal_se=0.0899 shifted_return_mean=-6.4598 shifted_se=0.0136
+aggregate arm=sharp-gibbs in_region_mean=1.000 in_region_se=0.000 diversity_tv_mean=0.0000 nominal_return_mean=-6.0889 nominal_se=0.1284 shifted_return_mean=-8.4697 shifted_se=0.0977
+aggregate arm=satisficing-pcnl in_region_mean=0.222 in_region_se=0.111 diversity_tv_mean=0.3993 nominal_return_mean=-9.0278 nominal_se=0.0825 shifted_return_mean=-13.9298 shifted_se=0.5523
+aggregate arm=satisficing-hitrun in_region_mean=1.000 in_region_se=0.000 diversity_tv_mean=0.3112 nominal_return_mean=-8.4250 nominal_se=0.6962 shifted_return_mean=-12.5278 shifted_se=0.6817
+aggregate arm=prior-only in_region_mean=0.000 in_region_se=0.000 diversity_tv_mean=0.6086 nominal_return_mean=-12.3585 nominal_se=0.6769 shifted_return_mean=-20.1591 shifted_se=1.3963
+aggregate arm=distilled-student in_region_mean=NaN in_region_se=NaN diversity_tv_mean=NaN nominal_return_mean=-8.3645 nominal_se=0.7293 shifted_return_mean=-12.2708 shifted_se=0.8073
+aggregate arm=label-control in_region_mean=NaN in_region_se=NaN diversity_tv_mean=NaN nominal_return_mean=-4.0961 nominal_se=0.0000 shifted_return_mean=-5.8779 shifted_se=0.0000
+paired hitrun_vs_knee nominal_delta=-2.405045 nominal_se_across_seeds=0.936741 shifted_delta=-3.828280 shifted_se_across_seeds=1.053522
+paired pcnl_vs_knee nominal_delta=-3.007857 nominal_se_across_seeds=0.310971 shifted_delta=-5.230206 shifted_se_across_seeds=0.731128
+paired distilled_vs_label nominal_delta=-4.268474 nominal_se_across_seeds=0.729307 shifted_delta=-6.392908 shifted_se_across_seeds=0.807291
+paired hitrun_vs_radical_deep nominal_delta=-4.406146 nominal_se_across_seeds=0.687413 shifted_delta=-6.638348 shifted_se_across_seeds=0.678646
+fidelity student_kl_mean=0.008635 student_tv_mean=0.039624 student_kl_max_mean=0.047676 pinsker_bound=55.582170 control_teacher_kl_mean=6.796927
+movement pcnl_accept_rate=0.654444 hitrun_accept_rate=1.000000 hitrun_in_region_rate=0.948148 sharp_accept_rate=0.003333
+ensemble_draw once_per_episode_mean=-8.4099 se=0.6909 per_step_bma_mean=-8.4250

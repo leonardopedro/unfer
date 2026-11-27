@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# Re-run the R14 gate examples and compare their summary lines with the
+# committed logs under `logs/pcnl_r14_gates/`.
+#
+# This is the R14 counterpart of `scripts/check-pcnl-gates` (which owns the
+# R13 logs and is deliberately left untouched).  The three R14 rows are
+# reduced-budget mechanics/gates, not the declared multi-seed campaigns, so a
+# full replay is ~10 s rather than ~90 s.
+#
+# Usage:
+#   ./scripts/check-pcnl-r14-gates                  # rerun and compare exactly
+#   ./scripts/check-pcnl-r14-gates --list
+#   ./scripts/check-pcnl-r14-gates --band 0.05      # relative numeric tolerance
+#   ./scripts/check-pcnl-r14-gates --structure      # keys + finiteness only
+#   ./scripts/check-pcnl-r14-gates --check-manifest # no runs; logs/manifest agree
+#   ./scripts/check-pcnl-r14-gates plateau          # one row (name prefix)
+#
+# Exit status: 0 all compared rows matched; 1 mismatch or failed run;
+# 2 setup problem (missing log, unknown row, no python3).
+set -uo pipefail
+
+cd "$(dirname "$0")/.." || exit 2
+LOG_DIR=logs/pcnl_r14_gates
+BAND=0
+STRUCTURE=0
+CHECK_MANIFEST=0
+LIST=0
+SELECT=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --list) LIST=1 ;;
+    --structure) STRUCTURE=1 ;;
+    --check-manifest) CHECK_MANIFEST=1 ;;
+    --band) BAND="${2:-}"; shift ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    --*) echo "check-pcnl-r14-gates: unknown flag $1" >&2; exit 2 ;;
+    *) SELECT="$1" ;;
+  esac
+  shift
+done
+
+# name|example|log stem
+ROWS=(
+  "plateau|r14_plateau_quadrature|plateau_quadrature"
+  "supervised|r14_supervised_campaign|supervised_campaign"
+  "rl|r14_rl_campaign|rl_campaign"
+  "rl-multiseed|r14_rl_multiseed|rl_multiseed"
+  "return-aware|r14_return_aware|return_aware"
+)
+
+selected() { [ -z "$SELECT" ] || [ "$SELECT" = "$1" ] || case "$1" in "$SELECT"*) true ;; *) false ;; esac; }
+
+if [ "$LIST" = 1 ]; then
+  for row in "${ROWS[@]}"; do
+    IFS='|' read -r name example log <<<"$row"
+    selected "$name" && printf '%-12s %s  %s/%s.log\n' "$name" "$example" "$LOG_DIR" "$log"
+  done
+  exit 0
+fi
+
+command -v python3 >/dev/null 2>&1 || { echo "check-pcnl-r14-gates: python3 not found" >&2; exit 2; }
+
+# Summary lines: everything that carries a measured number or a verdict,
+# excluding wall-clock and host-noise bookkeeping.
+SUMMARY_RE='^(r14_gate=|r14=|target |target_identity=|ref |T=|control |swa |midpoint|gate=|warm_norm|warm_entry|mobility|aggregate |arm=|sharp_gibbs|satisficing |distillation |contrast |paired |fidelity |movement |return_floor|ensemble_draw |runtime_ok)'
+
+# Keys whose values are wall-clock or free-form and must not be compared.
+filter_summary() {
+  grep -E "$SUMMARY_RE" | grep -v 'wall_clock_s='
+}
+
+if [ "$CHECK_MANIFEST" = 1 ]; then
+  status=0
+  for row in "${ROWS[@]}"; do
+    IFS='|' read -r name example log <<<"$row"
+    selected "$name" || continue
+    file="$LOG_DIR/$log.log"
+    if [ ! -s "$file" ]; then
+      echo "missing: $file" >&2; status=1; continue
+    fi
+    if ! filter_summary <"$file" | grep -q .; then
+      echo "no summary lines: $file" >&2; status=1; continue
+    fi
+    echo "r14 gate evidence ok: $name ($file)"
+  done
+  exit "$status"
+fi
+
+compare() {
+  local log=$1 rerun=$2
+  python3 - "$log" "$rerun" "$BAND" "$STRUCTURE" <<'PY'
+import math, re, sys
+
+log_path, new_path, band, structure = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4] == "1"
+num = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?')
+summary = re.compile(r'^(r14_gate=|r14=|target |target_identity=|ref |T=|control |swa |midpoint|gate=|warm_norm|warm_entry|mobility|aggregate |arm=|sharp_gibbs|satisficing |distillation |contrast |paired |fidelity |movement |return_floor|ensemble_draw |runtime_ok)')
+
+def rows(path):
+    out = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if "wall_clock_s=" in line:
+                continue
+            if summary.match(line):
+                out.append(line)
+    return out
+
+def main():
+    a, b = rows(log_path), rows(new_path)
+    if len(a) != len(b):
+        print(f"line count differs: log={len(a)} rerun={len(b)}")
+        return 1
+    status = 0
+    for i, (x, y) in enumerate(zip(a, b), 1):
+        if x == y:
+            continue
+        if structure:
+            # Compare the key sequence and non-numeric tokens; numbers may move.
+            if num.sub("#", x).replace(" ", "") != num.sub("#", y).replace(" ", ""):
+                print(f"line {i} structure differs:\n  log:   {x}\n  rerun: {y}")
+                status = 1
+            continue
+        xs, ys = num.findall(x), num.findall(y)
+        if len(xs) != len(ys):
+            print(f"line {i} numeric arity differs:\n  log:   {x}\n  rerun: {y}")
+            status = 1
+            continue
+        bad = []
+        for u, v in zip(xs, ys):
+            fu, fv = float(u), float(v)
+            if math.isnan(fu) or math.isnan(fv):
+                if not (math.isnan(fu) and math.isnan(fv)):
+                    bad.append((u, v))
+                continue
+            if math.isinf(fu) or math.isinf(fv):
+                if fu != fv:
+                    bad.append((u, v))
+                continue
+            if abs(fu - fv) > band * max(abs(fu), abs(fv), 1.0):
+                bad.append((u, v))
+        if bad:
+            print(f"line {i} values differ (band={band}):\n  log:   {x}\n  rerun: {y}\n  first: {bad[:3]}")
+            status = 1
+    if status == 0:
+        print(f"ok ({len(a)} summary lines)")
+    return status
+
+sys.exit(main())
+PY
+}
+
+status=0
+for row in "${ROWS[@]}"; do
+  IFS='|' read -r name example log <<<"$row"
+  selected "$name" || continue
+  committed="$LOG_DIR/$log.log"
+  if [ ! -s "$committed" ]; then
+    echo "missing committed log: $committed" >&2
+    status=1
+    continue
+  fi
+  rerun=$(mktemp)
+  if ! cargo run --offline --release -p pcnl --example "$example" --locked >"$rerun" 2>&1; then
+    echo "run failed: $example (log kept at $rerun)" >&2
+    status=1
+    continue
+  fi
+  printf '%-12s ' "$name"
+  if compare "$committed" "$rerun"; then :; else status=1; fi
+  rm -f "$rerun"
+done
+exit "$status"

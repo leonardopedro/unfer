@@ -1,0 +1,62 @@
+warning: unknown and unstable feature specified for `-Ctarget-feature`: `fullfp16`
+  |
+  = note: it is still passed through to the codegen backend, but use of this feature might be unsound and the behavior of this feature can change in the future
+  = help: you might have meant: `fp16`
+
+warning: `pcnl` (lib) generated 1 warning
+warning: variable `mean_marginals` is assigned to, but never used
+   --> pcnl/examples/r14_rl_edge0_multiseed.rs:376:13
+    |
+376 |         let mut mean_marginals: Vec<Vec<Vec<f64>>> = Vec::new();
+    |             ^^^^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_mean_marginals` instead
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `mean_marginals` is never read
+   --> pcnl/examples/r14_rl_edge0_multiseed.rs:421:17
+    |
+421 |                 mean_marginals = per_test_all;
+    |                 ^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pcnl` (example "r14_rl_edge0_multiseed") generated 3 warnings (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 0.10s
+     Running `target/release/examples/r14_rl_edge0_multiseed`
+kinds test={"choice": 16, "noul": 16, "score": 16}
+r14=p5-edge0-multiseed source=rlcd-checkpoints params=1684 families=3 members=3 worlds=[24, 8, 8, 16] tau=1.05 kappa_pcnl=20 kappa_strict=2000000 updates=60 warm_start=30 scope=reduced-budget
+family=1 arm=rlcd-single in_region=1.000 nll_mean=0.9619 brier_test=0.14530 brier_test_se=0.01924 brier_cal=0.16445 diversity_tv=0.0000 eff_rank=1.000
+family=1 arm=rlcd-ensemble in_region=1.000 nll_mean=0.9621 brier_test=0.14538 brier_test_se=0.01903 brier_cal=0.16674 diversity_tv=0.0201 eff_rank=1.105
+family=1 arm=supervised-ensemble in_region=1.000 nll_mean=0.9597 brier_test=0.14614 brier_test_se=0.01956 brier_cal=0.16471 diversity_tv=0.0034 eff_rank=1.428
+family=1 arm=satisficing-pcnl in_region=0.000 nll_mean=1.1799 brier_test=0.16877 brier_test_se=0.02165 brier_cal=0.23458 diversity_tv=0.3137 eff_rank=1.906
+family=1 arm=satisficing-hitrun in_region=1.000 nll_mean=0.9624 brier_test=0.14549 brier_test_se=0.01902 brier_cal=0.16869 diversity_tv=0.0244 eff_rank=1.166
+family=1 distillation noul_train=24 noul_test=16 teacher_max_mean=0.50304 student_kl=0.00000 student_tv=0.00002 student_brier=0.15609 teacher_brier=0.15609 paired_delta=-0.00000 pcnl_accept=3/90 hitrun_accept=24/24 hitrun_in=6/6 ensemble_minus_single=+0.00007±0.00243 pcnl_minus_ensemble=+0.02339±0.01577 hitrun_minus_ensemble=+0.00012±0.00051
+family=2 arm=rlcd-single in_region=1.000 nll_mean=0.9882 brier_test=0.15611 brier_test_se=0.01530 brier_cal=0.17416 diversity_tv=0.0000 eff_rank=1.000
+family=2 arm=rlcd-ensemble in_region=1.000 nll_mean=0.9810 brier_test=0.14550 brier_test_se=0.01848 brier_cal=0.16843 diversity_tv=0.0640 eff_rank=1.143
+family=2 arm=supervised-ensemble in_region=1.000 nll_mean=0.9600 brier_test=0.14623 brier_test_se=0.01946 brier_cal=0.16522 diversity_tv=0.0064 eff_rank=1.895
+family=2 arm=satisficing-pcnl in_region=0.000 nll_mean=1.2744 brier_test=0.19601 brier_test_se=0.03282 brier_cal=0.14368 diversity_tv=0.3655 eff_rank=1.837
+family=2 arm=satisficing-hitrun in_region=1.000 nll_mean=0.9788 brier_test=0.14579 brier_test_se=0.01858 brier_cal=0.17065 diversity_tv=0.0659 eff_rank=1.189
+family=2 distillation noul_train=24 noul_test=16 teacher_max_mean=0.50183 student_kl=0.00000 student_tv=0.00002 student_brier=0.15582 teacher_brier=0.15581 paired_delta=+0.00001 pcnl_accept=3/90 hitrun_accept=24/24 hitrun_in=6/6 ensemble_minus_single=-0.01062±0.00564 pcnl_minus_ensemble=+0.05052±0.01999 hitrun_minus_ensemble=+0.00029±0.00056
+family=3 arm=rlcd-single in_region=1.000 nll_mean=0.9640 brier_test=0.14572 brier_test_se=0.01848 brier_cal=0.16938 diversity_tv=0.0000 eff_rank=1.000
+family=3 arm=rlcd-ensemble in_region=1.000 nll_mean=0.9660 brier_test=0.14801 brier_test_se=0.01799 brier_cal=0.16857 diversity_tv=0.0251 eff_rank=1.010
+family=3 arm=supervised-ensemble in_region=1.000 nll_mean=0.9592 brier_test=0.14648 brier_test_se=0.01948 brier_cal=0.16531 diversity_tv=0.0053 eff_rank=1.163
+family=3 arm=satisficing-pcnl in_region=0.000 nll_mean=1.2335 brier_test=0.20676 brier_test_se=0.02847 brier_cal=0.28611 diversity_tv=0.3255 eff_rank=1.650
+family=3 arm=satisficing-hitrun in_region=1.000 nll_mean=0.9661 brier_test=0.14762 brier_test_se=0.01781 brier_cal=0.16843 diversity_tv=0.0217 eff_rank=1.210
+family=3 distillation noul_train=24 noul_test=16 teacher_max_mean=0.50774 student_kl=-0.00000 student_tv=0.00002 student_brier=0.15723 teacher_brier=0.15722 paired_delta=+0.00001 pcnl_accept=3/90 hitrun_accept=24/24 hitrun_in=6/6 ensemble_minus_single=+0.00229±0.00282 pcnl_minus_ensemble=+0.05875±0.02377 hitrun_minus_ensemble=-0.00039±0.00064
+aggregate arm=rlcd-ensemble brier_test_mean=0.14629 se=0.00086 brier_cal_mean=0.16791 in_region_mean=1.000
+aggregate arm=rlcd-single brier_test_mean=0.14905 se=0.00354 brier_cal_mean=0.16933 in_region_mean=1.000
+aggregate arm=satisficing-hitrun brier_test_mean=0.14630 se=0.00067 brier_cal_mean=0.16926 in_region_mean=1.000
+aggregate arm=satisficing-pcnl brier_test_mean=0.19051 se=0.01131 brier_cal_mean=0.22146 in_region_mean=0.000
+aggregate arm=supervised-ensemble brier_test_mean=0.14628 se=0.00010 brier_cal_mean=0.16508 in_region_mean=1.000
+aggregate arm=rlcd-ensemble diversity_tv_mean=0.0364 se=0.0139 eff_rank_mean=1.086 se=0.040
+aggregate arm=rlcd-single diversity_tv_mean=0.0000 se=0.0000 eff_rank_mean=1.000 se=0.000
+aggregate arm=satisficing-hitrun diversity_tv_mean=0.0373 se=0.0143 eff_rank_mean=1.188 se=0.012
+aggregate arm=satisficing-pcnl diversity_tv_mean=0.3349 se=0.0157 eff_rank_mean=1.798 se=0.077
+aggregate arm=supervised-ensemble diversity_tv_mean=0.0050 se=0.0009 eff_rank_mean=1.495 se=0.214
+distillation student_brier_mean=0.15638 se=0.00043 teacher_brier_mean=0.15637 paired_delta_mean=+0.00000 se=0.00000 kl_mean=-0.00000 tv_mean=0.00002
+paired ensemble_minus_single delta_mean=-0.00275 se=0.00399
+paired pcnl_minus_ensemble delta_mean=+0.04422 se=0.01068
+paired hitrun_minus_ensemble delta_mean=+0.00001 se=0.00020
+scope source=RLCD/Edge0 checkpoints; reduced-budget campaign; linear softmax student on teacher-independent surface features; not the declared R9 split

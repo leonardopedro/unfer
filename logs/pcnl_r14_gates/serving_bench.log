@@ -1,0 +1,9 @@
+serving case=p4 members=3 bytes_per_member=229512 ensemble_bytes=688536 student_bytes=229512 memory_ratio=3.0000 heap_delta_bytes=688608
+serving case=p4 arm=member-forward n=9000 mean_us=104.283 p50_us=103.647 p90_us=107.189 p99_us=110.834 qps=9585.5 alloc_bytes_per_query=130448.0
+serving case=p4 arm=ensemble-forward-m3 n=3000 mean_us=312.457 p50_us=310.785 p90_us=316.566 p99_us=320.785 qps=3200.0 alloc_bytes_per_query=391296.0
+serving case=p4 arm=student-forward n=3000 mean_us=103.866 p50_us=103.335 p90_us=106.720 p99_us=110.366 qps=9623.8 alloc_bytes_per_query=130448.0
+serving case=p4 arm=ensemble-predict-m3 n=3000 mean_us=326.404 p50_us=324.587 p90_us=330.785 p99_us=336.983 qps=3063.3 alloc_bytes_per_query=1090584.0
+serving case=p4 arm=student-predict n=3000 mean_us=107.400 p50_us=106.772 p90_us=110.627 p99_us=113.907 qps=9307.5 alloc_bytes_per_query=363544.0
+serving case=p5 members=3 bytes_per_member=60 ensemble_bytes=180 student_bytes=160 memory_ratio=1.1250 heap_delta_bytes=252
+serving case=p5 arm=ensemble-probs-m3 n=200000 mean_us=0.333 p50_us=0.313 p90_us=0.416 p99_us=0.417 qps=2690886.6 alloc_bytes_per_query=360.0
+serving case=p5 arm=student-probs n=200000 mean_us=0.104 p50_us=0.104 p90_us=0.156 p99_us=0.157 qps=7008065.0 alloc_bytes_per_query=88.0

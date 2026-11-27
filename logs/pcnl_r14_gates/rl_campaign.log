@@ -1,0 +1,25 @@
+warning: unknown and unstable feature specified for `-Ctarget-feature`: `fullfp16`
+  |
+  = note: it is still passed through to the codegen backend, but use of this feature might be unsound and the behavior of this feature can change in the future
+  = help: you might have meant: `fp16`
+
+warning: `pcnl` (lib) generated 1 warning
+warning: `pcnl` (example "r14_rl_campaign") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 0.10s
+     Running `target/release/examples/r14_rl_campaign`
+r14=pilot P5 env=horizon8 actions5 corpus train=48 dev=32 test=32 loss_dim=15 beta=0.05 tau=1.2 kappa=200 alpha=0 hinge=huberized
+target_identity=14832790793954910783
+arm=radical-single members=1 in_region=1.000 loss_mean=0.5391 loss_min=0.5391 loss_max=0.5391 diversity_tv=0.0000 diversity_kl=0.0000 nominal_return=-3.9773 shifted_return=-5.8599
+arm=radical-deep members=4 in_region=1.000 loss_mean=0.5372 loss_min=0.5350 loss_max=0.5394 diversity_tv=0.0339 diversity_kl=0.0410 nominal_return=-4.0301 shifted_return=-5.8783
+arm=knee-stopped members=4 in_region=1.000 loss_mean=0.8813 loss_min=0.8392 loss_max=0.9198 diversity_tv=0.1624 diversity_kl=0.1445 nominal_return=-6.0736 shifted_return=-8.4171
+arm=satisficing-pcnl members=4 in_region=0.000 loss_mean=1.2461 loss_min=1.2020 loss_max=1.3100 diversity_tv=0.4397 diversity_kl=0.8925 nominal_return=-8.0601 shifted_return=-11.5046
+arm=prior-only members=4 in_region=0.000 loss_mean=1.7246 loss_min=1.4215 loss_max=1.9955 diversity_tv=0.5699 diversity_kl=1.5063 nominal_return=-11.1771 shifted_return=-15.8711
+arm=sgd-swa members=4 in_region=1.000 loss_mean=1.1321 nominal_return=-8.4859 shifted_return=-12.9932 weight_vs_last_rmse=1.195685
+arm=distilled-student in_region=0.000 nominal_return=-7.8173 shifted_return=-10.9763 final_kl=0.010651
+arm=label-student-control in_region=0.000 nominal_return=-4.0961 shifted_return=-5.8779 final_kl=0.487248
+distillation student_kl=0.014752 student_tv=0.057720 student_kl_max=0.100389 pinsker_return_bound=80.654855 control_kl=6.452800 control_tv=0.605803 control_kl_max=15.505379 control_pinsker=1002.371476
+ensemble_draw once_per_episode=-8.5811 se=0.756733 per_step_bma=-8.0601
+contrast satisficing_vs_knee_return=-1.9865 satisficing_vs_radical_return=-4.0827
+warm_entry stops=["ceiling", "ceiling", "ceiling", "ceiling"] steps=[50, 50, 50, 50] radical_trace_first=1.9176 radical_trace_last=0.5391
+satisficing_accept=830/1200 swa_centers=4
+runtime_ok

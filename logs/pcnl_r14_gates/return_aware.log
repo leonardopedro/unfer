@@ -1,0 +1,37 @@
+    Blocking waiting for file lock on build directory
+   Compiling pcnl v0.1.0 (/home/leo/Projects/unfer/pcnl)
+warning: unknown and unstable feature specified for `-Ctarget-feature`: `fullfp16`
+  |
+  = note: it is still passed through to the codegen backend, but use of this feature might be unsound and the behavior of this feature can change in the future
+  = help: you might have meant: `fp16`
+
+warning: `pcnl` (lib) generated 1 warning
+warning: `pcnl` (example "r14_return_aware") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 35.73s
+     Running `target/release/examples/r14_return_aware`
+r14=p5-return-aware seeds=3 members=3 dim=15 tau=1.2 tau_return_arm=1.0999999999999999 kappa_return=15000 floor_margin=0.03 objective=kappa*hinge(L-tau)+alpha*L+kappa_R*hinge(R_floor-Rhat)
+seed=401 pcnl_accept=0/900
+seed=401 arm=knee-stopped in_region=1.000 surrogate=-0.17281 diversity_tv=0.2044 nominal_return=-6.5367 nominal_se=0.617410 shifted_return=-9.4527 shifted_se=0.928119
+seed=401 arm=satisficing-pcnl-return in_region=1.000 surrogate=-0.17281 diversity_tv=0.2044 nominal_return=-6.5367 nominal_se=0.617410 shifted_return=-9.4527 shifted_se=0.928119
+seed=401 arm=satisficing-hitrun in_region=1.000 surrogate=-0.17359 diversity_tv=0.2956 nominal_return=-7.1692 nominal_se=0.646770 shifted_return=-10.6408 shifted_se=0.995737
+seed=401 arm=satisficing-hitrun-return in_region=1.000 surrogate=-0.16999 diversity_tv=0.1762 nominal_return=-5.9208 nominal_se=0.506284 shifted_return=-8.6268 shifted_se=0.813969
+seed=401 paired hitrun_return_minus_hitrun nominal=+1.2484 se=0.2418 shifted=+2.0140 hitrun_return_minus_knee nominal=+0.6159 se=0.2142
+seed=502 pcnl_accept=0/900
+seed=502 arm=knee-stopped in_region=1.000 surrogate=-0.17316 diversity_tv=0.2538 nominal_return=-5.8252 nominal_se=0.527196 shifted_return=-8.3686 shifted_se=0.844154
+seed=502 arm=satisficing-pcnl-return in_region=1.000 surrogate=-0.17316 diversity_tv=0.2538 nominal_return=-5.8252 nominal_se=0.527196 shifted_return=-8.3686 shifted_se=0.844154
+seed=502 arm=satisficing-hitrun in_region=1.000 surrogate=-0.17339 diversity_tv=0.3833 nominal_return=-8.0707 nominal_se=0.755152 shifted_return=-12.1181 shifted_se=1.158463
+seed=502 arm=satisficing-hitrun-return in_region=1.000 surrogate=-0.16998 diversity_tv=0.1885 nominal_return=-6.4112 nominal_se=0.549770 shifted_return=-9.0607 shifted_se=0.837318
+seed=502 paired hitrun_return_minus_hitrun nominal=+1.6595 se=0.3218 shifted=+3.0574 hitrun_return_minus_knee nominal=-0.5860 se=0.1517
+seed=603 pcnl_accept=0/900
+seed=603 arm=knee-stopped in_region=1.000 surrogate=-0.17296 diversity_tv=0.2088 nominal_return=-5.6980 nominal_se=0.516026 shifted_return=-8.2774 shifted_se=0.833224
+seed=603 arm=satisficing-pcnl-return in_region=1.000 surrogate=-0.17296 diversity_tv=0.2088 nominal_return=-5.6980 nominal_se=0.516026 shifted_return=-8.2774 shifted_se=0.833224
+seed=603 arm=satisficing-hitrun in_region=1.000 surrogate=-0.17346 diversity_tv=0.3215 nominal_return=-9.5344 nominal_se=0.883677 shifted_return=-13.6231 shifted_se=1.326908
+seed=603 arm=satisficing-hitrun-return in_region=1.000 surrogate=-0.16995 diversity_tv=0.1580 nominal_return=-5.7188 nominal_se=0.485549 shifted_return=-8.2550 shifted_se=0.782032
+seed=603 paired hitrun_return_minus_hitrun nominal=+3.8157 se=0.4651 shifted=+5.3681 hitrun_return_minus_knee nominal=-0.0208 se=0.1024
+aggregate arm=knee-stopped in_region_mean=1.000 surrogate_mean=-0.17298 diversity_tv_mean=0.2223 nominal_return_mean=-6.0200 nominal_se_across_seeds=0.2610 shifted_return_mean=-8.6996 shifted_se_across_seeds=0.3775
+aggregate arm=satisficing-pcnl-return in_region_mean=1.000 surrogate_mean=-0.17298 diversity_tv_mean=0.2223 nominal_return_mean=-6.0200 nominal_se_across_seeds=0.2610 shifted_return_mean=-8.6996 shifted_se_across_seeds=0.3775
+aggregate arm=satisficing-hitrun in_region_mean=1.000 surrogate_mean=-0.17348 diversity_tv_mean=0.3335 nominal_return_mean=-8.2581 nominal_se_across_seeds=0.6892 shifted_return_mean=-12.1273 shifted_se_across_seeds=0.8609
+aggregate arm=satisficing-hitrun-return in_region_mean=1.000 surrogate_mean=-0.16997 diversity_tv_mean=0.1743 nominal_return_mean=-6.0169 nominal_se_across_seeds=0.2056 shifted_return_mean=-8.6475 shifted_se_across_seeds=0.2328
+paired hitrun_return_vs_hitrun nominal_delta=+2.2412 se_across_seeds=0.7961 shifted_delta=+3.4798 se=0.9910
+paired hitrun_return_vs_knee nominal_delta=+0.0031 se_across_seeds=0.3472
+return_floor_mean=-0.14298 objective=return-aware target (changes pi_tau_kappa_alpha)

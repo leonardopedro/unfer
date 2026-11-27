@@ -1,0 +1,27 @@
+warning: unknown and unstable feature specified for `-Ctarget-feature`: `fullfp16`
+  |
+  = note: it is still passed through to the codegen backend, but use of this feature might be unsound and the behavior of this feature can change in the future
+  = help: you might have meant: `fp16`
+
+warning: `pcnl` (lib) generated 1 warning
+warning: `pcnl` (example "r14_plateau_quadrature") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 0.12s
+     Running `target/release/examples/r14_plateau_quadrature`
+r14_gate=P1
+target tau=0.5 kappa=20 alpha=0 delta=0.05 hinge=huberized
+target_identity=6211192344772794886
+loss broad_sample=0.396040 spike_sample=0.000000
+ref z=0.97849156 broad=0.584141 spike=0.081407 mean=+0.000000 second=0.867025
+T=0.5 accept=78474/80000 rhat=1.00059 rhat_broad=1.00029 rhat_spike=1.00011 ess_bulk=4235.7 ess_broad=16852.9 ess_spike=25030.8 ess_tail=9243.5
+T=0.5 broad=0.587433 ref_broad=0.585272 spike=0.079800 ref_spike=0.081564 mean=-0.000307 ref_mean=+0.000000 second=0.852874 ref_second=0.858461
+T=0.5 pass=true (mass_broad=true mass_spike=true mean=true second=true mixing=true regions=true)
+T=1 accept=78477/80000 rhat=1.00062 rhat_broad=1.00017 rhat_spike=1.00009 ess_bulk=3981.8 ess_broad=16214.3 ess_spike=25052.2 ess_tail=7876.7
+T=1 broad=0.588133 ref_broad=0.584141 spike=0.082167 ref_spike=0.081407 mean=+0.006470 ref_mean=+0.000000 second=0.860550 ref_second=0.867025
+T=1 pass=true (mass_broad=true mass_spike=true mean=true second=true mixing=true regions=true)
+T=2 accept=78644/80000 rhat=1.00058 rhat_broad=1.00012 rhat_spike=0.99994 ess_bulk=4023.9 ess_broad=16101.4 ess_spike=24661.7 ess_tail=8947.0
+T=2 broad=0.580467 ref_broad=0.582863 spike=0.080733 ref_spike=0.081228 mean=+0.008471 ref_mean=+0.000000 second=0.871928 ref_second=0.877089
+T=2 pass=true (mass_broad=true mass_spike=true mean=true second=true mixing=true regions=true)
+control sharp_broad=0.000000 sharp_spike=0.999975 radical_endpoint=+0.000000 radical_loss=0.000000
+swa snapshots=[-0.2, 0.1, 0.3] average=[0.06666667] mean_loss=0.043333 swa_loss=0.001111 convex_barrier=0.000000 two_basin_barrier=1.000000 pass=true
+midpoint_alignment_demo=0.000000
+gate=true
