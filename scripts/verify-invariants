@@ -183,16 +183,24 @@ check "S29: generated C header present" \
 # workspace-global so unfer enforces the same rule as a grep gate over
 # unfer_consensus only, split at the module's `#[cfg(test)]` marker so test
 # fixtures may seed from the clock (net.rs) while production code may not.
-# signing.rs is the one documented exception (celld's explicit-allow style):
+# signing.rs is the one file-level exception (celld's explicit-allow style):
 # Keypair::generate mints key material as an INPUT to the state machine, not a
 # state transition.
+#
+# A wait deadline is the same kind of input boundary, so it uses celld's
+# line-level allow instead of a second file exclusion: `ConsensusEngine::wait`
+# times out a CALLER's observation, and cannot do that without reading a clock.
+# A line carrying `h1.15-exception` is dropped before the grep verdict, so any
+# unmarked read (a new one included) still fails the gate; engine.rs's two
+# marked lines are the whole exception.
 check "H1.15: unfer_consensus production code reads no clock/RNG (pure-function ledgers)" \
     bash -c 'src="$(for f in "$0"/unfer_consensus/src/*.rs; do
         case "$f" in */signing.rs) continue;; esac
         n=$(grep -n "^#\[cfg(test)\]" "$f" | head -1 | cut -d: -f1)
         if [ -n "$n" ]; then head -n $((n - 1)) "$f"; else cat "$f"; fi
     done)"
-    ! printf "%s\n" "$src" | grep -nE "SystemTime|UNIX_EPOCH|Instant::now|thread_rng|OsRng|rand::random|getrandom"' "$repo_root"
+    ! printf "%s\n" "$src" | grep -nE "SystemTime|UNIX_EPOCH|Instant::now|thread_rng|OsRng|rand::random|getrandom" \
+        | grep -v "h1.15-exception"' "$repo_root"
 
 # --- H2: census artifacts are generated from the one registry, no drift ---
 # scripts/gen_symbol_artifacts regenerates EXPECTED_SYMBOLS.txt / _ZENODO /
@@ -237,6 +245,18 @@ check "H12: notes implemented dir has the four categories" \
 # numeric constructors). Zero actionable hits required.
 check_py "H12: duplication scan has zero actionable hits" \
     python3 "$repo_root/scripts/duplication"
+
+# --- H13: markdown links that only resolve because a sibling is checked out ---
+# A `../../timepiece/...` link is green on any machine that has the workspace
+# layout and unverifiable on a lone checkout, and the same held for the
+# ATTRIBUTION ledger's claims: both were locally green while CI had nothing to
+# resolve them against, so the failure could only be discovered after a push.
+# This gate enumerates the link graph's escaping targets and requires each
+# sibling to be materialized by .github/workflows/linkcheck.yml (parsed from the
+# workflow, so the two cannot drift) or documented as unmaterializable in
+# scripts/check-links. Adding such a link now turns the local gate red first.
+check_py "H13: sibling-checkout links are materialized by the linkcheck job" \
+    python3 "$repo_root/scripts/check-links" --sibling-deps
 
 # --- X3: AGENTS.md knowledge-extraction budget ---
 # X3 extracted the S30* essays into docs/ pages (118K -> 16K) and left

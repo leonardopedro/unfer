@@ -25,11 +25,17 @@ pub trait ConsensusEngine: Send + Sync {
     /// Bounded wait for a single submission. A deadline that passes returns
     /// [`UnknownReason::TimedOut`], never success and never a refusal -- the
     /// entry may still commit after the caller stops waiting.
+    ///
+    /// The clock reads below are a caller-side observation deadline, not a
+    /// state transition: nothing in the log depends on when the caller gave up.
+    /// They carry the `h1.15-exception` marker the determinism gate allows on a
+    /// line, rather than excluding this file the way `signing.rs` is excluded.
     fn wait(&self, id: SubmissionId, timeout: Duration) -> Receipt {
-        let deadline = Instant::now() + timeout;
+        let deadline = Instant::now() + timeout; // h1.15-exception: wait deadline
         loop {
+            let expired = Instant::now() >= deadline; // h1.15-exception: wait deadline
             match self.receipt(id) {
-                ReceiptState::Pending if Instant::now() < deadline => {
+                ReceiptState::Pending if !expired => {
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 state => return Receipt { id, state },

@@ -751,7 +751,8 @@ mod tests {
         let support = [([1, 0, 0, 0], 1.0)];
         let inner = model.hermite_state(&support);
         let expected = phase_rotate_inner(
-            &h.apply(&inner, ActionLimits::default()).expect("finite action"),
+            &h.apply(&inner, ActionLimits::default())
+                .expect("finite action"),
             theta,
         );
         let actual = rotated
@@ -774,9 +775,65 @@ mod tests {
         let nested: NestedVector = model.one_particle(&support);
         let rotated_seed = phase_rotate_nested(&nested, theta);
         let expect_phase = occupation_phase(&[1, 0, 0, 0], theta);
-        assert!(rotated_seed
-            .values()
-            .all(|amplitude| (amplitude - expect_phase * nested.values().next().unwrap()).norm() < 1e-15));
+        assert!(rotated_seed.values().all(|amplitude| {
+            (amplitude - expect_phase * nested.values().next().unwrap()).norm() < 1e-15
+        }));
+    }
+
+    #[test]
+    fn change_of_basis_changes_the_window_operator_matrix() {
+        // The null control is a basis change, not an invariance of the written
+        // tree: transporting `h -> U h U†` with `theta != 0` changes the
+        // projected operator inside the declared window, while the P12 suite's
+        // exact response stays zero because the seed is transported with it.
+        let theta = [0.0, 0.3, -0.45, 1.1];
+        let model = ScalarMomCont::unit();
+        let window = ScalarMomCont::window_labels_of_parity(8, 1);
+        let (quadratures, momenta) = phase_rotated_quadratures(theta);
+        let h = model.hamiltonian();
+        let rotated = model.hamiltonian_with(&quadratures, &momenta);
+
+        // One column of `P h P` per window label, projected onto the window
+        // exactly as the suite's dense window reference does.
+        let columns = |operator: &InnerExpr| {
+            window
+                .iter()
+                .map(|label| {
+                    let image = operator
+                        .d_gamma(
+                            &NestedVector::from([(label.clone(), Complex64::new(1.0, 0.0))]),
+                            ActionLimits::default(),
+                        )
+                        .expect("finite action");
+                    let projected: BTreeMap<JointOuterBasis, Complex64> = image
+                        .into_iter()
+                        .filter(|(target, _)| window.contains(target))
+                        .collect();
+                    projected
+                })
+                .collect::<Vec<_>>()
+        };
+        let base = columns(&h);
+        let transported = columns(&rotated);
+
+        // Frobenius norm of `P h' P - P h P`: the scalar the P12 record stores as
+        // `operator_matrix_difference` (78.616 on this window, so a floor of 50
+        // pins a substantial change without pinning its digits).
+        let mut squared = 0.0;
+        for (base_column, transported_column) in base.iter().zip(transported.iter()) {
+            let mut labels: BTreeSet<&JointOuterBasis> = base_column.keys().collect();
+            labels.extend(transported_column.keys());
+            for label in labels {
+                let left = base_column.get(label).copied().unwrap_or_default();
+                let right = transported_column.get(label).copied().unwrap_or_default();
+                squared += (left - right).norm_sqr();
+            }
+        }
+        let difference = squared.sqrt();
+        assert!(
+            difference > 50.0,
+            "the transported operator must differ inside the window, got {difference}"
+        );
     }
 
     #[test]

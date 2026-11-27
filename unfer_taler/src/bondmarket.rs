@@ -50,7 +50,8 @@ use sha2::{Digest, Sha256};
 use unfer_consensus::certs::{CertificateLedger, MintAuthority, commit_coin};
 use unfer_consensus::mathbond::{MathBondLedger, compute_bond_id};
 use unfer_consensus::mathbond_market::{MarketLedger, compute_pool_id};
-use unfer_consensus::signing::{Keypair, sign_transaction};
+use unfer_consensus::signing::{Keypair, canonical_frame, sign_transaction};
+use unfer_protocol::distributed::MAX_FRAME_BYTES;
 use unfer_protocol::{
     CertId, CertificateOp, CertificateOpKind, Code, CoinRef, ConsensusTransaction, Diagnostic,
     MarketOp, MarketOpKind, MathBondId, MathBondOp, MathBondOpKind, MathBondState, MathBondTrigger,
@@ -882,13 +883,29 @@ impl BondMarketService {
     ) -> Result<Option<MathBondTrigger>, Diagnostic> {
         let did = signer.did();
         let seq = self.next_seq();
-        let outcome = self.bonds.apply_op(&did, &kind, seq)?;
         let mut tx = ConsensusTransaction::MathBondOp(MathBondOp {
-            did,
-            kind,
+            did: did.clone(),
+            kind: kind.clone(),
             seq,
             signature: [0u8; 64],
         });
+        // Refuse an op the signature frame cannot carry *before* it touches
+        // ledger state. `sign_transaction` panics on an unframeable transaction,
+        // and `apply_op` below would already have applied the mutation — so an
+        // oversize `SubmitProof` (bounded only by the trigger's
+        // `max_export_bytes`) would otherwise leave the service corrupted.
+        let framed = canonical_frame(&tx).len();
+        if framed > MAX_FRAME_BYTES {
+            return Err(Diagnostic::new(
+                Code::MATHBOND_PROOF_OVERSIZE,
+                format!(
+                    "signed transaction is {framed} bytes, over the {MAX_FRAME_BYTES}-byte \
+                     consensus frame bound; the proof is too large to travel as a SubmitProof"
+                ),
+                Severity::Error,
+            ));
+        }
+        let outcome = self.bonds.apply_op(&did, &kind, seq)?;
         sign_transaction(&mut tx, signer);
         self.ops.push(tx);
         Ok(outcome)
@@ -1048,21 +1065,68 @@ mod tests {
 
     #[test]
     fn triggered_bond_pays_bounty_and_catastrophe() {
-        // Uses the real nanoda-valid confluence export from prob_kernel's
-        // fixtures (the same proof the mathbond ledger test triggers on).
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../prob_kernel/tests/fixtures/confluence.ndjson"
+        // The ledger test in `unfer_consensus::mathbond` already exercises the
+        // real 788 KB confluence export against nanoda. This test is about
+        // settlement economics, so it uses the smallest export that reduces to
+        // `true`: the 788 KB fixture's JSON framing is ~2.66 MB, past the 1 MiB
+        // consensus frame bound a *signed* `SubmitProof` must fit. (The
+        // `oversize_proof_is_refused_without_mutating_the_ledger` test covers
+        // the refusal path.)
+        const TINY_VALID_EXPORT: &str = concat!(
+            r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"},"lean":{"githash":"2fcce7258eeb6e324366bc25f9058293b04b7547","version":"4.27.0-rc1"}}}"#,
+            "\n",
+            r#"{"in":1,"str":{"pre":0,"str":"P"}}"#,
+            "\n",
+            r#"{"ie":0,"sort":0}"#,
+            "\n",
+            r#"{"in":2,"str":{"pre":1,"str":"mk"}}"#,
+            "\n",
+            r#"{"const":{"name":1,"us":[]},"ie":1}"#,
+            "\n",
+            r#"{"in":3,"str":{"pre":1,"str":"rec"}}"#,
+            "\n",
+            r#"{"in":4,"str":{"pre":0,"str":"u_1"}}"#,
+            "\n",
+            r#"{"il":1,"param":4}"#,
+            "\n",
+            r#"{"in":5,"str":{"pre":0,"str":"motive"}}"#,
+            "\n",
+            r#"{"in":6,"str":{"pre":0,"str":"t"}}"#,
+            "\n",
+            r#"{"ie":2,"sort":1}"#,
+            "\n",
+            r#"{"forallE":{"binderInfo":"default","body":2,"name":6,"type":1},"ie":3}"#,
+            "\n",
+            r#"{"in":7,"str":{"pre":0,"str":"mk"}}"#,
+            "\n",
+            r#"{"bvar":0,"ie":4}"#,
+            "\n",
+            r#"{"const":{"name":2,"us":[]},"ie":5}"#,
+            "\n",
+            r#"{"app":{"arg":5,"fn":4},"ie":6}"#,
+            "\n",
+            r#"{"bvar":2,"ie":7}"#,
+            "\n",
+            r#"{"app":{"arg":4,"fn":7},"ie":8}"#,
+            "\n",
+            r#"{"forallE":{"binderInfo":"default","body":8,"name":6,"type":1},"ie":9}"#,
+            "\n",
+            r#"{"forallE":{"binderInfo":"default","body":9,"name":7,"type":6},"ie":10}"#,
+            "\n",
+            r#"{"forallE":{"binderInfo":"implicit","body":10,"name":5,"type":3},"ie":11}"#,
+            "\n",
+            r#"{"ie":12,"lam":{"binderInfo":"default","body":4,"name":7,"type":6}}"#,
+            "\n",
+            r#"{"ie":13,"lam":{"binderInfo":"default","body":12,"name":5,"type":3}}"#,
+            "\n",
+            r#"{"inductive":{"types":[{"all":[1],"ctors":[2],"isRec":false,"isReflexive":false,"isUnsafe":false,"levelParams":[],"name":1,"numIndices":0,"numNested":0,"numParams":0,"type":0}],"ctors":[{"cidx":0,"induct":1,"isUnsafe":false,"levelParams":[],"name":2,"numFields":0,"numParams":0,"type":1}],"recs":[{"all":[1],"isUnsafe":false,"k":true,"levelParams":[4],"name":3,"numIndices":0,"numMinors":1,"numMotives":1,"numParams":0,"rules":[{"ctor":2,"nfields":0,"rhs":13}],"type":11}]}}"#,
+            "\n",
+            r#"{"in":8,"str":{"pre":0,"str":"pf"}}"#,
+            "\n",
+            r#"{"thm":{"name":8,"levelParams":[],"type":1,"value":5}}"#,
+            "\n",
         );
-        let export_bytes = match std::fs::read(path) {
-            Ok(b) => b,
-            Err(_) => {
-                eprintln!(
-                    "confluence.ndjson fixture not available; skipping triggered_bond_pays_bounty_and_catastrophe"
-                );
-                return;
-            }
-        };
+        let export_bytes = TINY_VALID_EXPORT.as_bytes().to_vec();
 
         let auth = authority();
         let sponsor = Keypair::generate();
@@ -1127,6 +1191,49 @@ mod tests {
             "investors are wiped out on trigger"
         );
         assert_eq!(svc.certs().total_supply(), 16_000);
+    }
+
+    /// A proof the trigger accepts by size can still be too large to *sign*.
+    /// That must be refused before the ledger mutates: `sign_transaction`
+    /// panics on an unframeable transaction, and the trigger would otherwise
+    /// already have fired and settled the bond's state.
+    #[test]
+    fn oversize_proof_is_refused_without_mutating_the_ledger() {
+        let auth = authority();
+        let sponsor = Keypair::generate();
+        let investor = Keypair::generate();
+        let researcher = Keypair::generate();
+        let mut svc = BondMarketService::new(Keypair::generate(), MintAuthority::Only(auth.did()));
+        let collateral = mint_to(&mut svc, &auth, &sponsor.did(), 10_000, [1u8; 32]);
+        let money = mint_to(&mut svc, &auth, &investor.did(), 6_000, [2u8; 32]);
+        // `trigger()` already declares a 16 MiB proof bound, so the ledger's own
+        // size check passes and only the signing frame refuses this proof.
+        let bond_id = svc
+            .issue_bond(
+                &sponsor,
+                trigger(),
+                10_000,
+                500,
+                1000,
+                &researcher.did(),
+                collateral,
+            )
+            .unwrap();
+        svc.invest(&investor, bond_id, 6_000, money).unwrap();
+        let ops_before = svc.ops().len();
+        let state_before = svc.bonds().bond(&bond_id).unwrap().state;
+
+        let oversize = vec![b'{'; 2 * 1024 * 1024];
+        let err = svc
+            .submit_proof(&researcher, bond_id, oversize)
+            .expect_err("an unframeable proof must be refused, not panic");
+        assert_eq!(err.code, Code::MATHBOND_PROOF_OVERSIZE, "{err:?}");
+        assert_eq!(svc.ops().len(), ops_before, "no op may be appended");
+        assert_eq!(
+            svc.bonds().bond(&bond_id).unwrap().state,
+            state_before,
+            "the refusal must not touch the bond's state"
+        );
     }
 
     #[test]

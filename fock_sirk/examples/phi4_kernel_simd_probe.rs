@@ -1,12 +1,17 @@
-//! Explicit-NEON complex `axpy`/`dot` against the committed scalar kernels.
+//! Explicit-SIMD complex `axpy`/`dot`/`norm` against the committed scalar
+//! kernels.
 //!
-//! The rational-Krylov loop spends its non-`gemv` time in `coords_inner_product`
-//! and `coords_axpy` (`joint_sirk.rs`), both scalar `Complex<f64>` loops. This
-//! probe builds the same two kernels with NEON intrinsics — deinterleaving the
-//! array-of-structs pairs with `vuzp1q/vuzp2q`, four independent accumulators
-//! for the inner product to break the dependent-add chain — and times them
-//! against the committed shape (zero-entry skip plus the per-element
-//! non-finiteness test).
+//! The rational-Krylov loop spends its non-`gemv` time in `coords_inner_product`,
+//! `coords_axpy` and `coords_norm` (`joint_sirk.rs`), all scalar
+//! `Complex<f64>` loops. This
+//! probe rebuilds the inner product with NEON intrinsics on `aarch64` and with
+//! AVX2/FMA intrinsics on `x86_64`, the `axpy` with NEON on `aarch64` and
+//! AVX2 on `x86_64`, and the `norm` with AVX2 on `x86_64` only (no NEON `norm`
+//! was asked for or measured) — deinterleaving
+//! the array-of-structs pairs with `vuzp1q/vuzp2q` (NEON) or
+//! `permute2f128`+`unpacklo/hi` (AVX2), with independent accumulators to break
+//! the dependent-add chain — and times them against the committed shape
+//! (zero-entry skip plus the per-element non-finiteness test).
 //!
 //! ```text
 //! cargo run -q -p fock_sirk --release --example phi4_kernel_simd_probe
@@ -22,6 +27,37 @@
 //! | `axpy` | `2.29-2.31 us` | `0.93-0.94 us` | `2.45-2.48x` |
 //! | `dot` | `1.44-2.81 us` | `1.39 us` | `1.03-2.07x` |
 //!
+//! The `x86_64` kernel, on this host (`NPROBE_N=2380`, rows 8, reps 400; and
+//! `NPROBE_N=4845`, rows 16):
+//!
+//! | kernel | scalar | AVX2 | ratio |
+//! |---|---|---|---|
+//! | `dot` (`n = 2380`, two runs) | `2.975-3.434 us` | `1.246-1.255 us` | `2.37-2.76x` |
+//! | `axpy` (`n = 2380`, two runs) | `6.791-7.008 us` | `2.537-2.559 us` | `2.65-2.76x` |
+//! | `dot` (`n = 4845`, two runs) | `6.121-6.537 us` | `2.692-2.812 us` | `2.18-2.43x` |
+//! | `axpy` (`n = 4845`, two runs) | `13.705-14.563 us` | `5.555-5.982 us` | `2.43-2.47x` |
+//! | `norm` (`n = 2380`, two runs) | `85.413-86.761 us` | `0.892-0.899 us` | `94.97-97.23x` |
+//! | `norm` (`n = 4845`, two runs) | `174.123-174.330 us` | `2.081-2.188 us` | `79.59-83.77x` |
+//!
+//! The `norm` row is not in the same regime as the other two: the scalar
+//! reference is a `hypot` fold, two libm calls per entry, so the kernel's
+//! `re²+im²` sum plus one `sqrt` is two orders of magnitude faster
+//! (`85–87 us` against `0.89 us` at `n = 2380`). That is a kernel-level number
+//! only — `coords_norm` runs once per Arnoldi step over one vector, so at
+//! `C = 26` it is `174 us × 916` steps `= 0.16 s` of a `13.6 s` solve, and the
+//! end-to-end A/B cannot resolve it (`13.544–14.663 s` against
+//! `13.772–14.633 s`, three runs each). It reassociates like `dot` (a `hypot`
+//! fold has no vector form that keeps its last bits): agreement is `1.8e-15`
+//! relative at `n = 2380` and exact at `4845`, and at `C = 26` it moves the
+//! return probability from `9.79979792832510244e-1` to `9.79979792832513574e-1`
+//! with `915 → 916` steps.
+//!
+//! The other two kernels: `dot` agrees to `7.3e-15` and `3.2e-15` relative. The `axpy` kernel
+//! reassociates nothing (unfused multiply and add in the scalar loop's order),
+//! so its agreement is exactly zero on these inputs and its solve-time effect
+//! is a pure speedup. The `dot` gain is smaller than NEON's because LLVM
+//! already auto-vectorises the scalar loop in this build.
+//!
 //! The `dot` row is deliberately a range: the *scalar reference* is not
 //! reliably scalar across builds -- LLVM vectorises this loop in some
 //! compilation contexts (`1.44 us`) and not in others (`2.81 us`) -- so the
@@ -30,14 +66,17 @@
 //! in and timed at `C = 26` the NEON path took `dot` from `1.65 s` to `0.44 s`
 //! (`3.75x`) and the solve from `9.760 s` to `8.528 s` (`12.6 %`). That, not
 //! the table above, is the number §5.12 quotes. The path **is** the committed
-//! one on `aarch64` (`joint_sirk::coords_inner_product`), kept re-measurable
-//! here against the scalar fallback an x86 host still runs. The reassociation
-//! moves the solve's last bits (`probability` differs at `1.6e-16`, `917` vs
-//! `915` iterations), so the frozen sweep record was regenerated on this host,
-//! and — because the path is `aarch64`-only — an x86 host keeps the scalar path
-//! and produces different digits from the same commit.
+//! one on `aarch64` (`joint_sirk::coords_inner_product`), and on `x86_64` the
+//! AVX2 kernel is committed whenever `is_x86_feature_detected!` reports both
+//! `avx2` and `fma`, with the scalar loop as the fallback. Both reassociate the
+//! sum: NEON moves the solve's last bits (`probability` differs at `1.6e-16`,
+//! `917` vs `915` iterations), and AVX2 moved the `C = 20` probability by
+//! `3.7e-15` with `528 → 527` iterations. The frozen sweep record was generated
+//! on the scalar `x86_64` path before the AVX2 kernel existed, so its last bits
+//! are that path's; the `axpy` kernel was added afterwards and changes no
+//! digit at all.
 //!
-//! On a non-`aarch64` host only the scalar timings are reported.
+//! On a CPU without the tested features only the scalar timings are reported.
 
 use num_complex::Complex;
 use std::hint::black_box;
@@ -69,6 +108,15 @@ fn scalar_axpy(a: &mut [C], b: &[C], scale: C) -> bool {
     true
 }
 
+/// The committed `coords_norm` fallback: a `hypot` fold over the non-zero
+/// entries.
+fn scalar_norm(a: &[C]) -> f64 {
+    let zero = C::new(0.0, 0.0);
+    a.iter()
+        .filter(|x| **x != zero)
+        .fold(0.0_f64, |norm, x| norm.hypot(x.re).hypot(x.im))
+}
+
 /// The committed `coords_inner_product`: one accumulator, zero entries skipped.
 fn scalar_dot(a: &[C], b: &[C]) -> C {
     let zero = C::new(0.0, 0.0);
@@ -80,6 +128,205 @@ fn scalar_dot(a: &[C], b: &[C]) -> C {
         sum += x.conj() * y;
     }
     sum
+}
+
+#[cfg(target_arch = "x86_64")]
+mod avx2 {
+    use super::C;
+    use core::arch::x86_64::*;
+
+    /// The committed `x86_64` `norm`: four complex per vector, `re²+im²` in
+    /// two accumulator pairs, one `sqrt`. Reassociates by construction.
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn norm(a: &[C]) -> f64 {
+        #[inline]
+        #[target_feature(enable = "avx2,fma")]
+        unsafe fn load(ap: *const f64, offset: usize) -> (__m256d, __m256d) {
+            let av0 = unsafe { _mm256_loadu_pd(ap.add(offset)) };
+            let av1 = unsafe { _mm256_loadu_pd(ap.add(offset + 4)) };
+            let at0 = _mm256_permute2f128_pd(av0, av1, 0x20);
+            let at1 = _mm256_permute2f128_pd(av0, av1, 0x31);
+            (_mm256_unpacklo_pd(at0, at1), _mm256_unpackhi_pd(at0, at1))
+        }
+
+        #[inline]
+        #[target_feature(enable = "avx2,fma")]
+        unsafe fn horizontal(v: __m256d) -> f64 {
+            let lo = _mm256_castpd256_pd128(v);
+            let hi = _mm256_extractf128_pd(v, 1);
+            let pair = _mm_add_pd(lo, hi);
+            _mm_cvtsd_f64(_mm_add_sd(pair, _mm_unpackhi_pd(pair, pair)))
+        }
+
+        let n = a.len();
+        let ap = a.as_ptr() as *const f64;
+        let sign = _mm256_set1_pd(-0.0);
+        let mut sq0 = _mm256_setzero_pd();
+        let mut sq1 = _mm256_setzero_pd();
+        let mut big = _mm256_setzero_pd();
+        let mut i = 0;
+        while i + 8 <= n {
+            let (ar0, ai0) = unsafe { load(ap, 2 * i) };
+            let (ar1, ai1) = unsafe { load(ap, 2 * i + 8) };
+            sq0 = _mm256_fmadd_pd(ar0, ar0, _mm256_fmadd_pd(ai0, ai0, sq0));
+            sq1 = _mm256_fmadd_pd(ar1, ar1, _mm256_fmadd_pd(ai1, ai1, sq1));
+            big = _mm256_max_pd(
+                big,
+                _mm256_max_pd(_mm256_andnot_pd(sign, ar0), _mm256_andnot_pd(sign, ai0)),
+            );
+            big = _mm256_max_pd(
+                big,
+                _mm256_max_pd(_mm256_andnot_pd(sign, ar1), _mm256_andnot_pd(sign, ai1)),
+            );
+            i += 8;
+        }
+        while i + 4 <= n {
+            let (ar, ai) = unsafe { load(ap, 2 * i) };
+            sq0 = _mm256_fmadd_pd(ar, ar, _mm256_fmadd_pd(ai, ai, sq0));
+            big = _mm256_max_pd(
+                big,
+                _mm256_max_pd(_mm256_andnot_pd(sign, ar), _mm256_andnot_pd(sign, ai)),
+            );
+            i += 4;
+        }
+        let total = unsafe { horizontal(_mm256_add_pd(sq0, sq1)) };
+        let largest = unsafe { horizontal(big) };
+        let magnitude = total.sqrt();
+        let in_window = (1e-150..=1e150).contains(&largest) || largest == 0.0;
+        if !in_window || !magnitude.is_finite() {
+            return super::scalar_norm(a);
+        }
+        let mut norm = magnitude;
+        while i < n {
+            norm = norm.hypot(a[i].re).hypot(a[i].im);
+            i += 1;
+        }
+        norm
+    }
+
+    /// The committed `x86_64` `axpy`: four complex per vector, unfused mul+add
+    /// in the scalar loop's order, so the result is bit-identical.
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn axpy(a: &mut [C], b: &[C], scale: C) {
+        let n = a.len().min(b.len());
+        let ap = a.as_mut_ptr() as *mut f64;
+        let bp = b.as_ptr() as *const f64;
+        let sr = _mm256_set1_pd(scale.re);
+        let si = _mm256_set1_pd(scale.im);
+        let mut i = 0;
+        while i + 4 <= n {
+            let (av0, av1, bv0, bv1) = unsafe {
+                (
+                    _mm256_loadu_pd(ap.add(2 * i)),
+                    _mm256_loadu_pd(ap.add(2 * i + 4)),
+                    _mm256_loadu_pd(bp.add(2 * i)),
+                    _mm256_loadu_pd(bp.add(2 * i + 4)),
+                )
+            };
+            let at0 = _mm256_permute2f128_pd(av0, av1, 0x20);
+            let at1 = _mm256_permute2f128_pd(av0, av1, 0x31);
+            let ar = _mm256_unpacklo_pd(at0, at1);
+            let ai = _mm256_unpackhi_pd(at0, at1);
+            let bt0 = _mm256_permute2f128_pd(bv0, bv1, 0x20);
+            let bt1 = _mm256_permute2f128_pd(bv0, bv1, 0x31);
+            let br = _mm256_unpacklo_pd(bt0, bt1);
+            let bi = _mm256_unpackhi_pd(bt0, bt1);
+            let nr = _mm256_add_pd(
+                ar,
+                _mm256_sub_pd(_mm256_mul_pd(sr, br), _mm256_mul_pd(si, bi)),
+            );
+            let ni = _mm256_add_pd(
+                ai,
+                _mm256_add_pd(_mm256_mul_pd(sr, bi), _mm256_mul_pd(si, br)),
+            );
+            let r0 = _mm256_unpacklo_pd(nr, ni);
+            let r1 = _mm256_unpackhi_pd(nr, ni);
+            unsafe {
+                _mm256_storeu_pd(ap.add(2 * i), _mm256_permute2f128_pd(r0, r1, 0x20));
+                _mm256_storeu_pd(ap.add(2 * i + 4), _mm256_permute2f128_pd(r0, r1, 0x31));
+            }
+            i += 4;
+        }
+        while i < n {
+            a[i] += scale * b[i];
+            i += 1;
+        }
+    }
+
+    /// The committed `x86_64` kernel: four complex per vector, deinterleaved
+    /// with `permute2f128` + `unpacklo/hi`, two independent accumulator pairs.
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn dot(a: &[C], b: &[C]) -> C {
+        #[inline]
+        #[target_feature(enable = "avx2,fma")]
+        unsafe fn load(
+            ap: *const f64,
+            bp: *const f64,
+            offset: usize,
+        ) -> (__m256d, __m256d, __m256d, __m256d) {
+            let av0 = unsafe { _mm256_loadu_pd(ap.add(offset)) };
+            let av1 = unsafe { _mm256_loadu_pd(ap.add(offset + 4)) };
+            let bv0 = unsafe { _mm256_loadu_pd(bp.add(offset)) };
+            let bv1 = unsafe { _mm256_loadu_pd(bp.add(offset + 4)) };
+            let at0 = _mm256_permute2f128_pd(av0, av1, 0x20);
+            let at1 = _mm256_permute2f128_pd(av0, av1, 0x31);
+            let bt0 = _mm256_permute2f128_pd(bv0, bv1, 0x20);
+            let bt1 = _mm256_permute2f128_pd(bv0, bv1, 0x31);
+            (
+                _mm256_unpacklo_pd(at0, at1),
+                _mm256_unpackhi_pd(at0, at1),
+                _mm256_unpacklo_pd(bt0, bt1),
+                _mm256_unpackhi_pd(bt0, bt1),
+            )
+        }
+
+        #[inline]
+        #[target_feature(enable = "avx2,fma")]
+        unsafe fn horizontal(v: __m256d) -> f64 {
+            let lo = _mm256_castpd256_pd128(v);
+            let hi = _mm256_extractf128_pd(v, 1);
+            let pair = _mm_add_pd(lo, hi);
+            _mm_cvtsd_f64(_mm_add_sd(pair, _mm_unpackhi_pd(pair, pair)))
+        }
+
+        let n = a.len().min(b.len());
+        let ap = a.as_ptr() as *const f64;
+        let bp = b.as_ptr() as *const f64;
+        let mut re0 = _mm256_setzero_pd();
+        let mut im0 = _mm256_setzero_pd();
+        let mut re1 = _mm256_setzero_pd();
+        let mut im1 = _mm256_setzero_pd();
+        let mut i = 0;
+        while i + 8 <= n {
+            let (ar0, ai0, br0, bi0) = unsafe { load(ap, bp, 2 * i) };
+            let (ar1, ai1, br1, bi1) = unsafe { load(ap, bp, 2 * i + 8) };
+            re0 = _mm256_fmadd_pd(ar0, br0, re0);
+            re0 = _mm256_fmadd_pd(ai0, bi0, re0);
+            im0 = _mm256_fmadd_pd(ar0, bi0, im0);
+            im0 = _mm256_fnmadd_pd(ai0, br0, im0);
+            re1 = _mm256_fmadd_pd(ar1, br1, re1);
+            re1 = _mm256_fmadd_pd(ai1, bi1, re1);
+            im1 = _mm256_fmadd_pd(ar1, bi1, im1);
+            im1 = _mm256_fnmadd_pd(ai1, br1, im1);
+            i += 8;
+        }
+        while i + 4 <= n {
+            let (ar, ai, br, bi) = unsafe { load(ap, bp, 2 * i) };
+            re0 = _mm256_fmadd_pd(ar, br, re0);
+            re0 = _mm256_fmadd_pd(ai, bi, re0);
+            im0 = _mm256_fmadd_pd(ar, bi, im0);
+            im0 = _mm256_fnmadd_pd(ai, br, im0);
+            i += 4;
+        }
+        let re = unsafe { horizontal(_mm256_add_pd(re0, re1)) };
+        let im = unsafe { horizontal(_mm256_add_pd(im0, im1)) };
+        let mut sum = C::new(re, im);
+        while i < n {
+            sum += a[i].conj() * b[i];
+            i += 1;
+        }
+        sum
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -200,7 +447,17 @@ fn main() {
         }
     }
     let scalar_axpy_us = started.elapsed().as_secs_f64() * 1e6 / (reps * rows) as f64;
-    println!("scalar: dot {scalar_dot_us:.3} us/call, axpy {scalar_axpy_us:.3} us/call");
+
+    let started = Instant::now();
+    for _ in 0..reps {
+        for row in &basis {
+            let _ = black_box(scalar_norm(black_box(row)));
+        }
+    }
+    let scalar_norm_us = started.elapsed().as_secs_f64() * 1e6 / (reps * rows) as f64;
+    println!(
+        "scalar: dot {scalar_dot_us:.3} us/call, axpy {scalar_axpy_us:.3} us/call, norm {scalar_norm_us:.3} us/call"
+    );
 
     #[cfg(target_arch = "aarch64")]
     {
@@ -243,6 +500,65 @@ fn main() {
             (d1 - d2).norm() / d1.norm()
         );
     }
-    #[cfg(not(target_arch = "aarch64"))]
-    println!("neon: not built (this probe targets aarch64)");
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+        {
+            let started = Instant::now();
+            for _ in 0..reps {
+                for row in &basis {
+                    let _ = black_box(unsafe { avx2::dot(black_box(row), black_box(&w)) });
+                }
+            }
+            let avx2_dot_us = started.elapsed().as_secs_f64() * 1e6 / (reps * rows) as f64;
+
+            w.fill(C::new(0.0, 0.0));
+            let started = Instant::now();
+            for _ in 0..reps {
+                for row in &basis {
+                    unsafe { avx2::axpy(black_box(&mut w), black_box(row), scale) };
+                }
+            }
+            let avx2_axpy_us = started.elapsed().as_secs_f64() * 1e6 / (reps * rows) as f64;
+
+            let started = Instant::now();
+            for _ in 0..reps {
+                for row in &basis {
+                    let _ = black_box(unsafe { avx2::norm(black_box(row)) });
+                }
+            }
+            let avx2_norm_us = started.elapsed().as_secs_f64() * 1e6 / (reps * rows) as f64;
+            println!(
+                "avx2:   dot {avx2_dot_us:.3} us/call, axpy {avx2_axpy_us:.3} us/call, norm {avx2_norm_us:.3} us/call"
+            );
+            println!(
+                "ratio:  dot {:.2}x, axpy {:.2}x, norm {:.2}x",
+                scalar_dot_us / avx2_dot_us,
+                scalar_axpy_us / avx2_axpy_us,
+                scalar_norm_us / avx2_norm_us
+            );
+            let d1 = scalar_dot(&basis[0], &basis[1]);
+            let d2 = unsafe { avx2::dot(&basis[0], &basis[1]) };
+            let mut a1 = basis[0].clone();
+            let mut a2 = basis[0].clone();
+            scalar_axpy(&mut a1, &basis[1], scale);
+            unsafe { avx2::axpy(&mut a2, &basis[1], scale) };
+            let axpy_gap = a1
+                .iter()
+                .zip(&a2)
+                .map(|(x, y)| (x - y).norm())
+                .fold(0.0_f64, f64::max);
+            let n1 = scalar_norm(&basis[0]);
+            let n2 = unsafe { avx2::norm(&basis[0]) };
+            println!(
+                "agreement: axpy max |diff| {axpy_gap:.3e}, dot rel {:.3e}, norm rel {:.3e}",
+                (d1 - d2).norm() / d1.norm(),
+                (n1 - n2).abs() / n1
+            );
+        } else {
+            println!("avx2: not built (no AVX2/FMA on this CPU)");
+        }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    println!("simd: not built (this probe targets aarch64 and x86_64)");
 }
