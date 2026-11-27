@@ -1,10 +1,13 @@
-//! Explicit-SIMD complex `axpy`/`dot` against the committed scalar kernels.
+//! Explicit-SIMD complex `axpy`/`dot`/`norm` against the committed scalar
+//! kernels.
 //!
-//! The rational-Krylov loop spends its non-`gemv` time in `coords_inner_product`
-//! and `coords_axpy` (`joint_sirk.rs`), both scalar `Complex<f64>` loops. This
+//! The rational-Krylov loop spends its non-`gemv` time in `coords_inner_product`,
+//! `coords_axpy` and `coords_norm` (`joint_sirk.rs`), all scalar
+//! `Complex<f64>` loops. This
 //! probe rebuilds the inner product with NEON intrinsics on `aarch64` and with
-//! AVX2/FMA intrinsics on `x86_64`, and the `axpy` with NEON on `aarch64` and
-//! AVX2 on `x86_64` — deinterleaving
+//! AVX2/FMA intrinsics on `x86_64`, the `axpy` with NEON on `aarch64` and
+//! AVX2 on `x86_64`, and the `norm` with AVX2 on `x86_64` only (no NEON `norm`
+//! was asked for or measured) — deinterleaving
 //! the array-of-structs pairs with `vuzp1q/vuzp2q` (NEON) or
 //! `permute2f128`+`unpacklo/hi` (AVX2), with independent accumulators to break
 //! the dependent-add chain — and times them against the committed shape
@@ -33,8 +36,23 @@
 //! | `axpy` (`n = 2380`, two runs) | `6.791-7.008 us` | `2.537-2.559 us` | `2.65-2.76x` |
 //! | `dot` (`n = 4845`, two runs) | `6.121-6.537 us` | `2.692-2.812 us` | `2.18-2.43x` |
 //! | `axpy` (`n = 4845`, two runs) | `13.705-14.563 us` | `5.555-5.982 us` | `2.43-2.47x` |
+//! | `norm` (`n = 2380`, two runs) | `85.413-86.761 us` | `0.892-0.899 us` | `94.97-97.23x` |
+//! | `norm` (`n = 4845`, two runs) | `174.123-174.330 us` | `2.081-2.188 us` | `79.59-83.77x` |
 //!
-//! with `dot` agreement to `7.3e-15` and `3.2e-15` relative. The `axpy` kernel
+//! The `norm` row is not in the same regime as the other two: the scalar
+//! reference is a `hypot` fold, two libm calls per entry, so the kernel's
+//! `re²+im²` sum plus one `sqrt` is two orders of magnitude faster
+//! (`85–87 us` against `0.89 us` at `n = 2380`). That is a kernel-level number
+//! only — `coords_norm` runs once per Arnoldi step over one vector, so at
+//! `C = 26` it is `174 us × 916` steps `= 0.16 s` of a `13.6 s` solve, and the
+//! end-to-end A/B cannot resolve it (`13.544–14.663 s` against
+//! `13.772–14.633 s`, three runs each). It reassociates like `dot` (a `hypot`
+//! fold has no vector form that keeps its last bits): agreement is `1.8e-15`
+//! relative at `n = 2380` and exact at `4845`, and at `C = 26` it moves the
+//! return probability from `9.79979792832510244e-1` to `9.79979792832513574e-1`
+//! with `915 → 916` steps.
+//!
+//! The other two kernels: `dot` agrees to `7.3e-15` and `3.2e-15` relative. The `axpy` kernel
 //! reassociates nothing (unfused multiply and add in the scalar loop's order),
 //! so its agreement is exactly zero on these inputs and its solve-time effect
 //! is a pure speedup. The `dot` gain is smaller than NEON's because LLVM
@@ -90,6 +108,15 @@ fn scalar_axpy(a: &mut [C], b: &[C], scale: C) -> bool {
     true
 }
 
+/// The committed `coords_norm` fallback: a `hypot` fold over the non-zero
+/// entries.
+fn scalar_norm(a: &[C]) -> f64 {
+    let zero = C::new(0.0, 0.0);
+    a.iter()
+        .filter(|x| **x != zero)
+        .fold(0.0_f64, |norm, x| norm.hypot(x.re).hypot(x.im))
+}
+
 /// The committed `coords_inner_product`: one accumulator, zero entries skipped.
 fn scalar_dot(a: &[C], b: &[C]) -> C {
     let zero = C::new(0.0, 0.0);
@@ -107,6 +134,75 @@ fn scalar_dot(a: &[C], b: &[C]) -> C {
 mod avx2 {
     use super::C;
     use core::arch::x86_64::*;
+
+    /// The committed `x86_64` `norm`: four complex per vector, `re²+im²` in
+    /// two accumulator pairs, one `sqrt`. Reassociates by construction.
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn norm(a: &[C]) -> f64 {
+        #[inline]
+        #[target_feature(enable = "avx2,fma")]
+        unsafe fn load(ap: *const f64, offset: usize) -> (__m256d, __m256d) {
+            let av0 = unsafe { _mm256_loadu_pd(ap.add(offset)) };
+            let av1 = unsafe { _mm256_loadu_pd(ap.add(offset + 4)) };
+            let at0 = _mm256_permute2f128_pd(av0, av1, 0x20);
+            let at1 = _mm256_permute2f128_pd(av0, av1, 0x31);
+            (_mm256_unpacklo_pd(at0, at1), _mm256_unpackhi_pd(at0, at1))
+        }
+
+        #[inline]
+        #[target_feature(enable = "avx2,fma")]
+        unsafe fn horizontal(v: __m256d) -> f64 {
+            let lo = _mm256_castpd256_pd128(v);
+            let hi = _mm256_extractf128_pd(v, 1);
+            let pair = _mm_add_pd(lo, hi);
+            _mm_cvtsd_f64(_mm_add_sd(pair, _mm_unpackhi_pd(pair, pair)))
+        }
+
+        let n = a.len();
+        let ap = a.as_ptr() as *const f64;
+        let sign = _mm256_set1_pd(-0.0);
+        let mut sq0 = _mm256_setzero_pd();
+        let mut sq1 = _mm256_setzero_pd();
+        let mut big = _mm256_setzero_pd();
+        let mut i = 0;
+        while i + 8 <= n {
+            let (ar0, ai0) = unsafe { load(ap, 2 * i) };
+            let (ar1, ai1) = unsafe { load(ap, 2 * i + 8) };
+            sq0 = _mm256_fmadd_pd(ar0, ar0, _mm256_fmadd_pd(ai0, ai0, sq0));
+            sq1 = _mm256_fmadd_pd(ar1, ar1, _mm256_fmadd_pd(ai1, ai1, sq1));
+            big = _mm256_max_pd(
+                big,
+                _mm256_max_pd(_mm256_andnot_pd(sign, ar0), _mm256_andnot_pd(sign, ai0)),
+            );
+            big = _mm256_max_pd(
+                big,
+                _mm256_max_pd(_mm256_andnot_pd(sign, ar1), _mm256_andnot_pd(sign, ai1)),
+            );
+            i += 8;
+        }
+        while i + 4 <= n {
+            let (ar, ai) = unsafe { load(ap, 2 * i) };
+            sq0 = _mm256_fmadd_pd(ar, ar, _mm256_fmadd_pd(ai, ai, sq0));
+            big = _mm256_max_pd(
+                big,
+                _mm256_max_pd(_mm256_andnot_pd(sign, ar), _mm256_andnot_pd(sign, ai)),
+            );
+            i += 4;
+        }
+        let total = unsafe { horizontal(_mm256_add_pd(sq0, sq1)) };
+        let largest = unsafe { horizontal(big) };
+        let magnitude = total.sqrt();
+        let in_window = (1e-150..=1e150).contains(&largest) || largest == 0.0;
+        if !in_window || !magnitude.is_finite() {
+            return super::scalar_norm(a);
+        }
+        let mut norm = magnitude;
+        while i < n {
+            norm = norm.hypot(a[i].re).hypot(a[i].im);
+            i += 1;
+        }
+        norm
+    }
 
     /// The committed `x86_64` `axpy`: four complex per vector, unfused mul+add
     /// in the scalar loop's order, so the result is bit-identical.
@@ -351,7 +447,17 @@ fn main() {
         }
     }
     let scalar_axpy_us = started.elapsed().as_secs_f64() * 1e6 / (reps * rows) as f64;
-    println!("scalar: dot {scalar_dot_us:.3} us/call, axpy {scalar_axpy_us:.3} us/call");
+
+    let started = Instant::now();
+    for _ in 0..reps {
+        for row in &basis {
+            let _ = black_box(scalar_norm(black_box(row)));
+        }
+    }
+    let scalar_norm_us = started.elapsed().as_secs_f64() * 1e6 / (reps * rows) as f64;
+    println!(
+        "scalar: dot {scalar_dot_us:.3} us/call, axpy {scalar_axpy_us:.3} us/call, norm {scalar_norm_us:.3} us/call"
+    );
 
     #[cfg(target_arch = "aarch64")]
     {
@@ -414,11 +520,22 @@ fn main() {
                 }
             }
             let avx2_axpy_us = started.elapsed().as_secs_f64() * 1e6 / (reps * rows) as f64;
-            println!("avx2:   dot {avx2_dot_us:.3} us/call, axpy {avx2_axpy_us:.3} us/call");
+
+            let started = Instant::now();
+            for _ in 0..reps {
+                for row in &basis {
+                    let _ = black_box(unsafe { avx2::norm(black_box(row)) });
+                }
+            }
+            let avx2_norm_us = started.elapsed().as_secs_f64() * 1e6 / (reps * rows) as f64;
             println!(
-                "ratio:  dot {:.2}x, axpy {:.2}x",
+                "avx2:   dot {avx2_dot_us:.3} us/call, axpy {avx2_axpy_us:.3} us/call, norm {avx2_norm_us:.3} us/call"
+            );
+            println!(
+                "ratio:  dot {:.2}x, axpy {:.2}x, norm {:.2}x",
                 scalar_dot_us / avx2_dot_us,
-                scalar_axpy_us / avx2_axpy_us
+                scalar_axpy_us / avx2_axpy_us,
+                scalar_norm_us / avx2_norm_us
             );
             let d1 = scalar_dot(&basis[0], &basis[1]);
             let d2 = unsafe { avx2::dot(&basis[0], &basis[1]) };
@@ -431,9 +548,12 @@ fn main() {
                 .zip(&a2)
                 .map(|(x, y)| (x - y).norm())
                 .fold(0.0_f64, f64::max);
+            let n1 = scalar_norm(&basis[0]);
+            let n2 = unsafe { avx2::norm(&basis[0]) };
             println!(
-                "agreement: axpy max |diff| {axpy_gap:.3e}, dot rel {:.3e}",
-                (d1 - d2).norm() / d1.norm()
+                "agreement: axpy max |diff| {axpy_gap:.3e}, dot rel {:.3e}, norm rel {:.3e}",
+                (d1 - d2).norm() / d1.norm(),
+                (n1 - n2).abs() / n1
             );
         } else {
             println!("avx2: not built (no AVX2/FMA on this CPU)");

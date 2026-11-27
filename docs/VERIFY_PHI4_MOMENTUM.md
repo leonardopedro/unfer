@@ -52,9 +52,13 @@ The operator keeps the full nonnegative square including `λv⁴/4`, forms the
 The whole record comes from that one run: `source_revision.git_head` and the
 digest above are the run's own. It was produced natively on an **`x86_64`
 host** on the **AVX2 kernels**: `coords_inner_product` and `coords_axpy` both
-dispatch to their AVX2 path here, so the digits are the live solver's and no
-longer the scalar fallback's (`~1e-15` away, which the suite's `1e-12` checks
-would have absorbed either way). The per-cell rows of §5.2 are this record's,
+dispatch to their AVX2 path here, so the digits are no longer the scalar
+fallback's (`~1e-15` away, which the suite's `1e-12` checks would have absorbed
+either way). `coords_norm`'s AVX2 kernel (§5.12) postdates this run, so the
+record's last digits are the path *before* that third kernel: on this host the
+`C = 26` live solve now differs from the recorded value by `3.3e-15` in the
+return probability (`916` steps instead of `915`), which is the same order as
+the reassociation already in the record and far inside the reported precision. The per-cell rows of §5.2 are this record's,
 and the profile measurements of §§5.5–5.12 were re-run on the same `x86_64`
 host; the tables that remain the earlier `aarch64` campaign's are labelled as
 such in place. The run is the first record to apply the
@@ -520,7 +524,8 @@ was rejected on the measurement, not on taste. (§5.11 later did exactly that,
 because by then the SVD was 56 % of the solve; the statement above is about the
 map-walk distribution, not the coordinate one.)
 
-`x86_64`, current coordinate solver with both AVX2 kernels — the same four
+`x86_64`, current coordinate solver with the AVX2 `dot` and `axpy` (the `norm`
+kernel, below in §5.12, postdates this table) — the same four
 solves of that cell (`112`, `138`, `137`, `140` steps, `2.669 s` total):
 
 | phase | 112-step | 138-step | 137-step | 140-step | total | share |
@@ -620,7 +625,8 @@ with compilation on the same machine, reproduced the shares within `3 %` and the
 wall clock at `202.1 s`. (The same probe measured `104.0 s` after §5.9 and
 `22.5 s` after §5.10, for the same steps and the same probability.)
 
-`x86_64`, current solver with both AVX2 kernels — the same cell on this host
+`x86_64`, current solver with the AVX2 `dot` and `axpy` (the `norm` kernel,
+§5.12, postdates this table) — the same cell on this host
 (`190`, `241`, `241`, `243` steps, `915` total, `13.586 s` solve):
 
 | phase | 190-step | 241-step | 241-step | 243-step | total | share of the solve |
@@ -865,7 +871,7 @@ map operation with the map removed, not a rearrangement of it:
 | projected action | `gemv` on the cached `matrix` | the same `gemv` on the same matrix (`image_coords`) |
 | inner product | products in ascending label order over the intersection | the same products **in index order**, skipping exactly the labels the map does not store (`coords_inner_product`) |
 | axpy | `slot + scale * value` per visited label, exact zeros dropped | the same per-label arithmetic, zeros skipped (`coords_axpy`) |
-| norm | `hypot(re).hypot(im)` folded in label order | the same fold over the stored entries (`coords_norm`) |
+| norm | `hypot(re).hypot(im)` folded in label order | the same fold over the stored entries (`coords_norm`) — except on `x86_64`, where the AVX2 kernel (§5.12) sums `re²+im²` and takes one `sqrt`, so the two paths now differ by a few ulp there |
 
 No label's value depends on another, and no summation order changes, so the only
 difference is that the intermediate zeros stay in an array instead of being a
@@ -964,7 +970,8 @@ the profile's print resolution (`aarch64`):
 | — the inner product inside it | `1.65 s` | `1.63 s` | `17 %` |
 | per-step least squares | `12.66 s` | `< 0.02 s` | **`< 0.2 %`** |
 
-Re-measured on `x86_64` with the same Givens stage and both AVX2 kernels, that
+Re-measured on `x86_64` with the same Givens stage and the AVX2 `dot` and `axpy`
+(the `norm` kernel came later, §5.12), that
 cell's solve is `13.586 s`: `62.3 %` `gemv`, `8.3 %` MGS `axpy`, `3.2 %` inner
 product, `< 0.1 %` least squares. The `gemv` is `1.82×` the `aarch64` figure and
 the SIMD share is far smaller because its kernels are committed here (the dot
@@ -1112,8 +1119,8 @@ axpys (`2.44 s` against `2.35 s`) and everything else (`7.63 s` against
 `7.81 s`) — so the `5.5 s` between those solves **is** the inner product:
 `6.99 s → 1.38 s` (`5.07×`, on `1327` steps rather than `1328`).
 
-The `x86_64` counterparts are the two AVX2 kernels, measured the same way. The
-inner product first: the `C = 26` in-solve dot goes `1.39 s → 0.50 s` and the
+The `x86_64` counterparts are the AVX2 `dot` (then) and `axpy`, measured the same
+way. The inner product first: the `C = 26` in-solve dot goes `1.39 s → 0.50 s` and the
 solve `16.205 s → 15.027 s` (`−7.3 %`), and at `C = 32` the dot `6.00 s →
 2.36 s` and the solve `79.35 s → 74.81 s` (`−5.7 %`). The microbenchmark
 (`examples/phi4_kernel_simd_probe.rs`) reports `2.18–2.76×` across `n = 2380`
@@ -1163,6 +1170,36 @@ digit (`0.9799946133407069 → 0.9799946133407028`), which is the AVX2 `dot`'s
 reassociation and nothing else. So the record regenerated below on this path is
 an arithmetic match of the previous fixture up to that kernel, not a
 re-baselining.
+
+The `norm` came last. Its scalar reference is a `hypot` fold — two libm calls per
+entry, which is why the fold is the most expensive of the three scalar loops,
+far above `dot` and `axpy` — so replacing it with a `re²+im²` FMA sum plus one
+`sqrt` is not a marginal win at the kernel level: `85.4–86.8 us → 0.89 us`
+(`95–97×`) at `n = 2380` and `174.1–174.3 us → 2.08–2.19 us` (`80–84×`) at
+`n = 4845` (`examples/phi4_kernel_simd_probe.rs`, two runs each). It is
+nevertheless the smallest solve-level change of the three, and this note says so
+rather than quoting the `95×`: `coords_norm` is called **once per Arnoldi step**
+over one vector, where the inner product is called `k+1` times per step over two
+vectors. At `C = 26` the whole norm cost is `174 us × 916 steps = 0.16 s` of a
+`13.6 s` solve (`1.2 %`), so the end-to-end A/B is inside this host's `±5 %`:
+three runs each give `13.544`, `13.838`, `14.663 s` with the kernel against
+`13.772`, `14.633`, `13.875 s` without, and at `C = 20` `2.730 s` against
+`2.723 s`. `1.2 %` is the ceiling the call count allows; the runs neither
+confirm nor refute it.
+
+The kernel reassociates, as the inner product does and the `axpy` does not: a
+`hypot` fold's rounding depends on the order of its arguments, so no vector form
+reproduces the last bits. Agreement is `1.8e-15` relative at `n = 2380` and
+exact at `n = 4845` on the probe's inputs, and the solve moves as the `dot`
+kernel did — at `C = 26` the return probability goes `9.79979792832510244e-1 →
+9.79979792832513574e-1` with `915 → 916` steps, i.e. the last Arnoldi step is
+decided the other way. Because `hypot`'s scaling is what keeps the fold safe at
+the ends of the `f64` range, the kernel tracks the largest component it sees and
+hands any slice outside `[1e-150, 1e150]` — or any slice whose squared sum is not
+finite — to `coords_norm_scalar`, so extreme amplitudes keep the fold's verdict
+and its accuracy. The runtime gate is the inner product's (`avx2` **and** `fma`),
+and only the `x86_64` path has a `norm` kernel; `aarch64` keeps the fold and the
+record built there was untouched by this change.
 
 Three other removals were considered and are reported as *not* done. Storing
 `H_proj` in `f32` halves the stream to `188 MB` (`~20.4 ms` per step at this
@@ -1435,10 +1472,18 @@ upper bounds — by at most `12 %`, once two reruns measured the spread (§5.12)
 and compare ratios inside the record, not against another machine.
 
 **Record provenance: the checked-in record is the native `x86_64` AVX2 run.** The
-fixture was regenerated at `2ea6356`, the commit that carries both AVX2 kernels,
-on the `x86_64` host of this note — so `coords_inner_product` and `coords_axpy`
-both took their AVX2 path and the record's digits are the live solver's, not
-the scalar fallback's. All `17 × 2` cells completed in `9057523 ms`
+fixture was regenerated at `2ea6356`, the commit that carries the AVX2 `dot` and
+`axpy` kernels, on the `x86_64` host of this note — so `coords_inner_product`
+and `coords_axpy` both took their AVX2 path and the record's digits are that
+path's, not the scalar fallback's. The `norm` kernel (§5.12) arrived afterwards,
+so the record does **not** carry it: the live `C = 26` rank-2 solve now returns
+`9.79979792832513574e-1` against the recorded `9.79979792832510244e-1`
+(`3.3e-15`, one Arnoldi step later), and no other digit is expected to move by
+more than that order. Neither value is quoted as exact — the reassociation was
+already `1.2e-14` wide across the record's own sweep — but a rerun of the
+generator would now differ from the checked-in file at that level, so the record
+is *pre-norm* provenance: regenerate it (about `151 min`) before quoting a digit
+as the live solver's. All `17 × 2` cells completed in `9057523 ms`
 (`151.0 min`) at `4239804 kB` peak RSS, against `9737331 ms` (`162.3 min`) and
 `4239900 kB` for the scalar-path record it replaces. The physics reproduces
 that record leaf for leaf: all `42` `return_probability_window_exact` values are
