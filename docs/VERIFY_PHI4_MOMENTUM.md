@@ -61,8 +61,8 @@ such in place. The run is the first record to apply the
 twelve-digit reporting now in the tree: `AmplitudeBound::to_json` routes measured
 fields through `sm_bridge::reported_residual`, so
 `responses.cells.*.amplitude_defect` is stored at twelve significant digits
-(`4.44253523451e-16` for the base `initial_leakage`, raw
-`4.442535234507275e-16` in `full_action_defect`). Two field classes are
+(`4.44614460857e-16` for the base `initial_leakage`, raw
+`4.446144608574858e-16` in `full_action_defect`). Two field classes are
 machine- rather than model-dependent and move between runs: `runtime_ms` /
 `peak_rss_kb`, and the solver diagnostics already at the `1e-16` floor
 (`hermiticity_defect`, `orthogonality_defect`), whose *relative* spread is large
@@ -1451,7 +1451,7 @@ solver *error bound* (`m = 4`, `C = 20`), not on a physics leaf. Cell times are
 (`C = 44`, `m = 4`: `2309 s → 1951 s`), the direction the `axpy` kernel's
 measured `1.5×` on the Gram–Schmidt block predicts. The record keeps the
 twelve-digit reporting of §2: its `responses.cells.*.amplitude_defect` fields
-are stored rounded (`4.44253523451e-16` for the base `initial_leakage`). The
+are stored rounded (`4.44614460857e-16` for the base `initial_leakage`). The
 performance tables of §§5.5–5.12 were re-run on this host; the per-cell rows of
 §5.2 are this run's, and the tables that remain `aarch64` measurements — the
 map-walk era of §5.6 and §5.9, the dense reference of §5.8, the before/after
