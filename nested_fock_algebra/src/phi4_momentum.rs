@@ -751,7 +751,8 @@ mod tests {
         let support = [([1, 0, 0, 0], 1.0)];
         let inner = model.hermite_state(&support);
         let expected = phase_rotate_inner(
-            &h.apply(&inner, ActionLimits::default()).expect("finite action"),
+            &h.apply(&inner, ActionLimits::default())
+                .expect("finite action"),
             theta,
         );
         let actual = rotated
@@ -774,9 +775,9 @@ mod tests {
         let nested: NestedVector = model.one_particle(&support);
         let rotated_seed = phase_rotate_nested(&nested, theta);
         let expect_phase = occupation_phase(&[1, 0, 0, 0], theta);
-        assert!(rotated_seed
-            .values()
-            .all(|amplitude| (amplitude - expect_phase * nested.values().next().unwrap()).norm() < 1e-15));
+        assert!(rotated_seed.values().all(|amplitude| {
+            (amplitude - expect_phase * nested.values().next().unwrap()).norm() < 1e-15
+        }));
     }
 
     #[test]

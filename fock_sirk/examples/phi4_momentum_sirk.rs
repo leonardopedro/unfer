@@ -32,8 +32,8 @@ use nested_fock_algebra::exact_inner::{
     ActionLimits, InnerExpr, InnerVector, JointInnerBasis, JointOuterBasis, NestedVector,
 };
 use nested_fock_algebra::phi4_momentum::{
-    ScalarMomCont, frozen_jet_comparison, occupations_of, phase_rotate_inner,
-    phase_rotate_nested, phase_rotated_quadratures,
+    ScalarMomCont, frozen_jet_comparison, occupations_of, phase_rotate_inner, phase_rotate_nested,
+    phase_rotated_quadratures,
 };
 use nested_fock_algebra::phi4_scalar::ScalarGrid;
 use num_complex::Complex64 as C;
@@ -618,7 +618,7 @@ fn change_of_basis_control(t: f64) -> Value {
     // nontrivial basis change, not an invariance of the written tree.
     let operator_matrix_difference = (WindowOperator::build(&h, &window).matrix()
         - WindowOperator::build(&h_rotated, &window).matrix())
-        .norm();
+    .norm();
 
     let base = conjugated_response_cell(&h, &initial, &window, &shifts, t);
     let transported = conjugated_response_cell(&h_rotated, &initial_rotated, &window, &shifts, t);
@@ -627,8 +627,8 @@ fn change_of_basis_control(t: f64) -> Value {
     let charge = |cell: &Value| cell["sharp_charge"]["value"].as_f64().unwrap();
     let exact_difference = read(&base, "return_probability_window_exact")
         - read(&transported, "return_probability_window_exact");
-    let sirk_difference = read(&base, "return_probability_sirk")
-        - read(&transported, "return_probability_sirk");
+    let sirk_difference =
+        read(&base, "return_probability_sirk") - read(&transported, "return_probability_sirk");
     let sirk_budget = charge(&base) + charge(&transported);
 
     json!({
