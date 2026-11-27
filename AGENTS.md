@@ -12,13 +12,9 @@ Detail: **`docs/ARCHITECTURE.md`**. The rules that are easy to get wrong:
 - **Numerics.** Inverse-free, so no $O(N^3)$ solves. $H_{proj}=W^\dagger H_{raw}W$ by eigendecomposition (whitening replaced a Cholesky that panicked on degenerate Grams); if singular, reduce $m$ or shift $z_k$. **Always** use `nalgebra`'s Padé `exp()` for reduced-system evolution or unitarity is lost.
 - **GPU triage (T2.2).** `device::probe_cuda`/`best_device` emit `UK-GPU-<CODE> → <fix>`: `NO_DEVICE`, `ARCH_MISMATCH` (libcublas/libcuda vs driver — fix `LD_LIBRARY_PATH`), `LIBRARY_MISSING`, `OUT_OF_MEMORY`, `OTHER`. See `fock_sirk/examples/debug_cuda.rs`.
 
-The complete SM path uses `exact_inner`/`sm_full` and `joint_sirk`, not the legacy
-forward-product algorithm above. Its canonical momentum is
-`p=i(a†−a)/2`, so `[q,p]=i`. The rational basis uses actual shifted solves;
-evolution uses the compressed bounded resolvent and the paper's function
-generator. Explicit finite windows and full-action tails are reported. It
-supports parity-graded outer states and preserves every inner constant. See
-`docs/SM_FULL_IMPLEMENTATION.md` for the operator dictionary and scope.
+The complete SM path uses `exact_inner`/`sm_full` and `joint_sirk`, not the legacy forward-product algorithm above. Its canonical momentum is `p=i(a†−a)/2`, so `[q,p]=i`. The rational basis uses actual shifted solves; evolution uses the compressed bounded resolvent and the paper's function generator.
+Explicit finite windows and full-action tails are reported. It supports parity-graded outer states and preserves every inner constant.
+See `docs/SM_FULL_IMPLEMENTATION.md` for the operator dictionary and scope.
 
 ## Maintenance Checklist
 

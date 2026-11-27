@@ -1288,16 +1288,24 @@ put the `C = 38 … 42` `m = 4` cells `8–11 %` above the `aarch64` table. That
 table keeps the slowest of the three runs on purpose: with no quiet window
 available, a conservative figure with a measured band is worth more than a
 fast one that cannot be reproduced, so the `s` columns stand as upper bounds
-**by at most `12 %`**, that ceiling being measured here. A fourth attempt was
-made specifically to lift them and did not produce a usable run: the host (a
-12-core `aarch64` box shared with other agents) was gated on `load1 < 1.2` for
-five minutes, the gate fired at `0.54`, and the sweep was stolen partway
-through — `median load1 2.2`, peak `26`, then `14–16` for the last half hour —
-so it was aborted rather than recorded, and the retry loop that would have
-restarted it found no idle stretch in the following hour (`load1` never left
-`10–12`). The `s` columns therefore remain upper bounds; replacing them needs
-a genuinely idle host for the full `~80 min`, gated at `load1 < 1.2` to start
-and abandoning the run if `load1 ≥ 3.0` for three consecutive samples. The
+**by at most `12 %`**, that ceiling being measured here. Five later attempts
+were made specifically to lift them and none produced a usable run. This is a
+12-core `aarch64` box shared with other agents, so each was gated on a
+five-minute quiet window and abandoned if the host was taken mid-run:
+
+| attempt | gate | ran for | killed at |
+|---|---|---:|---:|
+| 1 | `load1 < 1.2` to start | `45 min` | `load1 15–16` |
+| 2 | `load1 < 1.2` to start | — | no window in the following hour (`10–12`) |
+| 3 | `load1 < 2.0`, abort `≥ 3.0` | `5 min` | `3.41` |
+| 4 | `load1 < 2.5`, abort `≥ 6.0` | `72 min` | `9.91` |
+| 5 | `load1 < 2.5`, abort `≥ 6.0` | `27 min` | `6.74` |
+
+Attempt 4 is the near miss: it started at `load1 0.53` and held `2.3–3.7` for
+`72` of the `~85 min` before a burst took the box to `9.91`. Its cell times were
+discarded rather than recorded. The `s` columns therefore remain upper bounds:
+replacing them needs an idle host for the whole run, which this machine could
+not provide in six hours of trying. The
 ratios between neighbouring rows and every physics leaf are unaffected — all
 three runs reproduce the step counts and every tail, error and probability
 exactly, and the reruns differ only in `runtime_ms` and in the

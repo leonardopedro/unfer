@@ -34,5 +34,10 @@ jobs:
           git clone --depth 1 https://github.com/yichuan-w/LEANN.git ../LEANN
           git clone --depth 1 https://github.com/xerj-org/xerj.git ../xerj
           git clone --depth 1 https://github.com/Edge0-AI/Edge0.git ../Edge0
+          # timepiece carries ~20 of this repo's links. `papers/` and `../test/`
+          # cannot be materialized (a plain directory, and a repo without public
+          # read), so check-links reports those as skipped-outside instead of
+          # broken -- inside-tree links are still checked, and never skipped.
+          git clone --depth 1 https://github.com/leonardopedro/timepiece.git ../timepiece
       - name: check-links
         run: python3 scripts/check-links
