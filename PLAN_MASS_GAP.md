@@ -1,5 +1,33 @@
 # PLAN M — the mass-gap pipeline (planner side: everything except Lean4 code)
 
+## Three fixed profiles at coupling 2 · 2026-11-26
+
+The smooth three-profile Hamiltonian has an absolute form floor of 18.5 across
+all inner Hermite degrees. At coupling 2 the Gaussian seed energy is below 32.
+Every exact seed-containing variational mass therefore has error below 13.5.
+The positive lower bound depends on the spatial profiles. Widening each profile
+by $L$ and squeezing the Gaussian amplitude to width $1/L$
+makes the bare packet trial energy fall as $1/L$. Test its local Gauss image and
+the contribution of the omitted modes in the full physical form; a lower bound
+uniform in width requires an effect outside this isolated packet calculation.
+
+The occupation-3 check has 20 states. In the unnormalized Hermite basis, exact
+symmetric inertia at 23.62 and 23.625 encloses the lowest level of the decimal
+fixture. The dense result is 23.62315084. The fixed-shift solver comparison
+measures whole-window operator norms for both the positive Galerkin solve and the
+actual complex SIRK compression at ranks 1–3. Run from this repository.
+
+```sh
+cadabra2-cli -q -n docs/qym_magnetic_packet.cdb
+python3 scripts/check_qym_magnetic_packet.py
+python3 scripts/check_qym_packet_floor.py
+cargo test --release -p fock_sirk --test qym_magnetic_packet -- --nocapture
+```
+
+Keep the final shift, physical sector and packet family fixed in each rank sweep.
+Report the two omitted maps and head error separately. The older 420/581 reflection
+counts refer to a different finite Hamiltonian. [Proof and limits](../timepiece/softmodes.md)
+
 ## Replay of the magnetic packet and finite count · 2026-11-25
 
 The continuous packet fixture now includes the cubic colour singlet and a local Gauss
