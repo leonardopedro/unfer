@@ -60,6 +60,8 @@ logs/*
 !logs/heavy_tests_20260823_201105.log
 !logs/pcnl_r13_gates/
 !logs/pcnl_r13_gates/**
+!logs/pcnl_r14_gates/
+!logs/pcnl_r14_gates/**
 
 # Python bytecode caches (X5 build-artifact hygiene): regenerated on every run.
 __pycache__/

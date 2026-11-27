@@ -264,9 +264,14 @@ order; the bounded-resolvent counts are in the record's
 | 42 | 12650 | `0.0259` | `[393, 535]` | `753 s` |
 | 44 | 14950 | `0.0208` | `[419, 575]` | `1114 s` |
 
-The `C ≥ 16` cells solve to a `1e-10` relative residual with a 1024-step cap:
-at `C = 20` the `1e-13` target stalls at `2.3e-13` and exhausts even 512 steps.
-The looser target is six orders below the `1e-3`-scale inside-window error
+The `C ≥ 16` cells solve to a `1e-10` relative residual with a 1024-step cap.
+This paragraph used to say that at `C = 20` the `1e-13` target stalls at
+`2.3e-13` and exhausts even 512 steps; that no longer describes the solver.
+Re-tested on 2026-11-27, the `C = 16, 20, 22, 24, 26, 28` cells (both ranks)
+accept `1e-13` in `83, 142, 177, 217, 261, 308` steps (`m = 2`) and
+`83, 143, 177, 217, 260, 306` (`m = 4`), with no stall and no cap hit. The
+`C ≥ 30` cells were not re-tested at `1e-13` and keep the looser target, which
+is six orders below the `1e-3`-scale inside-window error
 being measured, and every cell records its policy (`solve_policy`,
 `relative_tolerance`, `max_iterations`, and the realised step counts) so the
 numbers are never silently mixed. `C ≥ 20` also needs a larger component
@@ -1379,7 +1384,8 @@ already diverged (`8.3e-11` against `9.2e-11` at step `17`), so the crossing
 moves by one step while the answer does not. The tolerance is not the knob the
 flip needs: these solves bottom out at `~1.1e-14` on both builds, so tightening
 `1e-13` toward `1e-14` moves the gate *into* the stagnation band and starts
-hitting the `64`-step cap — the stall §5.2 already records for `C ≥ 16`. The stop
+hitting the `64`-step cap; the stall-aware acceptance reported in §5.12 now
+reports that instead of spending the cap. The stop
 test is left alone, and the suite states the right contract already:
 `window_solve_matches_the_map_walk_at_solver_precision` compares step counts
 with `abs_diff <= 1` ("the least-squares rounding decides the last step"). Against the

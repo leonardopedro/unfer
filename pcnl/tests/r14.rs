@@ -8,19 +8,19 @@
 //! round-trips.
 
 use candle_core::{Device, Tensor};
-use pcnl::distill::{
-    SpreadHead, fit_softmax_student, softmax, vector_stats,
-};
+use pcnl::distill::{SpreadHead, fit_softmax_student, softmax, vector_stats};
 use pcnl::ensemble::{Ensemble, KneeRule, WarmEntryConfig, WarmStop, warm_entry};
 use pcnl::ensemble_diag::{
-    effective_rank, in_region_fraction, js_dark_knowledge_gap, kl_bernoulli,
-    normal_quantile, pac_bayes_mixture_bound, pairwise_distances, pinsker_return_bound,
-    prediction_spread, squared_error_ambiguity, tv_distance, teacher_student_fidelity,
+    effective_rank, in_region_fraction, js_dark_knowledge_gap, kl_bernoulli, normal_quantile,
+    pac_bayes_mixture_bound, pairwise_distances, pinsker_return_bound, prediction_spread,
+    squared_error_ambiguity, teacher_student_fidelity, tv_distance,
 };
 use pcnl::manifest::fnv1a;
 use pcnl::mdp::{BehaviourPolicy, Corpus, MdpEnv};
 use pcnl::normalize::NormGrad;
-use pcnl::rl_track::{RlLoss, action_distribution_diversity, linear_policy_probs};
+use pcnl::rl_track::{
+    ReturnAwareConfig, RlLoss, RlReturnTarget, action_distribution_diversity, linear_policy_probs,
+};
 use pcnl::satisficing::{
     Hinge, Satisficing, SatisficingConfig, SatisficingPotential, target_identity,
 };
@@ -83,8 +83,8 @@ fn fd_grad<F: Fn(&[f32]) -> Option<f64>>(f: F, theta: &[f32], h: f64) -> Vec<f64
 fn satisficing_gradient_matches_finite_differences_in_outside_and_near_plateau() {
     for hinge in [Hinge::Softplus, Hinge::Huberized] {
         for alpha in [0.0, 0.02] {
-            let target = Satisficing::new(inner_ref(), config(hinge, alpha), "quad", "sum")
-                .expect("config");
+            let target =
+                Satisficing::new(inner_ref(), config(hinge, alpha), "quad", "sum").expect("config");
             // Inside (L ≈ 0.25), near (L ≈ 1), outside (L ≈ 4).
             for scale in [0.5f32, 1.0, 2.0] {
                 let theta = vec![0.3 + scale * 0.5, -0.2];
@@ -115,13 +115,8 @@ fn inner_ref() -> ShiftedQuadratic {
 
 #[test]
 fn huberized_hinge_has_exactly_zero_gradient_inside_the_plateau() {
-    let target = Satisficing::new(
-        inner_ref(),
-        config(Hinge::Huberized, 0.0),
-        "quad",
-        "sum",
-    )
-    .unwrap();
+    let target =
+        Satisficing::new(inner_ref(), config(Hinge::Huberized, 0.0), "quad", "sum").unwrap();
     // L = 0.25 < τ = 1, so ψ′ = 0 and ∇Φ = 0.
     let (phi, grad) = target.energy_and_grad(&[0.3, -0.2]).unwrap();
     assert_eq!(phi, 0.0);
@@ -216,7 +211,10 @@ fn potential_adapter_uses_the_same_phi_and_gradient() {
     let (expected_phi, _) = cfg.phi_and_weight(l);
     let scale = lambda * p.n_terms() as f64;
     let mean = p.mean_loss(&theta);
-    assert!((mean * scale - expected_phi).abs() < 1e-6, "{mean} * {scale}");
+    assert!(
+        (mean * scale - expected_phi).abs() < 1e-6,
+        "{mean} * {scale}"
+    );
 
     let grad = p
         .mean_grad_with(&theta, NormGrad::Exact)
@@ -265,10 +263,8 @@ fn swa_online_and_batch_averages_agree_and_barrier_sign_is_honest() {
     assert_eq!(batch, vec![3.0, 4.0]);
 
     // Convex quadratic along the segment: no barrier.
-    let convex = straight_line_barrier(&[-1.0], &[1.0], 20, |t| {
-        f64::from(t[0]) * f64::from(t[0])
-    })
-    .unwrap();
+    let convex =
+        straight_line_barrier(&[-1.0], &[1.0], 20, |t| f64::from(t[0]) * f64::from(t[0])).unwrap();
     assert!(barrier_height(&convex).unwrap() <= 1e-9);
     // Double well: positive barrier between the two minima.
     let quartic = straight_line_barrier(&[-1.0], &[1.0], 20, |t| {
@@ -343,14 +339,15 @@ fn ensemble_and_swa_round_trip_bitwise() {
         0,
         3,
         5,
-        &[vec![0.0f32, 1.0, 2.0], vec![1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0]],
+        &[
+            vec![0.0f32, 1.0, 2.0],
+            vec![1.0, 2.0, 3.0],
+            vec![2.0, 3.0, 4.0],
+        ],
     )
     .unwrap();
     ensemble.swa_centers.push(swa);
-    let path = std::env::temp_dir().join(format!(
-        "pcnl-r14-ensemble-{}.json",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("pcnl-r14-ensemble-{}.json", std::process::id()));
     ensemble.save(&path).unwrap();
     let loaded = Ensemble::load(&path).unwrap();
     assert_eq!(loaded.to_json().unwrap(), ensemble.to_json().unwrap());
@@ -449,7 +446,12 @@ fn softmax_distillation_reduces_teacher_kl() {
             0.5 + (i % 7) as f64 * 0.1,
         ];
         let logits: Vec<f64> = (0..classes)
-            .map(|c| x.iter().zip(&teacher[c * 3..(c + 1) * 3]).map(|(a, b)| a * b).sum())
+            .map(|c| {
+                x.iter()
+                    .zip(&teacher[c * 3..(c + 1) * 3])
+                    .map(|(a, b)| a * b)
+                    .sum()
+            })
             .collect();
         data.push((x, softmax(&logits).unwrap()));
     }
@@ -511,7 +513,10 @@ fn rl_loss_is_nonnegative_and_gradient_matches_finite_differences() {
 
     let p = loss.probs(&theta, &[0.3, -0.2, 1.0]).unwrap();
     assert!((p.iter().sum::<f64>() - 1.0).abs() < 1e-12);
-    let probs = |s: [f32; 2]| loss.probs(&theta, &[f64::from(s[0]), f64::from(s[1]), 1.0]).unwrap();
+    let probs = |s: [f32; 2]| {
+        loss.probs(&theta, &[f64::from(s[0]), f64::from(s[1]), 1.0])
+            .unwrap()
+    };
     let ret = pcnl::rl_track::rollout_return(&env, probs, 4, 11).unwrap();
     assert!(ret.is_finite());
     let _ = linear_policy_probs(&theta, &[0.3, -0.2, 1.0], loss.classes()).unwrap();
@@ -521,9 +526,119 @@ fn rl_loss_is_nonnegative_and_gradient_matches_finite_differences() {
 fn rl_diversity_is_zero_for_one_policy_and_positive_across_members() {
     let a = vec![vec![0.7, 0.2, 0.1], vec![0.1, 0.8, 0.1]];
     let b = vec![vec![0.2, 0.7, 0.1], vec![0.3, 0.3, 0.4]];
-    assert!(action_distribution_diversity(&[a.clone(), a.clone()]).unwrap().0 < 1e-12);
+    assert!(
+        action_distribution_diversity(&[a.clone(), a.clone()])
+            .unwrap()
+            .0
+            < 1e-12
+    );
     let (tv, _kl) = action_distribution_diversity(&[a, b]).unwrap();
     assert!(tv > 0.0);
     let bound = pinsker_return_bound(10.0, 5, 0.1).unwrap();
     assert!((bound - 15.0).abs() < 1e-12);
+}
+
+fn return_aware_parts() -> (RlLoss, Vec<Vec<f64>>, Vec<Vec<f64>>, Vec<f32>) {
+    let env = MdpEnv {
+        horizon: 5,
+        ..MdpEnv::default()
+    };
+    let policy = BehaviourPolicy {
+        feedback: 0.5,
+        epsilon: 0.2,
+        seed: 9,
+    };
+    let corpus = Corpus::with_seeds(&env, policy, &[1, 2, 3, 4]);
+    let loss = RlLoss::from_corpus(&corpus, 0.1, 5.0).unwrap();
+    let mut states = Vec::new();
+    let mut rewards = Vec::new();
+    for i in 0..3 {
+        for j in 0..3 {
+            let x = [-0.6 + 0.6 * i as f32, -0.6 + 0.6 * j as f32];
+            states.push(vec![f64::from(x[0]), f64::from(x[1]), 1.0]);
+            rewards.push(
+                (0..loss.classes())
+                    .map(|a| f64::from(env.reward(x, a)))
+                    .collect(),
+            );
+        }
+    }
+    let theta: Vec<f32> = (0..loss.flat_size())
+        .map(|i| 0.02 * ((i as f32 * 0.7).sin()))
+        .collect();
+    (loss, states, rewards, theta)
+}
+
+fn base_return_config() -> ReturnAwareConfig {
+    ReturnAwareConfig {
+        tau: 10.0,
+        kappa: 2.0,
+        alpha: 0.5,
+        return_floor: 0.0,
+        kappa_return: 20.0,
+    }
+}
+
+#[test]
+fn return_aware_gradient_matches_finite_differences() {
+    let (loss, states, rewards, theta) = return_aware_parts();
+    let target = RlReturnTarget::new(loss, states, rewards, base_return_config()).unwrap();
+    let (value, grad) = target.energy_and_grad(&theta).unwrap();
+    assert!(value.is_finite());
+    let fd = fd_grad(|t| target.energy_and_grad(t).map(|(v, _)| v), &theta, 1e-3);
+    for (g, f) in grad.iter().zip(&fd) {
+        assert!(
+            (f64::from(*g) - f).abs() < 5e-2 * f.abs().max(1.0),
+            "{g} vs {f}"
+        );
+    }
+}
+
+#[test]
+fn return_aware_floor_is_inactive_when_loss_and_return_satisfy_it() {
+    let (loss, states, rewards, theta) = return_aware_parts();
+    let probe = RlReturnTarget::new(
+        loss.clone(),
+        states.clone(),
+        rewards.clone(),
+        base_return_config(),
+    )
+    .unwrap();
+    let ret = probe.return_surrogate(&theta).unwrap();
+    let loss_value = probe.loss_value(&theta).unwrap();
+    let cfg = ReturnAwareConfig {
+        tau: loss_value + 1.0,
+        return_floor: ret - 0.1,
+        ..base_return_config()
+    };
+    let target = RlReturnTarget::new(loss, states, rewards, cfg).unwrap();
+    let (phi, _) = target.energy_and_grad(&theta).unwrap();
+    assert!(
+        (phi - cfg.alpha * loss_value).abs() < 1e-9,
+        "inactive hinges must leave Φ = α·L: {phi} vs {}",
+        cfg.alpha * loss_value
+    );
+}
+
+#[test]
+fn return_aware_gradient_step_increases_the_return_surrogate() {
+    let (loss, states, rewards, theta) = return_aware_parts();
+    let probe = RlReturnTarget::new(
+        loss.clone(),
+        states.clone(),
+        rewards.clone(),
+        base_return_config(),
+    )
+    .unwrap();
+    let start = probe.return_surrogate(&theta).unwrap();
+    let cfg = ReturnAwareConfig {
+        return_floor: start + 0.2,
+        kappa_return: 200.0,
+        ..base_return_config()
+    };
+    let target = RlReturnTarget::new(loss, states, rewards, cfg).unwrap();
+    let (_, grad) = target.energy_and_grad(&theta).unwrap();
+    let stepped: Vec<f32> = theta.iter().zip(&grad).map(|(t, g)| t - 1e-3 * g).collect();
+    let after = target.return_surrogate(&stepped).unwrap();
+    assert!(after > start, "return did not improve: {start} -> {after}");
 }

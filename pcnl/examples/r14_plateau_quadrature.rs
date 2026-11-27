@@ -97,7 +97,9 @@ impl<T: EnergyTarget> EnergyTarget for Tempered<'_, T> {
         let (u, g) = self.inner.energy_and_grad(theta)?;
         Some((
             u / self.temperature,
-            g.into_iter().map(|x| (f64::from(x) / self.temperature) as f32).collect(),
+            g.into_iter()
+                .map(|x| (f64::from(x) / self.temperature) as f32)
+                .collect(),
         ))
     }
 }
@@ -116,7 +118,9 @@ impl<T: EnergyTarget> EnergyTarget for Sharp<'_, T> {
         let (u, g) = self.inner.energy_and_grad(theta)?;
         Some((
             self.lambda * u,
-            g.into_iter().map(|x| (self.lambda * f64::from(x)) as f32).collect(),
+            g.into_iter()
+                .map(|x| (self.lambda * f64::from(x)) as f32)
+                .collect(),
         ))
     }
 }
@@ -199,10 +203,7 @@ fn main() {
         config.delta,
         config.hinge.label()
     );
-    println!(
-        "target_identity={}",
-        sat.identity(&prior_c)
-    );
+    println!("target_identity={}", sat.identity(&prior_c));
     println!(
         "loss broad_sample={:.6} spike_sample={:.6}",
         loss_at(1.0),
@@ -237,8 +238,8 @@ fn main() {
         let mut accepted = 0usize;
         let mut proposals = 0usize;
         for (&start, &seed) in starts.iter().zip(&seeds) {
-            let chain = run_chain_with_prior(&tempered, &prior_c, cfg, vec![start], seed)
-                .expect("chain");
+            let chain =
+                run_chain_with_prior(&tempered, &prior_c, cfg, vec![start], seed).expect("chain");
             accepted += chain.accepted;
             proposals += chain.proposals;
             chains.push(chain);
@@ -353,10 +354,7 @@ fn main() {
     gate &= convex_ok;
     println!(
         "swa snapshots={:?} average={:?} mean_loss={mean_loss:.6} swa_loss={swa_loss:.6} convex_barrier={:.6} two_basin_barrier={:.6} pass={convex_ok}",
-        snapshots
-            .iter()
-            .map(|s| s[0])
-            .collect::<Vec<_>>(),
+        snapshots.iter().map(|s| s[0]).collect::<Vec<_>>(),
         average,
         barrier_height(&convex).unwrap(),
         barrier_height(&two_basin).unwrap()

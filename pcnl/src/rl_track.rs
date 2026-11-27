@@ -89,11 +89,7 @@ impl RlLoss {
     /// `exp((rtg_t − mean_rtg)/temperature)`, normalized to mean one (so they
     /// stay nonnegative and the NLL part is a proper weighted mean).  The
     /// reference policy is uniform over actions.
-    pub fn from_corpus(
-        corpus: &Corpus,
-        beta: f64,
-        temperature: f64,
-    ) -> Result<Self, String> {
+    pub fn from_corpus(corpus: &Corpus, beta: f64, temperature: f64) -> Result<Self, String> {
         if !temperature.is_finite() || temperature <= 0.0 {
             return Err("rl: temperature must be finite and > 0".into());
         }
@@ -210,7 +206,13 @@ impl EnergyTarget for RlLoss {
             // KL(p||uniform) = Σ p ln p + ln K; ∂/∂z_j = p_j (ln p_j − ln u_j − KL).
             let kl_t = p
                 .iter()
-                .map(|pc| if *pc > 0.0 { pc * (pc.ln() - log_uniform) } else { 0.0 })
+                .map(|pc| {
+                    if *pc > 0.0 {
+                        pc * (pc.ln() - log_uniform)
+                    } else {
+                        0.0
+                    }
+                })
                 .sum::<f64>();
             kl += kl_t;
             let w = t.weight / total_w;
@@ -238,6 +240,162 @@ impl EnergyTarget for RlLoss {
             return None;
         }
         Some((value, grad.into_iter().map(|g| g as f32).collect()))
+    }
+}
+
+/// Return-aware satisficing configuration.
+///
+/// The potential is
+///
+/// ```text
+/// Φ(θ) = κ ψ(L(θ) − τ) + α L(θ) + κ_R ψ(R_floor − R̂(θ)),  ψ(u)=½·max(0,u)²
+/// ```
+///
+/// with `R̂` the **differentiable one-step return surrogate**
+/// `R̂(θ) = mean_s Σ_a π_θ(a|s) r(s,a)` on cached corpus states.  It is a
+/// surrogate, not the sampled rollout return; the campaign reports both.
+/// Adding the return floor changes the target from the plain satisficing
+/// potential, so results must be labelled as such.
+#[derive(Clone, Copy, Debug)]
+pub struct ReturnAwareConfig {
+    pub tau: f64,
+    pub kappa: f64,
+    pub alpha: f64,
+    pub return_floor: f64,
+    pub kappa_return: f64,
+}
+
+impl ReturnAwareConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, v) in [
+            ("tau", self.tau),
+            ("kappa", self.kappa),
+            ("alpha", self.alpha),
+            ("return_floor", self.return_floor),
+            ("kappa_return", self.kappa_return),
+        ] {
+            if !v.is_finite() {
+                return Err(format!("rl: {name} must be finite"));
+            }
+        }
+        if self.kappa < 0.0 || self.alpha < 0.0 || self.kappa_return < 0.0 {
+            return Err("rl: kappa, alpha and kappa_return must be >= 0".into());
+        }
+        Ok(())
+    }
+}
+
+/// `RlLoss` plus a differentiable one-step return floor.
+pub struct RlReturnTarget {
+    loss: RlLoss,
+    states: Vec<Vec<f64>>,
+    rewards: Vec<Vec<f64>>,
+    config: ReturnAwareConfig,
+}
+
+impl RlReturnTarget {
+    pub fn new(
+        loss: RlLoss,
+        states: Vec<Vec<f64>>,
+        rewards: Vec<Vec<f64>>,
+        config: ReturnAwareConfig,
+    ) -> Result<Self, String> {
+        config.validate()?;
+        if states.is_empty() || states.len() != rewards.len() {
+            return Err("rl: return-aware states/rewards must be non-empty and aligned".into());
+        }
+        for (s, r) in states.iter().zip(&rewards) {
+            if s.len() != loss.features() {
+                return Err("rl: return-aware feature dimension mismatch".into());
+            }
+            if r.len() != loss.classes() {
+                return Err("rl: return-aware reward dimension mismatch".into());
+            }
+            if s.iter().chain(r).any(|v| !v.is_finite()) {
+                return Err("rl: return-aware values must be finite".into());
+            }
+        }
+        Ok(Self {
+            loss,
+            states,
+            rewards,
+            config,
+        })
+    }
+
+    pub fn inner(&self) -> &RlLoss {
+        &self.loss
+    }
+
+    pub fn config(&self) -> ReturnAwareConfig {
+        self.config
+    }
+
+    /// `L_RL(θ)` alone.
+    pub fn loss_value(&self, theta: &[f32]) -> Option<f64> {
+        self.loss.loss(theta)
+    }
+
+    /// Differentiable one-step return surrogate `R̂(θ)`.
+    pub fn return_surrogate(&self, theta: &[f32]) -> Option<f64> {
+        self.return_surrogate_and_grad(theta).map(|(r, _)| r)
+    }
+
+    fn return_surrogate_and_grad(&self, theta: &[f32]) -> Option<(f64, Vec<f32>)> {
+        if theta.len() != self.loss.flat_size() || theta.iter().any(|v| !v.is_finite()) {
+            return None;
+        }
+        let features = self.loss.features();
+        let n = self.states.len() as f64;
+        let mut grad = vec![0.0f64; theta.len()];
+        let mut total = 0.0f64;
+        for (s, r) in self.states.iter().zip(&self.rewards) {
+            let p = self.loss.probs(theta, s).ok()?;
+            let ret: f64 = p.iter().zip(r).map(|(p, r)| p * r).sum();
+            total += ret;
+            for (a, _pa) in p.iter().enumerate() {
+                let g = p[a] * (r[a] - ret) / n;
+                if g == 0.0 {
+                    continue;
+                }
+                for (f, phi) in s.iter().enumerate() {
+                    grad[a * features + f] += g * phi;
+                }
+            }
+        }
+        if !total.is_finite() || grad.iter().any(|g| !g.is_finite()) {
+            return None;
+        }
+        Some((total / n, grad.into_iter().map(|g| g as f32).collect()))
+    }
+}
+
+impl EnergyTarget for RlReturnTarget {
+    fn dim(&self) -> usize {
+        self.loss.flat_size()
+    }
+
+    fn energy_and_grad(&self, theta: &[f32]) -> Option<(f64, Vec<f32>)> {
+        let (loss, grad_loss) = self.loss.energy_and_grad(theta)?;
+        let (ret, grad_ret) = self.return_surrogate_and_grad(theta)?;
+        if !loss.is_finite() || !ret.is_finite() {
+            return None;
+        }
+        let cfg = self.config;
+        let l_ex = (loss - cfg.tau).max(0.0);
+        let r_ex = (cfg.return_floor - ret).max(0.0);
+        let phi =
+            0.5 * cfg.kappa * l_ex * l_ex + cfg.alpha * loss + 0.5 * cfg.kappa_return * r_ex * r_ex;
+        let dl = cfg.kappa * l_ex + cfg.alpha;
+        let dr = -cfg.kappa_return * r_ex;
+        let mut grad = vec![0.0f64; theta.len()];
+        for i in 0..theta.len() {
+            grad[i] = dl * f64::from(grad_loss[i]) + dr * f64::from(grad_ret[i]);
+        }
+        if !phi.is_finite() || grad.iter().any(|g| !g.is_finite()) {
+            return None;
+        }
+        Some((phi, grad.into_iter().map(|g| g as f32).collect()))
     }
 }
 
@@ -331,7 +489,11 @@ where
 }
 
 /// Policy probabilities for a flat linear-softmax parameter vector.
-pub fn linear_policy_probs(theta: &[f32], features: &[f64], classes: usize) -> Result<Vec<f64>, String> {
+pub fn linear_policy_probs(
+    theta: &[f32],
+    features: &[f64],
+    classes: usize,
+) -> Result<Vec<f64>, String> {
     if classes == 0 || theta.len() % classes != 0 {
         return Err("rl: policy parameter dimension mismatch".into());
     }

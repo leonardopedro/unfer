@@ -226,7 +226,12 @@ impl<T: EnergyTarget> EnergyTarget for Satisficing<T> {
         if !phi.is_finite() || !weight.is_finite() {
             return None;
         }
-        Some((phi, grad.iter().map(|g| (f64::from(*g) * weight) as f32).collect()))
+        Some((
+            phi,
+            grad.iter()
+                .map(|g| (f64::from(*g) * weight) as f32)
+                .collect(),
+        ))
     }
 }
 

@@ -576,6 +576,18 @@ pub trait EnergyTarget {
     fn energy_and_grad(&self, theta: &[f32]) -> Option<(f64, Vec<f32>)>;
 }
 
+/// A shared reference to a target is a target.  This is what lets the
+/// satisficing wrapper own a `&T` without every caller cloning its likelihood.
+impl<T: EnergyTarget + ?Sized> EnergyTarget for &T {
+    fn dim(&self) -> usize {
+        (**self).dim()
+    }
+
+    fn energy_and_grad(&self, theta: &[f32]) -> Option<(f64, Vec<f32>)> {
+        (**self).energy_and_grad(theta)
+    }
+}
+
 /// Sampled potential `U(θ) + ½ Σ θ_i² / prior_c_i` and its gradient.  [`adam_fit`]
 /// and the samplers use this same objective, so a mode of it is a stationary
 /// point for the target they actually explore.

@@ -8,6 +8,16 @@ discussions in [ngpt.md](../../test/unfer/ngpt.md). Recorded measurements live i
 or Lean compilation are claimed as executed by creating or revising it. All P0–P7 artifacts
 below are proposed until their implementation and checks are recorded.
 
+> **Execution record (2026-11-27).** P0–P3 mechanics (`src/satisficing.rs`,
+> `src/swa.rs`, `src/ensemble.rs`, `src/ensemble_diag.rs`), the P1 known-target
+> quadrature gate, and *reduced-budget* P4/P5 pilots (`src/distill.rs`,
+> `src/rl_track.rs`, three examples) have been implemented and run; measured
+> numbers, including the negative and stalled contrasts, are in
+> [`docs/PCNL_STATUS.md`](../docs/PCNL_STATUS.md) §R14 with logs in
+> `logs/pcnl_r14_gates/`. P6 remains gated and untouched; the declared
+> multi-seed/full-parameter campaigns, the R14 CI-gate lanes and Lean S0–S6
+> parity remain open.
+
 ## Present Project State & Track Disposition (2026-11-27)
 
 | Track / Modules | Status (2026-11-27) | Disposition in active plan |

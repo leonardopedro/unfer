@@ -85,7 +85,10 @@ impl CodeId {
     /// `git`) the revision is the literal `"unknown"`, which is a recorded
     /// fact about the run rather than a silently empty field.
     pub fn from_git(root: &Path) -> Self {
-        let rev = git(root, &["rev-parse", "--short=12", "HEAD"]);
+        // Only the revision must be non-empty; a clean tree legitimately has an
+        // empty `status --porcelain` and an empty `diff`, and those mean "no
+        // dirty files", not "not a repository".
+        let rev = git(root, &["rev-parse", "--short=12", "HEAD"]).filter(|rev| !rev.is_empty());
         let status = git(root, &["status", "--porcelain"]);
         let diff = git(root, &["diff", "HEAD", "--binary"]);
         match (rev, status, diff) {
@@ -113,8 +116,12 @@ impl CodeId {
     }
 }
 
-/// Run `git -C root <args>`; `None` when the command is missing, fails, or
-/// prints nothing useful.
+/// Run `git -C root <args>`; `None` when the command is missing or fails.
+///
+/// Empty stdout is returned as an empty string: for `status --porcelain` that
+/// is a clean tree, which is a fact the manifest should record. Treating it as
+/// a failure made every clean checkout — CI's, and any fresh clone — capture
+/// `unknown`, which is what broke the workspace test job.
 fn git(root: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")
@@ -125,11 +132,7 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    let s = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
-    if s.is_empty() && args.first() != Some(&"diff") {
-        return None;
-    }
-    Some(s)
+    Some(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
 }
 
 /// The model the manifest describes.
@@ -626,6 +629,46 @@ mod tests {
         assert_eq!(id.revision, "unknown");
         assert_eq!(id.dirty_hash, None);
         assert_eq!(id.dirty_files, 0);
+    }
+
+    #[test]
+    fn a_clean_repository_is_not_unknown() {
+        // The regression: `status --porcelain` is empty on a clean tree, and
+        // treating that as a git failure made every fresh checkout (CI's)
+        // record `unknown`. A clean tree must record the revision and no hash.
+        let dir = std::env::temp_dir().join(format!("pcnl-clean-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q"]);
+        std::fs::write(dir.join("probe.txt"), "clean\n").unwrap();
+        git(&["add", "probe.txt"]);
+        git(&[
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-q",
+            "-m",
+            "probe",
+        ]);
+        let id = CodeId::from_git(&dir);
+        assert_ne!(
+            id.revision, "unknown",
+            "a clean tree must record its revision"
+        );
+        assert_eq!(id.dirty_files, 0);
+        assert_eq!(id.dirty_hash, None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -8110,3 +8110,398 @@ cargo run --offline --release -p pcnl --example cn_dimension_sweep -- \
 cargo run --offline --release -p pcnl --example known_target
 python3 scripts/pcnl-ultrabert-parity --row 0
 ```
+
+## R14 — satisficing pCNL, SWA, and distillation (executed 2026-11-27)
+
+**What was executed here.** R14's P0–P3 mechanics, the P1 known-target
+quadrature gate, *reduced-budget* P4/P5 pilots, a three-seed P4 campaign at
+the declared 57 378-parameter architecture, and a three-seed P5 RL campaign
+with paired return intervals (both reduced rows/chains), the same P5 protocol on
+reduced-budget RLCD/Edge0 checkpoints, a return-aware satisficing variant for
+hit-and-run, plus a serving-cost benchmark of the distilled student against the
+three-member ensemble.
+A geometry-aware hit-and-run tier was added and measured against the stalled
+pCN drift.  The P6 gated extensions (heterogeneous configurations, Git Re-Basin,
+repulsion), full-split/serving runs and the Lean S0–S6 parity work were **not**
+executed.  P6 remains gated; no Lean packet is claimed.  Logs:
+`logs/pcnl_r14_gates/`.  Tests: `pcnl/tests/r14.rs` (18 checks).
+
+### P0/P2/P3 module checks (deterministic)
+
+`cargo test -p pcnl --test r14` — 18/18 pass:
+
+* finite-difference gradient agreement for both hinges inside, near and
+  outside the plateau (softplus and `C¹` Huberized; the Huberized
+  `α = 0` hinge gradient is exactly zero inside);
+* target identity changes with `τ, κ, α, δ`, hinge, loss label/reduction and
+  prior covariance;
+* `SatisficingPotential` reconstructs the same `Φ` from the mean-loss path
+  (`mean_loss · λn = Φ(L)`), non-finite energies fail explicitly;
+* online SWA equals batch averaging bitwise; ensemble + SWA checkpoints
+  round-trip bitwise; convex segments have no barrier and the double well has
+  a positive one;
+* knee rule detects a 0.5 %-per-check slowdown and ignores fast descent and
+  oscillation; warm entry stops at the declared ceiling;
+* permutation-copy ensembles have zero functional variance and effective rank
+  `1.0` despite nonzero weight distance; the squared-error ambiguity identity,
+  Jensen–Shannon nonnegativity, PAC-Bayes bounds, coverage/`z²` and the
+  Pinsker bound hold;
+* KL-SGD distillation reduces teacher KL; the spread head recovers a known
+  teacher spread;
+* the RL loss is nonnegative and matches finite differences; policy diversity
+  is zero for one policy and positive across members.
+
+### P1 known-target plateau-vs-spike gate — **PASS**
+
+`cargo run --release -p pcnl --example r14_plateau_quadrature`
+(log `logs/pcnl_r14_gates/plateau_quadrature.log`).  Four dispersed chains,
+20 000 steps (5 000 burn, thin 2, 7 500 draws/chain), `ρ = 0.9`, prior
+`N(0,1)`, Huberized hinge, `τ = 0.5`, `κ = 20`, `α = 0`, `δ = 0.05`.
+
+| `T` | accept | R̂ (θ / broad / spike) | bulk ESS (θ / broad / spike) | broad mass (ref) | spike mass (ref) |
+|---|---|---|---|---|---|
+| 0.5 | 78 474/80 000 | 1.00059 / 1.00029 / 1.00011 | 4235.7 / 16852.9 / 25030.8 | 0.587433 (0.585272) | 0.079800 (0.081564) |
+| 1.0 | 78 477/80 000 | 1.00062 / 1.00017 / 1.00009 | 3981.8 / 16214.3 / 25052.2 | 0.588133 (0.584141) | 0.082167 (0.081407) |
+| 2.0 | 78 644/80 000 | 1.00058 / 1.00012 / 0.99994 | 4023.9 / 16101.4 / 24661.7 | 0.580467 (0.582863) | 0.080733 (0.081228) |
+
+All three temperatures pass `R̂ < 1.01`, bulk ESS `≥ 400`, and mass/mean/`E[θ²]`
+agreement within 3 MCSE.  The controls invert the ranking as predicted:
+sharp Gibbs (`λ = 50`) gives broad 0.000000 / spike 0.999975, while radical
+Adam (4 000 steps) lands at `θ = 0` with `L = 0` — the narrow spike.  SWA on a
+convex plateau has loss `0.001111` versus the snapshot mean `0.043333` and a
+zero convex barrier; the unaligned two-basin path has barrier `1.000000`.
+
+### P4 supervised pilot (reduced budget) — negative contrasts retained
+
+`cargo run --release -p pcnl --example r14_supervised_campaign`
+(log `logs/pcnl_r14_gates/supervised_campaign.log`).  Frozen 20 Newsgroups
+embeddings, 96 train / 48 test rows, `w2_ff4_l1_t2` head (3 110 parameters),
+`s = 0.05`, `τ = 0.75`, `κ = 20`, `α = 0.05`, Huberized hinge, `M = 4`,
+≈2–3 s wall clock.  Test RMSE (ensemble mean):
+
+| arm | RMSE | NLL | 90 % cov. | `z²` | in-region | eff. rank | disagreement |
+|---|---|---|---|---|---|---|---|
+| radical single | 0.344692 | 20.77 | 0.250 | 47.53 | 0.000 | 1.00 | 0 |
+| radical deep | 0.206873 | −1.30 | 0.927 | 1.04 | 0.000 | 2.804 | 0.256 |
+| knee-stopped | 0.210869 | −1.27 | 0.833 | 1.27 | 1.000 | 2.567 | 0.229 |
+| SGD-SWA single | 0.268738 | 11.45 | 0.406 | 28.89 | 1.000 | 1.00 | 0 |
+| sharp Gibbs pCNL | — | — | — | — | — | — | accept 0/900 |
+| satisficing pCNL | 0.210869 | −1.27 | 0.833 | 1.27 | 1.000 | 2.567 | 0.229 |
+| prior-only | 1.164893 | 57.34 | 0.000 | 118.98 | 0.000 | 2.515 | 0.156 |
+| distilled student | 0.209682 | 5.80 | 0.385 | 17.59 | 0.000 | 1.00 | 0 |
+| label control | 0.194120 | 4.54 | 0.438 | 15.07 | 0.000 | 1.00 | 0 |
+
+**Measured curved-boundary stall.**  Satisficing pCNL accepted **0/1200**
+moves; the same kernel at proposal scales `1e-6` and `1e-8` accepted `0/300`
+and moved `0.000000e0`.  A random proposal of per-coordinate sd
+`√(0.19·10⁻⁸ c_i)` moves `Φ` from `0.035` to `1808.9` (`L` from `0.71` to
+`≈13.4`): the feasible set is a thin shell in weight space (warm norm `78.672`
+versus the prior draw `77.912`, but 10 % radial shrinkage gives `Φ ≈ 1808.9`).
+The satisficing arm is therefore identical to the knee-stopped arm — a
+negative/inconclusive contrast, not a gain.  SWA weight-vs-last-iterate RMSE
+delta `−0.000300` (output mean `−0.000171`), barrier `0.000000`; the
+ensemble/SWA checkpoint round-trip is bitwise exact.
+
+**Distillation contrast is negative:** the ensemble-distilled student is
+*worse* than the equal-budget label-trained control by `+0.012193 ± 0.002330`
+(paired absolute error over 96 test coordinates); teacher–student RMSE
+`0.185324`, spread-head 90 % coverage `0.3854`.  Reported verbatim; this pilot
+does not promote the distilled student.
+
+**Geometry-aware follow-up (same target, same probes).**  Exact hit-and-run
+slice moves (random prior-whitened direction, exact 1-D conditional, no
+gradient-scale knob) also move `300/300` and `moved_norm = 24.36`, but at
+`κ = 20` the retained state leaves the plateau (`L = 2.169`): the stationary
+target's mass sits on the `L ≈ τ` boundary layer, not inside the set.  Raising
+the hinge stiffness narrows that layer: `κ = 2e3` gives `L = 0.850` (0/20 draws
+in region), `κ = 2e5` gives `L = 0.756` (8/20), and `κ = 2e6` gives
+`L = 0.7496` with 16/20 retained draws inside `L ≤ τ`.  The kernel stays exact;
+this is a target-confinement choice, not a corrected MH ratio.
+
+### P4 multi-seed, declared 57 378-parameter architecture
+
+`cargo run --offline --release -p pcnl --example r14_supervised_multiseed`
+(log `logs/pcnl_r14_gates/supervised_multiseed.log`).  `VectorShapes::new(768,
+2)` = **57 378 parameters**, 120 train / 60 test rows, three seed families,
+`M = 3`, `τ = 0.75`, Huberized hinge, ≈46–50 s/seed.  All trained arms are
+in-region by construction; the discriminator is held-out error and diversity.
+
+| arm (mean ± SE across 3 seeds) | RMSE | 90 % cov. | eff. rank | disagreement |
+|---|---|---|---|---|
+| radical single | 0.488945 ± 0.064015 | 0.178 | 1.000 | 0 |
+| radical deep | 0.259061 ± 0.021784 | 0.881 | 1.828 | 0.482 |
+| knee-stopped | **0.118174 ± 0.010378** | 0.869 | 1.850 | 0.182 |
+| SGD-SWA | 0.217582 ± 0.031446 | 0.333 | 1.000 | 0 |
+| sharp Gibbs | 0.217783 ± 0.028169 | 0.333 | 1.000 | 0 |
+| satisficing pCNL (`κ = 20`) | 0.118174 ± 0.010378 | 0.869 | 1.850 | 0.182 |
+| satisficing hit-and-run (`κ = 2e6`) | 0.120144 ± 0.008751 | 0.883 | 1.873 | 0.185 |
+| distilled student | 0.453951 ± 0.001057 | 0.175 | 1.000 | 0 |
+| label control | 0.450989 ± 0.000000 | 0.167 | 1.000 | 0 |
+| prior-only | 1.199430 ± 0.184088 | 0.803 | 1.855 | 1.979 |
+
+Movement, measured at full size: satisficing pCNL accepted **0/900** in every
+seed (the stall persists); the hit-and-run arm accepted **240/240** per seed
+and retained **60/60, 60/60, 59/60** in-region draws.  Its paired test-row
+contrast against the knee ensemble is `+0.001005 ± 0.002637` across seeds —
+statistically indistinguishable, so the geometry-aware tier matches knee
+quality while actually moving.  The distilled student is again worse than the
+label control: paired `+0.002670 ± 0.001152` (≈ 2.3 SE).  The radical single
+run memorizes (`L_train → 0`) and loses badly on held-out rows
+(`0.488945`), and sharp Gibbs accepts `0/200` per seed.
+
+### P5 RL pilot (reduced budget) — non-RLCD
+
+`cargo run --release -p pcnl --example r14_rl_campaign`
+(log `logs/pcnl_r14_gates/rl_campaign.log`).  Synthetic MDP (`horizon 8`,
+5 actions), 48 train / 32 dev / 32 test transitions, advantage-weighted
+behaviour-regularized policy NLL (`β = 0.05`, temperature 20), `τ = 1.2`,
+`κ = 200`, Huberized hinge, 15 policy parameters, `M = 4`.
+
+| arm | in-region | diversity TV | nominal return | shifted return |
+|---|---|---|---|---|
+| radical single | 1.000 | 0.0000 | −3.9773 | −5.8599 |
+| radical deep | 1.000 | 0.0339 | −4.0301 | −5.8783 |
+| knee-stopped | 1.000 | 0.1624 | −6.0736 | −8.4171 |
+| satisficing pCNL | 0.000 | 0.4397 | −8.0601 | −11.5046 |
+| SGD-SWA | 1.000 | — | −8.4859 | −12.9932 |
+| prior-only | 0.000 | 0.5699 | −11.1771 | −15.8711 |
+| distilled student | — | — | −7.8173 | −10.9763 |
+| label control | — | — | −4.0961 | −5.8779 |
+
+Satisficing pCNL accepted **830/1200** moves and spread functionally
+(diversity TV `0.4397`), but its retained configurations sit at the boundary
+shell `L = 1.202–1.310`, marginally above `τ = 1.2`, so the strict in-region
+fraction is `0/4`.  This is the boundary-mass consequence of a Huberized hinge
+inside the plateau, not an implementation failure, and is retained here.
+
+Teacher–student fidelity to the satisficing ensemble: KL `0.014752`, TV
+`0.057720`, max-state KL `0.100389`; Pinsker/finite-horizon bound `80.65`
+(`control`: KL `6.4528`, TV `0.6058`, bound `1002.37`).  Once-per-episode
+member draw: `−8.5811 ± 0.7567`; per-step BMA: `−8.0601`.  Both the
+satisficing ensemble and the distilled student trail the radical and
+label-trained arms on nominal and shifted return; the RL distribution shift
+lowers every arm.
+
+### P5 multi-seed RL campaign (3 seeds, paired intervals)
+
+`cargo run --offline --release -p pcnl --example r14_rl_multiseed`
+(log `logs/pcnl_r14_gates/rl_multiseed.log`, ≈0.3 s).  Same MDP and 48/32/32
+transition split, now three seed families × `M = 3`, with a `κ = 2e6`
+hit-and-run tier and common-random-number rollouts (`200` episodes per arm,
+episode seed `909`) so contrasts are paired episode by episode and then
+aggregated across seeds.
+
+| arm (mean over 3 seeds) | in-region | div. TV | nominal return | shifted return |
+|---|---|---|---|---|
+| radical single | 1.000 | 0.000 | **−4.0546** | **−5.8890** |
+| radical deep | 1.000 | 0.055 | −4.0189 | −5.8895 |
+| knee-stopped | 1.000 | 0.222 | −6.0200 | −8.6996 |
+| SGD-SWA | 1.000 | 0.000 | −4.5675 | −6.4598 |
+| sharp Gibbs | 1.000 | 0.000 | −6.0889 | −8.4697 |
+| satisficing pCNL (`κ = 200`) | 0.222 | 0.399 | −9.0278 | −13.9298 |
+| satisficing hit-and-run (`κ = 2e6`) | 1.000 | 0.311 | −8.4250 | −12.5278 |
+| prior-only | 0.000 | 0.609 | −12.3585 | −20.1591 |
+| distilled student | — | — | −8.3645 | −12.2708 |
+| label control | — | — | −4.0961 | −5.8779 |
+
+Movement: pCNL accepts `0.654` of moves but only `0.222` of retained
+configurations are in-region; hit-and-run accepts `1.000` and retains
+`0.948` in-region draws (`256/270`).  Sharp Gibbs accepts `2/600`.  Every
+knee warm entry stops at the same `ceiling` label in all three seeds.
+
+Paired contrasts (per-episode deltas, mean ± SE across seeds):
+
+| contrast | nominal | shifted |
+|---|---|---|
+| hit-and-run − knee | −2.4050 ± 0.9367 | −3.8283 ± 1.0535 |
+| pCNL − knee | −3.0079 ± 0.3110 | −5.2302 ± 0.7311 |
+| distilled − label | −4.2685 ± 0.7293 | −6.3929 ± 0.8073 |
+| hit-and-run − radical deep | −4.4061 ± 0.6874 | −6.6383 ± 0.6786 |
+
+The geometry-aware tier fixes the in-region failure but does **not** fix the
+return: it is `2.4 ± 0.9` worse than the knee ensemble and far from the
+radical/label arms.  Distillation faithfully reproduces its teacher (KL
+`0.008635`, TV `0.039624`, Pinsker bound `55.58`) and therefore inherits the
+satisficing teacher's return deficit rather than closing it.  The once-per-
+episode member draw is `−8.4099 ± 0.6909` versus per-step BMA `−8.4250`.
+
+### P5 on RLCD/Edge0 checkpoints (reduced budget)
+
+`cargo run --offline --release -p pcnl --example r14_rl_edge0_multiseed`
+(log `logs/pcnl_r14_gates/rl_edge0_multiseed.log`, ≈34 s).  The synthetic
+48-transition corpus is replaced by the Edge0 world model: three seed
+families × three members, each member a real `edge0_campaign` RLCD checkpoint
+written to `target/r14_edge0_checkpoints/*.safetensors` and reloaded before
+use.  Reduced split `[24, 8, 8, 16]` worlds, 60 updates, 30 warm-start
+updates, 1684 parameters, `τ = 1.05`; the pCNL/hit-and-run chains run on the
+Edge0 training NLL through an `EnergyTarget` adapter.
+
+| arm (3 families) | test Brier | calibration Brier | in-region | div. TV | eff. rank |
+|---|---|---|---|---|---|
+| RLCD single | 0.14905 ± 0.00354 | 0.16933 | 1.000 | 0.000 | 1.000 |
+| RLCD ensemble (`M = 3`) | 0.14629 ± 0.00086 | 0.16791 | 1.000 | 0.0364 | 1.086 |
+| supervised ensemble | **0.14628 ± 0.00010** | **0.16508** | 1.000 | 0.0050 | 1.495 |
+| satisficing pCNL | 0.19051 ± 0.01131 | 0.22146 | **0.000** | 0.3349 | 1.798 |
+| satisficing hit-and-run | 0.14630 ± 0.00067 | 0.16926 | 1.000 | 0.0373 | 1.188 |
+| distilled student (no-ul) | 0.15638 ± 0.00043 | — | — | — | — |
+
+The paired, world-clustered contrasts are: RLCD ensemble − single
+`−0.00275 ± 0.00399` (not significant), hit-and-run − ensemble
+`+0.00001 ± 0.00020` (indistinguishable), and pCNL − ensemble
+`+0.04422 ± 0.01068` (pCNL is worse).  pCNL accepted only `3/90` moves and its
+retained NLL (`1.18–1.27`) left the `τ = 1.05` region in all three families;
+hit-and-run accepted `24/24` with `6/6` in-region draws.  This is the same
+region-retention pattern seen on the synthetic corpus, now on the Edge0 NLL.
+
+The KL-distilled linear student uses eight **teacher-independent** surface
+features (state-token buckets/sum, question-token sum, option count, outcome
+count), not the Edge0 backbone, so it is a standalone readout rather than a
+copy of the teacher's last layer.  On the 16 no-ul test questions it matches
+the ensemble teacher: Brier `0.15638` vs `0.15637`, paired delta
+`+0.00000 ± 0.00000`, KL `≈0.00000`, TV `0.00002`.  The no-ul subset is
+surface-predictable for this tiny checkpoint; this is not evidence that the
+student compresses the full Edge0 model, and no serving claim follows.
+
+Limits: reduced R9 split, not the declared 2048/256/256/512-world campaign;
+linear student, not a second Edge0; checkpoint files live under `target/`.
+
+### Return-aware satisficing for the hit-and-run tier
+
+`cargo run --offline --release -p pcnl --example r14_return_aware`
+(log `logs/pcnl_r14_gates/return_aware.log`).  The plain hit-and-run tier kept
+the loss region but lost `2.41 ± 0.94` nominal return against the knee
+ensemble.  This campaign adds a differentiable one-step return floor to the
+same potential:
+
+```text
+Φ(θ) = κ ψ(L − τ) + α L + κ_R ψ(R_floor − R̂(θ)),  ψ(u)=½ max(0,u)²
+R̂(θ) = mean_s Σ_a π_θ(a|s) r(s,a)
+```
+
+`R_floor` is the knee ensemble's surrogate plus `0.03`; the return arm uses
+`τ = 1.10` (a `0.10` margin below the evaluated `τ = 1.2`) so the return push
+has room inside the region, `κ_R = 15 000`, `κ = 2e6`, three seeds × three
+members.  This is a changed target, not the plain satisficing potential, and
+is labelled as such.
+
+| arm | in-region | surrogate | div. TV | nominal return | shifted return |
+|---|---|---|---|---|---|
+| knee-stopped | 1.000 | −0.17298 | 0.222 | **−6.0200** | **−8.6996** |
+| satisficing hit-and-run (plain) | 1.000 | −0.17348 | 0.334 | −8.2581 | −12.1273 |
+| **hit-and-run + return floor** | 1.000 | −0.16997 | 0.174 | **−6.0169** | **−8.6475** |
+| pCNL + return floor | 1.000 | −0.17298 | 0.222 | −6.0200 | −8.6996 |
+
+Paired per-episode contrasts for the return-aware hit-and-run tier:
+`+2.2412 ± 0.7961` nominal and `+3.4798 ± 0.9910` shifted against the plain
+tier, and `+0.0031 ± 0.3472` nominal against the knee ensemble — i.e. the
+return deficit is closed while every member stays in `L ≤ 1.2`.  The cost is a
+loss of functional diversity (`0.334 → 0.174`): the return tilt collapses the
+members toward the same high-reward region.  pCNL on this target accepted
+`0/900` proposals and stayed at its knee starts, so the viable sampler for
+the return-aware objective is hit-and-run, not pCNL.
+
+### Serving cost: distilled student vs `M = 3` ensemble
+
+`cargo run --offline --release -p pcnl --example r14_serving_bench`
+(log `logs/pcnl_r14_gates/serving_bench.log`).  Single-thread CPU on this host,
+per-query wall time with a counting global allocator.  Latency is
+machine-dependent and is recorded, **not** replay-gated; the parameter counts
+and model bytes are exact.
+
+P4 (57 378 parameters per member; the distilled student keeps the same
+architecture, so this is not a compressed student):
+
+| path | mean | p50 | p90 | p99 | qps | alloc/query | model bytes |
+|---|---|---|---|---|---|---|---|
+| member forward | 104.3 µs | 103.6 µs | 107.2 µs | 110.8 µs | 9 586 | 130 448 B | 229 512 |
+| ensemble forward (3) | 312.5 µs | 310.8 µs | 316.6 µs | 320.8 µs | 3 200 | 391 296 B | 688 536 |
+| student forward | 103.9 µs | 103.3 µs | 106.7 µs | 110.4 µs | 9 624 | 130 448 B | 229 512 |
+| ensemble `predict` (3) | 326.4 µs | 324.6 µs | 330.8 µs | 337.0 µs | 3 063 | 1 090 584 B | 688 536 |
+| student `predict` | 107.4 µs | 106.8 µs | 110.6 µs | 113.9 µs | 9 308 | 363 544 B | 229 512 |
+
+Memory ratio is exactly `3.000` (688 536 / 229 512; allocator delta
+688 608 B including the `Vec` headers), and the student is `3.04×` faster
+end-to-end.  The flat-slice `predict` entry point clones the parameter vector
+per call, which is why it allocates ~3× the forward path; the ensemble pays
+that clone three times.
+
+P5 (15 `f32` parameters per policy member, 12 `f64` parameters in the
+softmax student):
+
+| path | mean | p50 | p90 | p99 | qps | alloc/query | model bytes |
+|---|---|---|---|---|---|---|---|
+| ensemble probs (3) | 0.333 µs | 0.313 µs | 0.416 µs | 0.417 µs | 2 690 887 | 360 B | 180 |
+| student probs | 0.104 µs | 0.104 µs | 0.156 µs | 0.157 µs | 7 008 065 | 88 B | 160 |
+
+Here the student is only `12.5 %` smaller than the three-member ensemble
+(160 vs 180 bytes — the members are compact `f32` flat policies, the student
+stores `f64` weights plus a bias) but is `3.2×` faster.  At these sizes the
+latency, not the bytes, is the serving argument.
+
+### P6 — written-review gate and scoped heterogeneity evaluation
+
+P6 is gated by [`PCNL_P6_REVIEW.md`](PCNL_P6_REVIEW.md) and the executable
+`scripts/check-pcnl-p6-gate`.  The review's decision is
+`conditional-approve-heterogeneity-only` with `human_signoff = pending`, so
+**promotion remains blocked** until the full declared P1–P5 campaigns exist
+and a human signs the review.  The review excludes Git Re-Basin (no weight
+merging tested), functional repulsion (no measured collapse: P4 rank
+1.85–1.87, P5 diversity TV 0.31–0.40), and depth/head/normalization changes
+(outside the frozen released architecture).
+
+`cargo run --offline --release -p pcnl --example r14_heterogeneous`
+(log `logs/pcnl_r14_gates/heterogeneous.log`, ≈284 s) compares homogeneous
+widths `16/16/16` (172 134 parameters) against heterogeneous `12/17/19`
+(172 550, +0.24 %) at 3 seeds × 3 members × 600 Adam steps, `τ = 0.75`:
+
+| endpoint (mean ± SE over 3 seeds) | homogeneous | heterogeneous |
+|---|---|---|
+| test RMSE | 0.105138 ± 0.001424 | 0.103106 ± 0.007550 |
+| in-region members | 1.000 | **0.778 ± 0.111** |
+| effective rank | 1.949 ± 0.010 | 1.812 ± 0.079 |
+| teacher–student fidelity | 0.160328 ± 0.003246 | 0.151690 ± 0.006750 |
+| student test RMSE | 0.147829 ± 0.007265 | 0.147788 ± 0.007353 |
+| ensemble forward latency | 193.04 ± 1.31 µs | 199.83 ± 1.26 µs |
+
+Paired heterogeneous − homogeneous: teacher absolute error
+`+0.091774 ± 0.004751`, student `+0.005889 ± 0.002932`, RMSE
+`−0.002032 ± 0.008942`.  Mean accuracy is statistically indistinguishable,
+but the heterogeneous arm misses the in-region and rank criteria: under the
+shared budget the width-19 member diverges in seeds 82 (`L = 24.96`) and 93
+(`L = 11.01`), and the width-17 member diverges in seed 93.  With per-width
+retuning forbidden inside this review, the verdict is **not supported**, and
+the arm costs ~3.5 % latency.  This is recorded as a negative P6 result; no
+promotion follows.
+
+### Not closed by this execution
+
+* P4/P5 as declared: the multi-seed runs use 120/60 rows and short chains,
+  not the full 20 Newsgroups split; ID/OOD/continual splits are still
+  unmeasured.  Serving latency/memory is measured on one CPU host and is not a
+  portable or accelerated-hardware number.  P5 now also runs on reduced-budget
+  RLCD/Edge0 checkpoints, but not on the declared R9 2048/256/256/512-world
+  split, and its student is a linear readout, not a compressed Edge0 model.
+* P6 — the written-review gate and the scoped width-heterogeneity evaluation
+  are executed (negative result); Git Re-Basin and functional repulsion are
+  still excluded, and promotion is blocked pending full P1–P5 campaigns plus
+  human sign-off.
+* Lean S0–S6 parity (`timepiece/pcnl.md`) — no Lean compilation was run.
+* R14 CI-gate wiring — `scripts/check-pcnl-r14-gates` replays four rows
+  (`--check-manifest`, `--band`, `--structure`) and is wired into
+  `.github/workflows/ci.yml` (per push) and `pcnl-gates.yml` (scheduled).
+
+```bash
+cargo test --release -p pcnl --test r14
+./scripts/check-pcnl-r14-gates --check-manifest
+./scripts/check-pcnl-r14-gates
+cargo run --offline --release -p pcnl --example r14_plateau_quadrature
+cargo run --offline --release -p pcnl --example r14_supervised_campaign
+cargo run --offline --release -p pcnl --example r14_supervised_multiseed
+cargo run --offline --release -p pcnl --example r14_rl_campaign
+cargo run --offline --release -p pcnl --example r14_rl_multiseed
+cargo run --offline --release -p pcnl --example r14_rl_edge0_multiseed
+cargo run --offline --release -p pcnl --example r14_return_aware
+cargo run --offline --release -p pcnl --example r14_serving_bench
+cargo run --offline --release -p pcnl --example r14_heterogeneous
+./scripts/check-pcnl-p6-gate --check
+```

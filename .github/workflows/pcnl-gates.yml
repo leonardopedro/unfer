@@ -1,4 +1,7 @@
 # R13 gate re-run lane — the numeric half of the R13 log guard.
+# Also replays the reduced-budget R14 gate rows (`scripts/check-pcnl-r14-gates`,
+# ~3 s each); the R14 manifest check is the `--check-manifest` line below and
+# the per-push shape check lives in ci.yml's `pcnl-quick-gates`.
 #
 # ci.yml owns the cheap half (`scripts/check-pcnl-gates --check-manifest`):
 # manifest ↔ log directory in both directions, and every cited log still has
@@ -84,10 +87,15 @@ jobs:
           cargo build --locked --release -p pcnl \
             --example vector_regression \
             --example vector_basins \
-            --example vector_stream
+            --example vector_stream \
+            --example r14_plateau_quadrature \
+            --example r14_supervised_campaign \
+            --example r14_rl_campaign
 
       - name: structure first (manifest ↔ logs)
-        run: bash scripts/check-pcnl-gates --check-manifest
+        run: |
+          bash scripts/check-pcnl-gates --check-manifest
+          bash scripts/check-pcnl-r14-gates --check-manifest
 
       # `--all` is the default everywhere: a budget is a runtime estimate, so a
       # gate that grows past `SLOW_SECS` would otherwise drop out of the lane
@@ -108,6 +116,16 @@ jobs:
           else
             bash scripts/check-pcnl-gates --all --band 0.2
           fi
+
+      # R14 rows: the same portability reasoning as R13 -- `--band 0.2` is a
+      # gross-drift net, not a byte claim. The four rows are ~3 s each, so this
+      # can also run on every scheduled sweep and on a dispatch after touching
+      # `pcnl/src/{satisficing,swa,ensemble,ensemble_diag,distill,rl_track}.rs`.
+      - name: re-run the R14 gates (gross-drift band)
+        run: bash scripts/check-pcnl-r14-gates --band 0.2
+
+      - name: check the P6 written-review gate
+        run: ./scripts/check-pcnl-p6-gate --check
 
       - name: keep the diffs even when the shell failed
         if: failure()

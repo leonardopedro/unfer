@@ -230,7 +230,11 @@ pub fn effective_rank(member_predictions: &[Vec<f64>]) -> Option<f64> {
 /// Bernoulli KL divergence `KL(r ‖ R)`.
 pub fn kl_bernoulli(r: f64, big_r: f64) -> Option<f64> {
     let clamp = |x: f64| x.clamp(1e-12, 1.0 - 1e-12);
-    if !r.is_finite() || !big_r.is_finite() || !(0.0..=1.0).contains(&r) || !(0.0..=1.0).contains(&big_r) {
+    if !r.is_finite()
+        || !big_r.is_finite()
+        || !(0.0..=1.0).contains(&r)
+        || !(0.0..=1.0).contains(&big_r)
+    {
         return None;
     }
     let (r, big_r) = (clamp(r), clamp(big_r));
@@ -540,10 +544,7 @@ pub struct Fidelity {
     pub js_gap: f64,
 }
 
-pub fn teacher_student_fidelity(
-    teacher_members: &[Vec<f64>],
-    student: &[f64],
-) -> Option<Fidelity> {
+pub fn teacher_student_fidelity(teacher_members: &[Vec<f64>], student: &[f64]) -> Option<Fidelity> {
     let n = teacher_members.len();
     if n == 0 {
         return None;
@@ -580,12 +581,7 @@ pub fn squared_error_ambiguity(preds: &[Vec<f64>], y: &[f64]) -> Option<(f64, f6
     let q = y.len();
     let total = preds
         .iter()
-        .map(|p| {
-            p.iter()
-                .zip(y)
-                .map(|(f, y)| (y - f) * (y - f))
-                .sum::<f64>()
-        })
+        .map(|p| p.iter().zip(y).map(|(f, y)| (y - f) * (y - f)).sum::<f64>())
         .sum::<f64>()
         / (m as f64 * q as f64);
     let mut mean = vec![0.0; q];

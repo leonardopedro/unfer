@@ -30,6 +30,12 @@ R14 governs all new implementation and acceptance, aligned with active Lean 4 pa
 below remain the preserved research record. This revision updates the plan only and claims no
 newly executed R14 code, tests, experiments, or Lean proofs.
 
+> **Execution note (2026-11-27).** P0–P3 mechanics, the P1 quadrature gate and
+> reduced-budget P4/P5 pilots were implemented and run after this revision;
+> see [`docs/PCNL_STATUS.md`](../docs/PCNL_STATUS.md) §R14 and
+> `logs/pcnl_r14_gates/`. The declared campaigns, P6 extensions and Lean S0–S6
+> parity are not claimed.
+
 ### Present state (2026-11-27) and why the pivot fits the evidence
 
 | Existing work / evidence | What it established (recorded in [PCNL_STATUS.md](../docs/PCNL_STATUS.md) & [pcnl.md](../../timepiece/pcnl.md)) | Role in R14 |

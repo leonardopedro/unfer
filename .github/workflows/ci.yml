@@ -133,6 +133,11 @@ jobs:
       # the scheduled lane in pcnl-gates.yml.
       - name: R13 gate logs ↔ manifest (X10)
         run: bash scripts/check-pcnl-gates --check-manifest
+      # R14 gate evidence: `logs/pcnl_r14_gates/` is the reduced-budget R14
+      # counterpart. Structure only here; the numeric replay is the per-push
+      # `--structure` step below and the `--band 0.2` step in pcnl-gates.yml.
+      - name: R14 gate logs ↔ manifest (X12)
+        run: bash scripts/check-pcnl-r14-gates --check-manifest
 
   # ---------------------------------------------------------------------------
   # R13 per-push gate lane (X11).
@@ -170,7 +175,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - name: build the examples the quick rows run
-        run: cargo build --locked --release -p pcnl --example vector_regression --example vector_stream
+        run: |
+          cargo build --locked --release -p pcnl \
+            --example vector_regression \
+            --example vector_stream \
+            --example r14_plateau_quadrature \
+            --example r14_supervised_campaign \
+            --example r14_rl_campaign \
+            --example r14_rl_multiseed \
+            --example r14_serving_bench \
+            --example r14_heterogeneous \
+            --example r14_rl_edge0_multiseed \
+            --example r14_return_aware
       # `--structure`: the logs are bitwise on the machine that recorded them and
       # this runner is a different CPU/libm. Measured on this job: a 50-step Adam
       # canary moved one RMSE by 0.1% and one `z2` by 4.7%, and a 100-step HMC
@@ -192,6 +208,28 @@ jobs:
             done
           fi
           exit "$status"
+      # R14 rows are reduced-budget mechanics gates (~2-3 s each after the
+      # build), so a push can afford the shape check. Numeric reproduction is
+      # the scheduled `--band 0.2` step in pcnl-gates.yml; `--structure` keeps
+      # key sequences, verdict tokens and finiteness, and tolerates the last
+      # printed digit moving on a different libm.
+      - name: replay the R14 gate rows (structure)
+        run: |
+          set +e
+          bash scripts/check-pcnl-r14-gates --structure > /tmp/r14.log 2>&1
+          status=$?
+          tail -40 /tmp/r14.log
+          if [ "$status" -ne 0 ]; then
+            grep -E '^(FAIL|line |missing|run failed)' /tmp/r14.log | head -25 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit "$status"
+      # P6 is a written-review gate: the review, the P1-P5 evidence logs and the
+      # scoped heterogeneity log must all stay present, and promotion must stay
+      # blocked until a human signs off and the full campaigns exist.
+      - name: check the P6 written-review gate
+        run: ./scripts/check-pcnl-p6-gate --check
 
   # ---------------------------------------------------------------------------
   # X7: cross-repo integration.

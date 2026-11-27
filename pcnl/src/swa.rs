@@ -152,7 +152,10 @@ where
 /// (the midpoint cannot be worse than both endpoints), positive when the
 /// straight line crosses a barrier between two basins.
 pub fn barrier_height(points: &[BarrierPoint]) -> Option<f64> {
-    let max = points.iter().map(|p| p.loss).fold(f64::NEG_INFINITY, f64::max);
+    let max = points
+        .iter()
+        .map(|p| p.loss)
+        .fold(f64::NEG_INFINITY, f64::max);
     let first = points.first()?.loss;
     let last = points.last()?.loss;
     if !max.is_finite() {
