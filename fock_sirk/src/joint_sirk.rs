@@ -3,7 +3,7 @@
 //! Explicit occupation projection records the full discarded action, and Ritz
 //! residuals are recomputed with the full operator images, including its tail.
 
-use crate::linalg::{SirkError, whiten_gram};
+use crate::linalg::{whiten_gram, SirkError};
 use nalgebra::{DMatrix, DVector};
 use nested_fock_algebra::exact_inner::{
     ActionError, ActionLimits, InnerExpr, JointOuterBasis, NestedVector,
@@ -302,11 +302,12 @@ impl FiniteWindowAction {
 // scalar fallback is bit-identical to the map operations, not merely close
 // (`tests/joint_map_ops.rs` and the solver pin in `tests/phi4_momentum_sirk.rs`).
 //
-// The aarch64 inner product is the one deliberate exception: NEON carries four
-// independent accumulators, so the sum is reassociated and its last bits move
-// (`docs/VERIFY_PHI4_MOMENTUM.md` §5.12: `3.75x` off the `dot` kernel and
-// `12.6 %` off the C = 26 solve, for a `1.6e-16` change in the return
-// probability). The frozen sweep record was generated with this path.
+// The SIMD inner products are the one deliberate exception to bit-identity:
+// each carries independent accumulators, so the sum is reassociated and its
+// last bits move (`docs/VERIFY_PHI4_MOMENTUM.md` §5.12: `3.75x` off the `dot`
+// kernel and `12.6 %` off the C = 26 solve on NEON, for a `1.6e-16` change in
+// the return probability; the `x86_64` AVX2 path moves them the same way). The
+// frozen sweep record was generated on the scalar fallback.
 fn coords_inner_product(a: &[C], b: &[C]) -> C {
     #[cfg(target_arch = "aarch64")]
     {
@@ -314,12 +315,27 @@ fn coords_inner_product(a: &[C], b: &[C]) -> C {
         // slices are read only at indices below `min(a.len(), b.len())`.
         unsafe { coords_inner_product_neon(a, b) }
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "x86_64")]
+    {
+        // AVX2 is not part of the x86-64 baseline, so it is detected once per
+        // call (the macro's answer is cached by std) and the scalar path stays
+        // the fallback.
+        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+        {
+            // SAFETY: the feature test above is exactly the contract of the
+            // `#[target_feature]` kernel, and both slices are read only at
+            // indices below `min(a.len(), b.len())`.
+            unsafe { coords_inner_product_avx2(a, b) }
+        } else {
+            coords_inner_product_scalar(a, b)
+        }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     {
         coords_inner_product_scalar(a, b)
     }
 }
-/// The scalar fallback, used on every target without the aarch64 SIMD path.
+/// The scalar fallback, used on every target without a SIMD path.
 #[cfg(not(target_arch = "aarch64"))]
 fn coords_inner_product_scalar(a: &[C], b: &[C]) -> C {
     let zero = C::new(0.0, 0.0);
@@ -381,6 +397,91 @@ unsafe fn coords_inner_product_neon(a: &[C], b: &[C]) -> C {
     }
     sum
 }
+/// AVX2/FMA inner product: four complex per vector, deinterleaved with
+/// `permute2f128` + `unpacklo/hi` and accumulated in two independent
+/// `re`/`im` pairs so the FMA chains are not latency-bound. The reassociation
+/// is why this path is documented as ``solver-precision`` rather than
+/// bit-identical to the map operation.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn coords_inner_product_avx2(a: &[C], b: &[C]) -> C {
+    use core::arch::x86_64::*;
+
+    // SAFETY: `offset + 8` f64s lie inside a slice of at least four complex
+    // values starting at `i` (the caller guarantees `i + 4 <= n`).
+    #[inline]
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn load(
+        ap: *const f64,
+        bp: *const f64,
+        offset: usize,
+    ) -> (__m256d, __m256d, __m256d, __m256d) {
+        let av0 = unsafe { _mm256_loadu_pd(ap.add(offset)) };
+        let av1 = unsafe { _mm256_loadu_pd(ap.add(offset + 4)) };
+        let bv0 = unsafe { _mm256_loadu_pd(bp.add(offset)) };
+        let bv1 = unsafe { _mm256_loadu_pd(bp.add(offset + 4)) };
+        let at0 = _mm256_permute2f128_pd(av0, av1, 0x20);
+        let at1 = _mm256_permute2f128_pd(av0, av1, 0x31);
+        let bt0 = _mm256_permute2f128_pd(bv0, bv1, 0x20);
+        let bt1 = _mm256_permute2f128_pd(bv0, bv1, 0x31);
+        (
+            _mm256_unpacklo_pd(at0, at1),
+            _mm256_unpackhi_pd(at0, at1),
+            _mm256_unpacklo_pd(bt0, bt1),
+            _mm256_unpackhi_pd(bt0, bt1),
+        )
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn horizontal(v: __m256d) -> f64 {
+        let lo = _mm256_castpd256_pd128(v);
+        let hi = _mm256_extractf128_pd(v, 1);
+        let pair = _mm_add_pd(lo, hi);
+        _mm_cvtsd_f64(_mm_add_sd(pair, _mm_unpackhi_pd(pair, pair)))
+    }
+
+    let n = a.len().min(b.len());
+    let ap = a.as_ptr() as *const f64;
+    let bp = b.as_ptr() as *const f64;
+    let mut re0 = _mm256_setzero_pd();
+    let mut im0 = _mm256_setzero_pd();
+    let mut re1 = _mm256_setzero_pd();
+    let mut im1 = _mm256_setzero_pd();
+    let mut i = 0;
+    while i + 8 <= n {
+        // SAFETY: `i + 8 <= n` covers both four-complex groups.
+        let (ar0, ai0, br0, bi0) = unsafe { load(ap, bp, 2 * i) };
+        let (ar1, ai1, br1, bi1) = unsafe { load(ap, bp, 2 * i + 8) };
+        re0 = _mm256_fmadd_pd(ar0, br0, re0);
+        re0 = _mm256_fmadd_pd(ai0, bi0, re0);
+        im0 = _mm256_fmadd_pd(ar0, bi0, im0);
+        im0 = _mm256_fnmadd_pd(ai0, br0, im0);
+        re1 = _mm256_fmadd_pd(ar1, br1, re1);
+        re1 = _mm256_fmadd_pd(ai1, bi1, re1);
+        im1 = _mm256_fmadd_pd(ar1, bi1, im1);
+        im1 = _mm256_fnmadd_pd(ai1, br1, im1);
+        i += 8;
+    }
+    while i + 4 <= n {
+        // SAFETY: `i + 4 <= n` covers the four-complex group.
+        let (ar, ai, br, bi) = unsafe { load(ap, bp, 2 * i) };
+        re0 = _mm256_fmadd_pd(ar, br, re0);
+        re0 = _mm256_fmadd_pd(ai, bi, re0);
+        im0 = _mm256_fmadd_pd(ar, bi, im0);
+        im0 = _mm256_fnmadd_pd(ai, br, im0);
+        i += 4;
+    }
+    let re = unsafe { horizontal(_mm256_add_pd(re0, re1)) };
+    let im = unsafe { horizontal(_mm256_add_pd(im0, im1)) };
+    let mut sum = C::new(re, im);
+    while i < n {
+        sum += a[i].conj() * b[i];
+        i += 1;
+    }
+    sum
+}
+
 fn coords_norm(a: &[C]) -> f64 {
     let zero = C::new(0.0, 0.0);
     a.iter()
@@ -396,6 +497,24 @@ fn coords_axpy(a: &mut [C], b: &[C], scale: C, limits: ActionLimits) -> Result<(
     if !scale.re.is_finite() || !scale.im.is_finite() {
         return Err(ActionError::NonFiniteAmplitude);
     }
+    #[cfg(target_arch = "x86_64")]
+    {
+        // Same runtime gate as the inner product; `coords_axpy_scalar` stays
+        // the fallback.
+        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+        {
+            // SAFETY: the feature test above is exactly the contract of the
+            // `#[target_feature]` kernel, and it stays inside the bounds the
+            // scalar loop uses (`min(a.len(), b.len())`).
+            return unsafe { coords_axpy_avx2(a, b, scale) };
+        }
+    }
+    coords_axpy_scalar(a, b, scale)
+}
+
+/// The scalar loop: zero entries are skipped, and a non-finite result is
+/// reported from inside the loop after the earlier slots were written.
+fn coords_axpy_scalar(a: &mut [C], b: &[C], scale: C) -> Result<(), ActionError> {
     let zero = C::new(0.0, 0.0);
     for (slot, value) in a.iter_mut().zip(b) {
         if *value == zero {
@@ -408,6 +527,85 @@ fn coords_axpy(a: &mut [C], b: &[C], scale: C, limits: ActionLimits) -> Result<(
         *slot = updated;
     }
     Ok(())
+}
+
+/// AVX2 `axpy`, four complex per vector. Unlike the inner product this kernel
+/// does **not** reassociate anything: the multiply and the add are separate
+/// instructions in the same order as the scalar loop, so a block is
+/// bit-identical to `coords_axpy_scalar`. Any block that holds a zero `b`
+/// entry (the scalar path skips it, which matters for a `-0.0` slot) or that
+/// would produce a non-finite result falls back to the scalar loop for those
+/// four elements, so the skip and the error report are preserved exactly.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn coords_axpy_avx2(a: &mut [C], b: &[C], scale: C) -> Result<(), ActionError> {
+    use core::arch::x86_64::*;
+
+    let n = a.len().min(b.len());
+    let ap = a.as_mut_ptr() as *mut f64;
+    let bp = b.as_ptr() as *const f64;
+    let sr = _mm256_set1_pd(scale.re);
+    let si = _mm256_set1_pd(scale.im);
+    let zero = _mm256_setzero_pd();
+    let inf = _mm256_set1_pd(f64::INFINITY);
+    let sign = _mm256_set1_pd(-0.0);
+    let mut i = 0;
+    while i + 4 <= n {
+        // SAFETY: `i + 4 <= n` keeps both four-complex loads and stores inside
+        // the slices.
+        let (av0, av1, bv0, bv1) = unsafe {
+            (
+                _mm256_loadu_pd(ap.add(2 * i)),
+                _mm256_loadu_pd(ap.add(2 * i + 4)),
+                _mm256_loadu_pd(bp.add(2 * i)),
+                _mm256_loadu_pd(bp.add(2 * i + 4)),
+            )
+        };
+        let at0 = _mm256_permute2f128_pd(av0, av1, 0x20);
+        let at1 = _mm256_permute2f128_pd(av0, av1, 0x31);
+        let ar = _mm256_unpacklo_pd(at0, at1);
+        let ai = _mm256_unpackhi_pd(at0, at1);
+        let bt0 = _mm256_permute2f128_pd(bv0, bv1, 0x20);
+        let bt1 = _mm256_permute2f128_pd(bv0, bv1, 0x31);
+        let br = _mm256_unpacklo_pd(bt0, bt1);
+        let bi = _mm256_unpackhi_pd(bt0, bt1);
+
+        let has_zero = _mm256_and_pd(
+            _mm256_cmp_pd(br, zero, _CMP_EQ_OQ),
+            _mm256_cmp_pd(bi, zero, _CMP_EQ_OQ),
+        );
+        let nr = _mm256_add_pd(
+            ar,
+            _mm256_sub_pd(_mm256_mul_pd(sr, br), _mm256_mul_pd(si, bi)),
+        );
+        let ni = _mm256_add_pd(
+            ai,
+            _mm256_add_pd(_mm256_mul_pd(sr, bi), _mm256_mul_pd(si, br)),
+        );
+        let finite = _mm256_and_pd(
+            _mm256_cmp_pd(_mm256_andnot_pd(sign, nr), inf, _CMP_LT_OQ),
+            _mm256_cmp_pd(_mm256_andnot_pd(sign, ni), inf, _CMP_LT_OQ),
+        );
+        // Either hazard sends the four elements through the scalar loop, which
+        // reproduces the skip and the error report in order.
+        if _mm256_movemask_pd(has_zero) != 0 || _mm256_movemask_pd(finite) != 0x0f {
+            coords_axpy_scalar(&mut a[i..i + 4], &b[i..i + 4], scale)?;
+        } else {
+            // `unpacklo/hi` interleave lanes 0/2 and 1/3, so one more
+            // `permute2f128` puts the four complex back in ascending order.
+            let r0 = _mm256_unpacklo_pd(nr, ni);
+            let r1 = _mm256_unpackhi_pd(nr, ni);
+            let out0 = _mm256_permute2f128_pd(r0, r1, 0x20);
+            let out1 = _mm256_permute2f128_pd(r0, r1, 0x31);
+            // SAFETY: the same `i + 4 <= n` bound as the loads.
+            unsafe {
+                _mm256_storeu_pd(ap.add(2 * i), out0);
+                _mm256_storeu_pd(ap.add(2 * i + 4), out1);
+            }
+        }
+        i += 4;
+    }
+    coords_axpy_scalar(&mut a[i..], &b[i..], scale)
 }
 
 pub fn joint_inner_product(a: &NestedVector, b: &NestedVector) -> C {
