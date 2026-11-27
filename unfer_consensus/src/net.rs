@@ -3063,9 +3063,22 @@ mod tests {
             return;
         };
         let file = LedgerFile::new(Path::new(&dir)).expect("the child opens the ledger");
-        let snapshot = LedgerSnapshot {
-            bank: vec![tx(1), tx(2), tx(3)],
-            ..LedgerSnapshot::default()
+        let snapshot = if std::env::var_os("UNFER_LEDGER_CRASH_OUTBOX").is_some() {
+            // Equal committed length as the durable seed, but a pending outbox
+            // entry: the publish the monotone rule admits while the commit does
+            // not move.
+            let mut outbox = std::collections::BTreeMap::new();
+            outbox.insert(9, tx(9));
+            LedgerSnapshot {
+                bank: vec![tx(1)],
+                outbox,
+                ..LedgerSnapshot::default()
+            }
+        } else {
+            LedgerSnapshot {
+                bank: vec![tx(1), tx(2), tx(3)],
+                ..LedgerSnapshot::default()
+            }
         };
         file.save(&snapshot)
             .expect("the child's publish reaches the crash point");
@@ -3151,6 +3164,106 @@ mod tests {
             .save(&committed)
             .expect("an equal committed length is still admitted");
         assert_eq!(reopened.load().unwrap().bank.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The other equal-length publish: the commit does not move, only the local
+    /// outbox grows. The monotone rule admits it (the record names that
+    /// behaviour), so a crash in the same window must leave the *previous*
+    /// outbox on disk rather than the new one: the pending entry is recovered
+    /// from the durable snapshot, and the next equal-length publish lands it.
+    #[cfg(unix)]
+    #[test]
+    fn a_crash_mid_an_outbox_only_publish_keeps_the_durable_outbox() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-ledger-outbox-crash-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = LedgerFile::new(&dir).unwrap();
+        let committed = LedgerSnapshot {
+            bank: vec![tx(1)],
+            ..LedgerSnapshot::default()
+        };
+        file.save(&committed)
+            .expect("seed the durable one-entry snapshot");
+
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "net::tests::ledger_publish_crash_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("UNFER_LEDGER_CRASH_DIR", &dir)
+            .env("UNFER_LEDGER_CRASH_POINT", "before_rename")
+            .env("UNFER_LEDGER_CRASH_OUTBOX", "1")
+            .status()
+            .expect("spawn the crashing child");
+        assert!(
+            !status.success(),
+            "the child must die at the crash point, not exit normally"
+        );
+        assert_eq!(
+            status.signal(),
+            Some(6),
+            "the crash point aborts (SIGABRT), so the parent sees a killed child"
+        );
+
+        // The rename never happened, so the durable snapshot is still the seed:
+        // same committed length, and no pending entry that the crash invented.
+        let on_disk: LedgerSnapshot =
+            serde_json::from_slice(&std::fs::read(&file.path).unwrap()).unwrap();
+        assert_eq!(on_disk.bank.len(), 1, "the commit did not move");
+        assert!(
+            on_disk.outbox.is_empty(),
+            "the interrupted publish must not have landed the outbox entry"
+        );
+        assert!(
+            dir.join("ledger.ledger.tmp").exists(),
+            "the child should have written the temp file before dying"
+        );
+
+        // A restarted handle loads the durable outbox (empty), and the same
+        // equal-length publish is admitted once the crash is behind it.
+        let reopened = LedgerFile::new(&dir).unwrap();
+        assert!(reopened.load().unwrap().outbox.is_empty());
+        let mut outbox = std::collections::BTreeMap::new();
+        outbox.insert(9, tx(9));
+        let with_outbox = LedgerSnapshot {
+            bank: vec![tx(1)],
+            outbox,
+            ..LedgerSnapshot::default()
+        };
+        reopened
+            .save(&with_outbox)
+            .expect("an outbox-only equal-length publish is admitted");
+        let reloaded = reopened.load().unwrap();
+        assert_eq!(reloaded.bank.len(), 1);
+        assert_eq!(
+            reloaded.outbox.len(),
+            1,
+            "the pending entry is durable after the publish"
+        );
+        assert!(reloaded.outbox.contains_key(&9));
+
+        // The watermark still refuses an older committed state after that
+        // publish: equal length is the rule, not "any newer bytes".
+        let older = LedgerSnapshot {
+            bank: Vec::new(),
+            ..LedgerSnapshot::default()
+        };
+        assert!(
+            reopened.save(&older).is_err(),
+            "an outbox-only publish must not reset the committed watermark"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

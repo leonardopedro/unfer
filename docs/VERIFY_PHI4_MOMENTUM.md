@@ -1176,7 +1176,10 @@ entry, which is why the fold is the most expensive of the three scalar loops,
 far above `dot` and `axpy` — so replacing it with a `re²+im²` FMA sum plus one
 `sqrt` is not a marginal win at the kernel level: `85.4–86.8 us → 0.89 us`
 (`95–97×`) at `n = 2380` and `174.1–174.3 us → 2.08–2.19 us` (`80–84×`) at
-`n = 4845` (`examples/phi4_kernel_simd_probe.rs`, two runs each). It is
+`n = 4845` (`examples/phi4_kernel_simd_probe.rs`, two runs each). A third run on
+a loaded host moved the scalar reference to `123.8 us` against `1.37 us`
+(`90.5×`), so read the range as `90–97×` at that size; the kernel's own clock is
+stable and the scalar `hypot` fold is what varies. It is
 nevertheless the smallest solve-level change of the three, and this note says so
 rather than quoting the `95×`: `coords_norm` is called **once per Arnoldi step**
 over one vector, where the inner product is called `k+1` times per step over two
@@ -1200,6 +1203,26 @@ finite — to `coords_norm_scalar`, so extreme amplitudes keep the fold's verdic
 and its accuracy. The runtime gate is the inner product's (`avx2` **and** `fma`),
 and only the `x86_64` path has a `norm` kernel; `aarch64` keeps the fold and the
 record built there was untouched by this change.
+
+**The NEON arm can now be run without an `aarch64` host — but not timed.**
+`scripts/check-phi4-neon-probe` installs the `aarch64-unknown-linux-musl`
+target, builds `examples/phi4_kernel_simd_probe.rs` as a one-file crate (a
+symlink back to the committed example, `num-complex` its only dependency) with
+`rust-lld`'s self-contained linking, and runs it under `qemu-aarch64-static`. It
+is built that way rather than through `-p fock_sirk` because fock_sirk's
+dependency graph emits host `libc` search paths, which made the aarch64 link
+drag in the x86_64 `libc.a`; the probe needs nothing from the crate. The
+result: the NEON modules **execute** and the probe's own agreement lines are
+produced (`dot` `1.85e-14` relative, `axpy` `2.24e-16` absolute at `n = 2380` —
+the probe's NEON `axpy` uses `vfmaq`, so unlike the committed AVX2 `axpy` it is
+fused and reassociates). Those are the only numbers this route may be quoted
+for. qemu is not a performance measurement: the same run reports `dot` at
+`0.51×` and `axpy` at `1.46×` against the scalar loop, where the real `aarch64`
+host measures `dot` at `3.75×` in-solve. Emulation cost moves with the shape of
+the emulated instruction stream, so a ratio taken under qemu says nothing about
+hardware — §5.12's NEON speedups stand on the direct-host runs, and the
+docstring in the script says the same. What is still missing is a real
+`aarch64` host to re-run the end-to-end A/B on the current tree.
 
 Three other removals were considered and are reported as *not* done. Storing
 `H_proj` in `f32` halves the stream to `188 MB` (`~20.4 ms` per step at this

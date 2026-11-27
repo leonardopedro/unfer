@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Run the phi4 kernel probe's NEON arm on an aarch64 target.
+#
+# `examples/phi4_kernel_simd_probe.rs` compiles its NEON `dot`/`axpy` modules
+# only on `aarch64`, so an `x86_64` host never executes them. This script
+# cross-compiles the probe for `aarch64-unknown-linux-musl` (self-contained
+# linking through `rust-lld`, no sysroot needed) and runs it under qemu
+# user-mode emulation.
+#
+# What it proves: the NEON arm runs and agrees with the scalar reference on this
+# input (the probe prints the agreement itself). What it does **not** prove: any
+# timing. qemu emulates NEON instruction by instruction, so its "ratios" are
+# emulation cost, not hardware -- under qemu `dot` measures *slower* than scalar
+# (0.53x) on the same probe that the real aarch64 host measures at 3.75x
+# in-solve. Quote `docs/VERIFY_PHI4_MOMENTUM.md` section 5.12 for speedups, never
+# this script's clock output.
+#
+# The probe is built as a one-file crate with a symlink back to the committed
+# example rather than through `-p fock_sirk`: fock_sirk's dependency graph emits
+# host `libc` search paths that make the aarch64 link pull in the x86_64
+# `libc.a`. The probe itself needs only `num-complex`.
+#
+# Requires: a rustup toolchain with `aarch64-unknown-linux-musl` (installed
+# below if missing) and `qemu-aarch64-static`. Override the emulator with
+# `PHI4_ARM_QEMU=/path/to/qemu-aarch64-static`.
+set -euo pipefail
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+target=aarch64-unknown-linux-musl
+
+qemu="${PHI4_ARM_QEMU:-$(command -v qemu-aarch64-static || command -v qemu-aarch64 || true)}"
+if [ -z "$qemu" ] || [ ! -x "$qemu" ]; then
+    echo "qemu-aarch64 not found; set PHI4_ARM_QEMU to a qemu-aarch64 binary." >&2
+    exit 69
+fi
+if command -v rustup >/dev/null 2>&1 &&
+    ! rustup target list --installed | grep -qx "$target"; then
+    echo "== installing rust target $target" >&2
+    rustup target add "$target" >&2
+fi
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/bin"
+ln -s "$repo_root/fock_sirk/examples/phi4_kernel_simd_probe.rs" "$work/bin/probe.rs"
+cat >"$work/Cargo.toml" <<'EOF'
+[package]
+name = "phi4_kernel_simd_probe_arm"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+num-complex = "0.4"
+
+[[bin]]
+name = "phi4_kernel_simd_probe"
+path = "bin/probe.rs"
+EOF
+
+echo "== building the probe for $target" >&2
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
+    cargo build --release --target "$target" --manifest-path "$work/Cargo.toml" >&2
+binary="$work/target/$target/release/phi4_kernel_simd_probe"
+if [ ! -x "$binary" ]; then
+    echo "the cross build produced no binary" >&2
+    exit 1
+fi
+
+echo "== running it under $qemu" >&2
+output="$("$qemu" "$binary")"
+printf '%s\n' "$output"
+
+# The point of the run is the NEON arm; a probe that silently took the scalar
+# branch would print neither of these.
+if ! grep -q '^neon:' <<<"$output"; then
+    echo "the NEON arm did not run" >&2
+    exit 1
+fi
+if ! grep -q '^agreement:' <<<"$output"; then
+    echo "the probe printed no agreement line" >&2
+    exit 1
+fi
+
+echo "== ok: the NEON arm ran; timings under emulation are not measurements" >&2

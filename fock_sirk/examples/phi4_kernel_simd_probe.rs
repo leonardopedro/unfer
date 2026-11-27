@@ -42,7 +42,9 @@
 //! The `norm` row is not in the same regime as the other two: the scalar
 //! reference is a `hypot` fold, two libm calls per entry, so the kernel's
 //! `re²+im²` sum plus one `sqrt` is two orders of magnitude faster
-//! (`85–87 us` against `0.89 us` at `n = 2380`). That is a kernel-level number
+//! (`85–87 us` against `0.89 us` at `n = 2380`; a third run on a loaded host gave
+//! `123.8 us` against `1.37 us`, so read the range as `90–97x` — the scalar
+//! `hypot` fold is what moves). That is a kernel-level number
 //! only — `coords_norm` runs once per Arnoldi step over one vector, so at
 //! `C = 26` it is `174 us × 916` steps `= 0.16 s` of a `13.6 s` solve, and the
 //! end-to-end A/B cannot resolve it (`13.544–14.663 s` against
@@ -71,10 +73,19 @@
 //! `avx2` and `fma`, with the scalar loop as the fallback. Both reassociate the
 //! sum: NEON moves the solve's last bits (`probability` differs at `1.6e-16`,
 //! `917` vs `915` iterations), and AVX2 moved the `C = 20` probability by
-//! `3.7e-15` with `528 → 527` iterations. The frozen sweep record was generated
-//! on the scalar `x86_64` path before the AVX2 kernel existed, so its last bits
-//! are that path's; the `axpy` kernel was added afterwards and changes no
-//! digit at all.
+//! `3.7e-15` with `528 → 527` iterations. The checked-in sweep record was
+//! regenerated on the AVX2 `dot` + `axpy` path, so its digits are that path's;
+//! `coords_norm`'s AVX2 kernel came after it and moved the `C = 26` probability
+//! by `3.3e-15` (see the `norm` rows), so the record is pre-`norm` provenance.
+//! The NEON `axpy` this probe carries is fused (`vfmaq`), unlike the committed
+//! AVX2 one, so it reassociates (`2.2e-16` on these inputs); the committed
+//! `coords_axpy` has no NEON arm.
+//!
+//! `scripts/check-phi4-neon-probe` runs the NEON arm without an `aarch64` host:
+//! it cross-builds this file for `aarch64-unknown-linux-musl` and executes it
+//! under `qemu-aarch64-static`. That is a functional check — qemu's clocks are
+//! emulation cost and report `dot` *slower* than scalar, so only the agreement
+//! lines above are quotable from it.
 //!
 //! On a CPU without the tested features only the scalar timings are reported.
 
