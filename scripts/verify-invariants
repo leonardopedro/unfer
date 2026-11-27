@@ -238,6 +238,18 @@ check "H12: notes implemented dir has the four categories" \
 check_py "H12: duplication scan has zero actionable hits" \
     python3 "$repo_root/scripts/duplication"
 
+# --- H13: markdown links that only resolve because a sibling is checked out ---
+# A `../../timepiece/...` link is green on any machine that has the workspace
+# layout and unverifiable on a lone checkout, and the same held for the
+# ATTRIBUTION ledger's claims: both were locally green while CI had nothing to
+# resolve them against, so the failure could only be discovered after a push.
+# This gate enumerates the link graph's escaping targets and requires each
+# sibling to be materialized by .github/workflows/linkcheck.yml (parsed from the
+# workflow, so the two cannot drift) or documented as unmaterializable in
+# scripts/check-links. Adding such a link now turns the local gate red first.
+check_py "H13: sibling-checkout links are materialized by the linkcheck job" \
+    python3 "$repo_root/scripts/check-links" --sibling-deps
+
 # --- X3: AGENTS.md knowledge-extraction budget ---
 # X3 extracted the S30* essays into docs/ pages (118K -> 16K) and left
 # one-line invariants + pointers, but nothing stopped the checklist from

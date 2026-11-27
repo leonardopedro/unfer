@@ -102,7 +102,10 @@ pub(crate) mod tests {
         })
         .to_string();
         let c = CString::new(req).expect("NUL-free json");
-        unfer_ffi::uk_action_submit(c.as_ptr(), c.as_bytes().len() as i64)
+        // as_bytes(), not as_ptr(): CString's pointer is *const i8 and the
+        // kernel ABI takes *const u8 (the C ABI binds i8 on some platforms
+        // only, so the cast-free byte slice pointer is what compiles everywhere).
+        unfer_ffi::uk_action_submit(c.as_bytes().as_ptr(), c.as_bytes().len() as i64)
     }
 
     fn pending_list() -> Vec<Value> {

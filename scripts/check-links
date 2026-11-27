@@ -25,9 +25,20 @@ Design notes:
 
 Usage:
     python3 scripts/check-links [FILE ...]
+    python3 scripts/check-links --sibling-deps
 
 With no arguments every tracked-looking *.md under the repository root is
 checked (build/vcs directories are skipped).
+
+The `--sibling-deps` mode asks a different question about the same graph:
+*which links only resolve because this machine has a sibling checkout?* A
+link into `../../timepiece/...` is green on a developer machine and meaningless
+on a lone checkout, so this mode is what the H1 maintenance gate runs. It
+fails unless every sibling the link graph names is either materialized by
+`.github/workflows/linkcheck.yml` (parsed from its clone/curl commands, so the
+two cannot drift apart silently) or listed in UNMATERIALIZABLE with a reason.
+Adding a link into a sibling nobody clones turns the local gate red instead of
+leaving it for CI to discover.
 """
 
 from __future__ import annotations
@@ -42,6 +53,18 @@ SKIP_DIRS = {
     "dist", "result", ".direnv", "ol10", "vendor",
 }
 SCHEMES = ("http://", "https://", "mailto:", "ftp://", "//", "data:", "tel:", "file:")
+
+# Sibling-level targets that no clone can provide, keyed by the first path
+# component above the repository root. Each entry states why it cannot be
+# materialized; anything else the link graph reaches must be materialized by
+# .github/workflows/linkcheck.yml or `--sibling-deps` fails.
+UNMATERIALIZABLE = {
+    "papers": "a plain directory at the workspace root, not a repository",
+    "test": "leonardopedro/test has no public read access",
+    "ATTRIBUTION.md": "fetched with curl by the linkcheck job (workspace ledger)",
+}
+
+MATERIALIZE_RE = re.compile(r"(?:^|\s)\.\./([A-Za-z0-9._-]+)")
 
 # [text](target) and ![alt](target). The closing `)` is required (with an
 # optional "title"), because a destination containing whitespace —
@@ -156,8 +179,92 @@ def resolve(doc: Path, target: str, root: Path) -> Path | None:
     return (doc.parent / path_part).resolve()
 
 
+def sibling_dependencies(root: Path) -> dict[str, list[str]]:
+    """Map sibling name -> links that resolve outside this checkout."""
+    deps: dict[str, list[str]] = {}
+    for doc in iter_markdown(root, []):
+        try:
+            text = doc.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for lineno, target in targets_in(text):
+            resolved = resolve(doc, target, root)
+            if resolved is None:
+                continue
+            try:
+                resolved.relative_to(root)
+                continue  # inside the checkout: plain check-links territory
+            except ValueError:
+                pass
+            try:
+                sibling = resolved.relative_to(root.parent).parts[0]
+            except ValueError:
+                sibling = "<outside the workspace>"
+            deps.setdefault(sibling, []).append(
+                f"{doc.relative_to(root)}:{lineno}: {target}"
+            )
+    return deps
+
+
+def materialized(root: Path) -> set[str]:
+    """Sibling names the linkcheck workflow creates in its layout step."""
+    workflow = root / ".github" / "workflows" / "linkcheck.yml"
+    try:
+        text = workflow.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    names: set[str] = set()
+    for line in text.split("\n"):
+        if line.lstrip().startswith("#"):
+            continue
+        names.update(MATERIALIZE_RE.findall(line))
+    return names
+
+
+def check_sibling_deps(root: Path) -> int:
+    deps = sibling_dependencies(root)
+    if not deps:
+        print("check-links --sibling-deps: OK - no link escapes the checkout")
+        return 0
+    covered = materialized(root)
+    uncovered = sorted(
+        name for name in deps if name not in covered and name not in UNMATERIALIZABLE
+    )
+    for name in sorted(deps):
+        if name in covered:
+            status = "materialized by linkcheck.yml"
+        elif name in UNMATERIALIZABLE:
+            status = f"unmaterializable: {UNMATERIALIZABLE[name]}"
+        else:
+            status = "NOT materialized by linkcheck.yml"
+        print(f"  ../{name}: {len(deps[name])} link(s) - {status}")
+    if uncovered:
+        print(
+            "check-links --sibling-deps: FAIL - links depend on sibling "
+            "checkout(s) the CI layout does not create:",
+            file=sys.stderr,
+        )
+        for name in uncovered:
+            print(f"  ../{name} (add a clone/curl to linkcheck.yml or an "
+                  "UNMATERIALIZABLE entry):", file=sys.stderr)
+            for dep in deps[name]:
+                print(f"    {dep}", file=sys.stderr)
+        return 1
+    print(
+        f"check-links --sibling-deps: OK - {len(deps)} sibling link target(s), "
+        "all materialized or documented as unmaterializable"
+    )
+    return 0
+
+
 def main(argv: list[str]) -> int:
     root = Path(__file__).resolve().parent.parent
+    if "--sibling-deps" in argv:
+        extra = [a for a in argv if a != "--sibling-deps"]
+        if extra:
+            print("check-links: --sibling-deps takes no other arguments", file=sys.stderr)
+            return 1
+        return check_sibling_deps(root)
     docs = iter_markdown(root, argv)
     if not docs:
         print("check-links: no markdown files found", file=sys.stderr)
