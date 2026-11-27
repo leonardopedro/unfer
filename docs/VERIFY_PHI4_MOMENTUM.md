@@ -1809,9 +1809,14 @@ columns of §5.10 and §5.11, the NEON and A/B microbenchmarks of §5.12, and th
   for a target other than the host's and executes it under that target's `qemu`.
   The scalar loop was checked from this `aarch64` host with
   `PHI4_TARGET=x86_64-unknown-linux-gnu` (GCC `16.2.0`, glibc `2.44`, `qemu-x86_64`
-  `11.1.2`, `~93 s`); against the checked-in native `x86_64` record all nine
-  tests pass, the two record assertions included (§5.12, which compares **all
-  29** printed leaves rather than the `C`-sweep rows). CI `ubuntu-latest` is
+  `11.1.2`, `92.9 s`); against the checked-in native `x86_64` record all ten
+  tests pass, the record assertions included (§5.12, which compares **all
+  29** printed leaves rather than the `C`-sweep rows). The `aarch64` branch of
+  the same script was exercised from this host at `PHI4_TARGET=aarch64-unknown-linux-gnu`
+  against `qemu-aarch64` `11.1.2` (`60.2 s`, ten tests, using the host's own
+  kernel under emulation — plumbing, not the missing coverage); the Ubuntu cross
+  toolchain CI installs for that leg (`gcc-aarch64-linux-gnu`, sysroot
+  `/usr/aarch64-linux-gnu`) cannot be reproduced here and is unverified. CI `ubuntu-latest` is
   `x86_64`, where a plain `cargo test` can only ever run the scalar loop, so it
   now runs both legs of the same script: the host target through a second
   toolchain, and `aarch64-unknown-linux-gnu` under `qemu-aarch64`, which is the
