@@ -483,11 +483,113 @@ unsafe fn coords_inner_product_avx2(a: &[C], b: &[C]) -> C {
 }
 
 fn coords_norm(a: &[C]) -> f64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // Same runtime gate as the inner product and the `axpy`.
+        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+        {
+            // SAFETY: the feature test above is exactly the contract of the
+            // `#[target_feature]` kernel, which only reads `a`.
+            return unsafe { coords_norm_avx2(a) };
+        }
+    }
+    coords_norm_scalar(a)
+}
+
+/// The scalar loop: a `hypot` fold over the non-zero entries, which is also
+/// the overflow/underflow reference the `x86_64` kernel falls back to.
+fn coords_norm_scalar(a: &[C]) -> f64 {
     let zero = C::new(0.0, 0.0);
     a.iter()
         .filter(|x| **x != zero)
         .fold(0.0_f64, |norm, x| norm.hypot(x.re).hypot(x.im))
 }
+
+/// AVX2 norm, four complex per vector: two independent `re²+im²` accumulator
+/// pairs summed at the end and one `sqrt`. Unlike `axpy` this kernel **does**
+/// reassociate — `hypot` is order-dependent, so no vector form can reproduce
+/// the scalar fold's last bits; the result agrees with it to a few ulp and is
+/// documented as ``solver-precision`` like the inner product. `hypot`'s
+/// scaling is what keeps the fold safe at the edges of the `f64` range, so a
+/// slice whose largest component leaves `[1e-150, 1e150]` is handed to
+/// `coords_norm_scalar` instead of squaring into overflow or underflow.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn coords_norm_avx2(a: &[C]) -> f64 {
+    use core::arch::x86_64::*;
+
+    // SAFETY: `offset + 8` f64s lie inside a slice of at least four complex
+    // values starting at `i` (the caller guarantees `i + 4 <= n`).
+    #[inline]
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn load(ap: *const f64, offset: usize) -> (__m256d, __m256d) {
+        let av0 = unsafe { _mm256_loadu_pd(ap.add(offset)) };
+        let av1 = unsafe { _mm256_loadu_pd(ap.add(offset + 4)) };
+        let at0 = _mm256_permute2f128_pd(av0, av1, 0x20);
+        let at1 = _mm256_permute2f128_pd(av0, av1, 0x31);
+        (_mm256_unpacklo_pd(at0, at1), _mm256_unpackhi_pd(at0, at1))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn horizontal(v: __m256d) -> f64 {
+        let lo = _mm256_castpd256_pd128(v);
+        let hi = _mm256_extractf128_pd(v, 1);
+        let pair = _mm_add_pd(lo, hi);
+        _mm_cvtsd_f64(_mm_add_sd(pair, _mm_unpackhi_pd(pair, pair)))
+    }
+
+    let n = a.len();
+    let ap = a.as_ptr() as *const f64;
+    let sign = _mm256_set1_pd(-0.0);
+    let mut sq0 = _mm256_setzero_pd();
+    let mut sq1 = _mm256_setzero_pd();
+    let mut big = _mm256_setzero_pd();
+    let mut i = 0;
+    while i + 8 <= n {
+        // SAFETY: `i + 8 <= n` covers both four-complex groups.
+        let (ar0, ai0) = unsafe { load(ap, 2 * i) };
+        let (ar1, ai1) = unsafe { load(ap, 2 * i + 8) };
+        sq0 = _mm256_fmadd_pd(ar0, ar0, _mm256_fmadd_pd(ai0, ai0, sq0));
+        sq1 = _mm256_fmadd_pd(ar1, ar1, _mm256_fmadd_pd(ai1, ai1, sq1));
+        big = _mm256_max_pd(
+            big,
+            _mm256_max_pd(_mm256_andnot_pd(sign, ar0), _mm256_andnot_pd(sign, ai0)),
+        );
+        big = _mm256_max_pd(
+            big,
+            _mm256_max_pd(_mm256_andnot_pd(sign, ar1), _mm256_andnot_pd(sign, ai1)),
+        );
+        i += 8;
+    }
+    while i + 4 <= n {
+        // SAFETY: `i + 4 <= n` covers the four-complex group.
+        let (ar, ai) = unsafe { load(ap, 2 * i) };
+        sq0 = _mm256_fmadd_pd(ar, ar, _mm256_fmadd_pd(ai, ai, sq0));
+        big = _mm256_max_pd(
+            big,
+            _mm256_max_pd(_mm256_andnot_pd(sign, ar), _mm256_andnot_pd(sign, ai)),
+        );
+        i += 4;
+    }
+    let total = unsafe { horizontal(_mm256_add_pd(sq0, sq1)) };
+    let largest = unsafe { horizontal(big) };
+    let magnitude = total.sqrt();
+    // Outside the squaring window `hypot`'s scaling is load-bearing, and a
+    // non-finite total must keep the fold's verdict (it reports an infinity
+    // only if the entries themselves are that large).
+    let in_window = (1e-150..=1e150).contains(&largest) || largest == 0.0;
+    if !in_window || !magnitude.is_finite() {
+        return coords_norm_scalar(a);
+    }
+    let mut norm = magnitude;
+    while i < n {
+        norm = norm.hypot(a[i].re).hypot(a[i].im);
+        i += 1;
+    }
+    norm
+}
+
 fn coords_axpy(a: &mut [C], b: &[C], scale: C, limits: ActionLimits) -> Result<(), ActionError> {
     if b.len() > limits.max_work {
         return Err(ActionError::WorkLimit {
@@ -1383,8 +1485,10 @@ fn givens_rotation(top: C, bottom: C) -> (f64, C, C) {
 /// `FiniteWindowAction::projected` performs, and `coords_inner_product`,
 /// `coords_norm` and `coords_axpy` apply the map operations' arithmetic in the
 /// same label order (§5.10). The map path is therefore kept as the reference
-/// implementation, and `solve_joint_sirk` with
-/// `dense_window_solve: false` returns solutions identical on `to_bits()`.
+/// implementation; the two agree to solver precision, not on `to_bits()`, since
+/// both the Givens stage (§5.11) and — on `x86_64` — the AVX2 `dot` and `norm`
+/// kernels round differently from the map walk (§5.12), which is what
+/// `window_solve_matches_the_map_walk_at_solver_precision` checks.
 fn gmres_shift_window<F>(
     cache: &FiniteWindowAction,
     matvec: &F,
